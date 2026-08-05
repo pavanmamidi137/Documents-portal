@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -103,13 +104,15 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
               }
             />
             <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuLabel>
-                <p className="text-sm font-semibold">Portal Theme</p>
-                <p className="text-xs font-normal text-muted-foreground">
-                  Applied for everyone in the college.
-                </p>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>
+                  <p className="text-sm font-semibold">Portal Theme</p>
+                  <p className="text-xs font-normal text-muted-foreground">
+                    Applied for everyone in the college.
+                  </p>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+              </DropdownMenuGroup>
               <div className="grid grid-cols-2 gap-1.5 p-2">
                 {themes.map((t) => {
                   const active = t.key === siteTheme;
