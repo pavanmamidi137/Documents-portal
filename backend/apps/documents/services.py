@@ -139,53 +139,154 @@ def delete_document_file(public_id: str) -> bool:
 
 
 def create_document(data: dict, document_file, actor, request=None):
-    """Upload the document and persist the record."""
+    """Upload the document once and create one record per target section.
+
+    Admin can share a single upload to several sections at once; CRs always
+    get a single record for their own section. Returns the primary record.
+    """
+    from .models import Document
+
+    sections = data.get("sections") or [data["section"]]
     folder = build_folder(
-        data["branch"], data["section"], data["semester"],
+        data["branch"], sections[0], data["semester"],
         data["category"], data["subject"],
     )
     uploaded = upload_document(document_file, folder)
 
-    from .models import Document
-
-    document = Document.objects.create(
-        title=data["title"].strip(),
-        description=data.get("description", "").strip(),
-        file_name=uploaded["file_name"],
-        file_size=uploaded["file_size"],
-        cloudinary_url=uploaded["url"],
-        public_id=uploaded["public_id"],
-        branch=data["branch"],
-        section=data["section"],
-        semester=data["semester"],
-        category=data["category"],
-        subject=data["subject"],
-        uploaded_by=actor,
-    )
+    common = {
+        "title": data["title"].strip(),
+        "description": data.get("description", "").strip(),
+        "file_name": uploaded["file_name"],
+        "file_size": uploaded["file_size"],
+        "cloudinary_url": uploaded["url"],
+        "public_id": uploaded["public_id"],
+        "branch": data["branch"],
+        "semester": data["semester"],
+        "category": data["category"],
+        "subject": data["subject"],
+        "uploaded_by": actor,
+    }
+    created = [
+        Document.objects.create(section=section, **common)
+        for section in sections
+    ]
+    primary = created[0]
     log_audit(
-        actor, "DOCUMENT_UPLOAD", "Document", document.id,
+        actor, "DOCUMENT_UPLOAD", "Document", primary.id,
         {
-            "title": document.title,
-            "public_id": document.public_id,
-            "branch": document.branch.name,
-            "section": document.section.name,
-            "semester": document.semester.name,
-            "category": document.category.name,
-            "subject": document.subject.name,
+            "title": primary.title,
+            "public_id": primary.public_id,
+            "branch": primary.branch.name,
+            "sections": [s.section.name for s in created],
+            "semester": primary.semester.name,
+            "category": primary.category.name,
+            "subject": primary.subject.name,
         },
         request,
     )
-    return document
+    return primary
+
+
+def share_document(document, sections, actor, request=None):
+    """Share an existing document to additional sections (admin).
+
+    Copies the same Cloudinary reference to each section that does not already
+    have it. Returns the list of newly created records.
+    """
+    from .models import Document
+
+    existing = set(
+        Document.objects.filter(public_id=document.public_id).values_list("section_id", flat=True)
+    )
+    created = []
+    for section in sections:
+        if section.id in existing:
+            continue
+        created.append(
+            Document.objects.create(
+                title=document.title,
+                description=document.description,
+                file_name=document.file_name,
+                file_size=document.file_size,
+                cloudinary_url=document.cloudinary_url,
+                public_id=document.public_id,
+                branch=document.branch,
+                section=section,
+                semester=document.semester,
+                category=document.category,
+                subject=document.subject,
+                uploaded_by=actor,
+                forked_from=document,
+            )
+        )
+    log_audit(
+        actor, "DOCUMENT_SHARE", "Document", document.id,
+        {
+            "title": document.title,
+            "public_id": document.public_id,
+            "sections": [s.section.name for s in created],
+        },
+        request,
+    )
+    return created
+
+
+def fork_document(document, section, actor, request=None):
+    """Fork an existing document into a section without re-uploading (CR)."""
+    from .models import Document
+
+    if Document.objects.filter(
+        public_id=document.public_id, section_id=section.id
+    ).exists():
+        raise ValidationError(
+            {"detail": "This document is already available in that section."}
+        )
+    forked = Document.objects.create(
+        title=document.title,
+        description=document.description,
+        file_name=document.file_name,
+        file_size=document.file_size,
+        cloudinary_url=document.cloudinary_url,
+        public_id=document.public_id,
+        branch=document.branch,
+        section=section,
+        semester=document.semester,
+        category=document.category,
+        subject=document.subject,
+        uploaded_by=actor,
+        forked_from=document,
+    )
+    log_audit(
+        actor, "DOCUMENT_FORK", "Document", document.id,
+        {
+            "title": document.title,
+            "public_id": document.public_id,
+            "section": section.name,
+            "forked_id": forked.id,
+        },
+        request,
+    )
+    return forked
 
 
 def delete_document(document, actor, request=None) -> None:
-    """Delete the Cloudinary file, then the record."""
+    """Delete the record; only delete the Cloudinary file when it is the last copy."""
+    from .models import Document
+
     title = document.title
     public_id = document.public_id
-    cloudinary_ok = delete_document_file(public_id)
+    other_copies = Document.objects.filter(public_id=public_id).exclude(pk=document.pk).count()
+    cloudinary_ok = None
+    if other_copies == 0:
+        cloudinary_ok = delete_document_file(public_id)
     document.delete()
     log_audit(
         actor, "DOCUMENT_DELETE", "Document", title,
-        {"title": title, "cloudinary_deleted": cloudinary_ok, "public_id": public_id},
+        {
+            "title": title,
+            "public_id": public_id,
+            "cloudinary_deleted": cloudinary_ok,
+            "remaining_copies": other_copies,
+        },
         request,
     )

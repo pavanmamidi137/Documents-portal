@@ -1,36 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  ChevronsLeft,
-  ChevronsRight,
-  Menu,
-  Moon,
-  PanelLeft,
-  PanelLeftClose,
-  Search,
-  Sun,
-  UserRound,
-  LogOut,
-  KeyRound,
-} from "lucide-react";
+import { Check, Menu, Moon, Palette, PanelLeft, Search, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/lib/auth";
-import { initials } from "@/lib/utils";
+import { useSiteTheme } from "@/lib/site-theme";
+import { cn, getErrorMessage } from "@/lib/utils";
 import type { SidebarMode } from "./sidebar";
 
 interface TopbarProps {
@@ -40,15 +27,26 @@ interface TopbarProps {
 }
 
 export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: TopbarProps) {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { theme: siteTheme, themes, setTheme: setSiteTheme } = useSiteTheme();
   const router = useRouter();
   const [query, setQuery] = useState("");
+  const isAdmin = user?.is_super_admin ?? false;
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim().length >= 2) {
       router.push(`/search?q=${encodeURIComponent(query.trim())}`);
+    }
+  };
+
+  const applyTheme = async (key: string) => {
+    try {
+      await setSiteTheme(key);
+      toast.success(`Portal theme changed to ${themes.find((t) => t.key === key)?.label}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
     }
   };
 
@@ -62,46 +60,17 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
         <Menu className="size-5" />
       </button>
 
-      {/* Desktop sidebar controls: show / minimize / hide */}
-      <div className="hidden items-center gap-1 lg:flex">
-        {sidebarMode === "hidden" ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onSidebarModeChange("expanded")}
-            className="text-muted-foreground"
-          >
-            <PanelLeft className="size-4" /> Sidebar
-          </Button>
-        ) : (
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() =>
-                onSidebarModeChange(sidebarMode === "collapsed" ? "expanded" : "collapsed")
-              }
-              aria-label={sidebarMode === "collapsed" ? "Expand sidebar" : "Minimize sidebar"}
-              className="text-muted-foreground"
-            >
-              {sidebarMode === "collapsed" ? (
-                <ChevronsRight className="size-5" />
-              ) : (
-                <ChevronsLeft className="size-5" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onSidebarModeChange("hidden")}
-              aria-label="Hide sidebar"
-              className="text-muted-foreground"
-            >
-              <PanelLeftClose className="size-5" />
-            </Button>
-          </>
-        )}
-      </div>
+      {/* Only shows when the sidebar is hidden (the escape hatch to bring it back). */}
+      {sidebarMode === "hidden" && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onSidebarModeChange("expanded")}
+          className="hidden text-muted-foreground lg:inline-flex"
+        >
+          <PanelLeft className="size-4" /> Sidebar
+        </Button>
+      )}
 
       <form onSubmit={submitSearch} className="relative hidden max-w-md flex-1 sm:block">
         <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -118,42 +87,59 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
           variant="ghost"
           size="icon"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          aria-label="Toggle theme"
+          aria-label="Toggle light/dark mode"
           className="text-muted-foreground"
         >
           {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
         </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <button className="flex items-center gap-2 rounded-full p-0.5 ring-primary/30 transition hover:ring-2">
-                <Avatar className="size-8">
-                  <AvatarFallback className="bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 dark:text-indigo-400">
-                    {initials(user?.full_name ?? "?")}
-                  </AvatarFallback>
-                </Avatar>
-              </button>
-            }
-          />
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>
-              <p className="text-sm font-semibold">{user?.full_name}</p>
-              <p className="text-xs font-normal text-muted-foreground">{user?.roll_number}</p>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem render={<Link href="/profile" />}>
-              <UserRound className="size-4" /> Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem render={<Link href="/profile#password" />}>
-              <KeyRound className="size-4" /> Change Password
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
-              <LogOut className="size-4" /> Sign out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {isAdmin && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="icon" aria-label="Change portal theme" className="text-muted-foreground">
+                  <Palette className="size-5" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel>
+                <p className="text-sm font-semibold">Portal Theme</p>
+                <p className="text-xs font-normal text-muted-foreground">
+                  Applied for everyone in the college.
+                </p>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <div className="grid grid-cols-2 gap-1.5 p-2">
+                {themes.map((t) => {
+                  const active = t.key === siteTheme;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => applyTheme(t.key)}
+                      className={cn(
+                        "flex items-center gap-2 rounded-lg border p-2 text-left transition-colors",
+                        active
+                          ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                          : "hover:bg-muted"
+                      )}
+                    >
+                      <span
+                        className="size-6 shrink-0 rounded-full ring-1 ring-foreground/10"
+                        style={{ background: `linear-gradient(135deg, ${t.colors[0]}, ${t.colors[1]})` }}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{t.label}</span>
+                      </span>
+                      {active && <Check className="size-3.5 text-primary" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     </header>
   );

@@ -95,6 +95,7 @@ export interface DocumentItem {
   subject_name: string;
   uploaded_by: number | null;
   uploaded_by_name: string | null;
+  forked_from: number | null;
 }
 
 export interface Announcement {

@@ -21,6 +21,7 @@ class DocumentListSerializer(serializers.ModelSerializer):
             "branch", "branch_name", "section", "section_name",
             "semester", "semester_name", "category", "category_name",
             "subject", "subject_name", "uploaded_by", "uploaded_by_name",
+            "forked_from",
         ]
         read_only_fields = fields
 
@@ -34,19 +35,48 @@ class DocumentCreateSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True, default="")
     file = serializers.FileField(write_only=True)
     branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all())
-    section = serializers.PrimaryKeyRelatedField(queryset=Section.objects.all())
+    # Either a single primary `section` or a list `sections` (admin shares one
+    # upload to many sections). CRs always end up with their own section.
+    section = serializers.PrimaryKeyRelatedField(
+        queryset=Section.objects.all(), required=False
+    )
+    sections = serializers.PrimaryKeyRelatedField(
+        queryset=Section.objects.all(), many=True, required=False, write_only=True
+    )
     semester = serializers.PrimaryKeyRelatedField(queryset=Semester.objects.all())
     category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all())
     subject = serializers.PrimaryKeyRelatedField(queryset=Subject.objects.all())
 
     def validate(self, attrs):
         user = self.context["request"].user
+        sections = attrs.get("sections") or []
+        if attrs.get("section"):
+            sections.append(attrs["section"])
+        sections = list({s.id: s for s in sections}.values())  # de-dupe by id
+        if not sections:
+            raise serializers.ValidationError(
+                {"section": "At least one section is required."}
+            )
+
         if user.is_cr:
-            # CRs can only upload for their own assigned section.
-            if attrs["branch"].id != user.branch_id or attrs["section"].id != user.section_id:
+            # CRs upload only to their own assigned section - no sharing.
+            if attrs["branch"].id != user.branch_id:
+                raise serializers.ValidationError(
+                    "CRs can only upload documents for their assigned branch."
+                )
+            if any(s.id != user.section_id for s in sections):
                 raise serializers.ValidationError(
                     "CRs can only upload documents for their assigned section."
                 )
+            sections = [user.section]
+
+        # All target sections must belong to the selected branch.
+        wrong = [s.name for s in sections if s.branch_id != attrs["branch"].id]
+        if wrong:
+            raise serializers.ValidationError(
+                {"sections": f"Section(s) {', '.join(wrong)} do not belong to the selected branch."}
+            )
+
         # Subject must belong to the selected semester and branch.
         subject = attrs["subject"]
         if subject.semester_id != attrs["semester"].id:
@@ -57,4 +87,5 @@ class DocumentCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"subject": "Subject does not belong to the selected branch."}
             )
+        attrs["sections"] = sections
         return attrs

@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Eye, Plus, Trash2 } from "lucide-react";
+import { Download, Eye, GitFork, Plus, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentExt, getDocumentTypeMeta } from "@/lib/document-types";
+import { ShareDocumentDialog, ForkDocumentDialog } from "./share-fork-dialogs";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,8 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const [q, setQ] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [shareTarget, setShareTarget] = useState<DocumentItem | null>(null);
+  const [forkOpen, setForkOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -96,7 +99,17 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
               <Icon className="size-4" />
             </div>
             <div className="min-w-0">
-              <p className="truncate font-medium">{d.title}</p>
+              <p className="flex items-center gap-1.5 truncate font-medium">
+                {d.title}
+                {d.forked_from && (
+                  <span
+                    title="Forked from another section"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded border border-primary/30 bg-primary/10 px-1 py-px text-[10px] font-semibold text-primary"
+                  >
+                    <GitFork className="size-2.5" /> Forked
+                  </span>
+                )}
+              </p>
               <p className="truncate text-xs text-muted-foreground">
                 {d.file_name} · {formatBytes(d.file_size)}
                 <span className="ml-1.5 rounded border px-1 py-px text-[10px] font-semibold uppercase">
@@ -177,6 +190,18 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
           >
             <Download className="size-4" />
           </Button>
+          {!isCr && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8 text-primary hover:bg-primary/10 hover:text-primary"
+              title="Share with other sections"
+              aria-label={`Share ${d.title} with other sections`}
+              onClick={() => setShareTarget(d)}
+            >
+              <Share2 className="size-4" />
+            </Button>
+          )}
           <Button
             size="icon"
             variant="ghost"
@@ -201,6 +226,11 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         }
         actions={
           <>
+            {isCr && (
+              <Button variant="outline" onClick={() => setForkOpen(true)}>
+                <GitFork className="size-4" /> Fork Document
+              </Button>
+            )}
             <Button variant="outline" onClick={handleExport}>
               <Download className="size-4" /> Export Reports
             </Button>
@@ -274,6 +304,24 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         meta={meta}
         lockBranchSection={isCr}
         onUploaded={() => queryClient.invalidateQueries({ queryKey: ["documents"] })}
+      />
+
+      <ShareDocumentDialog
+        key={shareTarget?.id ?? "none"}
+        open={!!shareTarget}
+        onOpenChange={(open) => !open && setShareTarget(null)}
+        document={shareTarget}
+        meta={meta}
+        onShared={() => queryClient.invalidateQueries({ queryKey: ["documents"] })}
+      />
+
+      <ForkDocumentDialog
+        open={forkOpen}
+        onOpenChange={setForkOpen}
+        onForked={() => {
+          queryClient.invalidateQueries({ queryKey: ["documents"] });
+          queryClient.invalidateQueries({ queryKey: ["forkable-documents"] });
+        }}
       />
 
       <ConfirmDialog

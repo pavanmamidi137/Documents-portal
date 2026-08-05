@@ -3,14 +3,20 @@ from django.db import models
 
 
 class Document(models.Model):
-    """A PDF stored in Cloudinary - the database only keeps references."""
+    """A document stored in Cloudinary - the database only keeps references.
+
+    One uploaded file can be shared to several sections: each section gets its
+    own Document row pointing at the same Cloudinary file (same ``public_id``).
+    A row created by a CR from another section's file is a "fork" and keeps a
+    ``forked_from`` pointer to its source.
+    """
 
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, default="")
     file_name = models.CharField(max_length=255)
     file_size = models.PositiveBigIntegerField(default=0)  # bytes
     cloudinary_url = models.URLField(max_length=500)
-    public_id = models.CharField(max_length=255, unique=True)
+    public_id = models.CharField(max_length=255)
     downloads = models.PositiveIntegerField(default=0)
 
     branch = models.ForeignKey(
@@ -18,6 +24,13 @@ class Document(models.Model):
     )
     section = models.ForeignKey(
         "college.Section", on_delete=models.PROTECT, related_name="documents"
+    )
+    forked_from = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="forks",
     )
     semester = models.ForeignKey(
         "college.Semester", on_delete=models.PROTECT, related_name="documents"

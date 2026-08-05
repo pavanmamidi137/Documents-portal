@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { FileUp, Loader2, UploadCloud } from "lucide-react";
+import { FileUp, Loader2, Share2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
+
+import { Checkbox } from "@/components/ui/checkbox";
 
 import {
   ALLOWED_UPLOAD_EXTENSIONS,
@@ -65,9 +67,11 @@ export function UploadDocumentDialog({
   onUploaded,
 }: Props) {
   const { user } = useAuth();
+  const isAdmin = user?.is_super_admin ?? false;
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fileError, setFileError] = useState("");
+  const [sharedSections, setSharedSections] = useState<number[]>([]);
   const fileMeta = file ? getDocumentTypeMeta(file.name) : null;
 
   const handleFileChange = (f: File | null) => {
@@ -122,6 +126,23 @@ export function UploadDocumentDialog({
     },
     [meta.subjects, watch]
   );
+  // Sections the admin can additionally share with (same branch, excluding the primary one).
+  const shareableSections = useMemo(
+    () => {
+      const branch = watch("branch");
+      const primary = Number(watch("section"));
+      return meta.sections.filter(
+        (s) => s.branch === Number(branch) && s.id !== primary
+      );
+    },
+    [meta.sections, watch]
+  );
+
+  const toggleShared = (id: number, checked: boolean) => {
+    setSharedSections((prev) =>
+      checked ? [...prev, id] : prev.filter((x) => x !== id)
+    );
+  };
 
   useEffect(() => {
     if (open) {
@@ -138,6 +159,7 @@ export function UploadDocumentDialog({
       });
       setFile(null);
       setFileError("");
+      setSharedSections([]);
     }
   }, [open, reset, lockBranchSection, user?.branch, user?.section]);
 
@@ -160,6 +182,11 @@ export function UploadDocumentDialog({
     form.append("file", file);
     form.append("branch", values.branch);
     form.append("section", values.section);
+    // Admin: one upload, shared to the primary section + any additional ones.
+    const extraSections = isAdmin
+      ? Array.from(new Set([Number(values.section), ...sharedSections])).filter(Boolean)
+      : [];
+    extraSections.forEach((id) => form.append("sections", String(id)));
     form.append("semester", values.semester);
     form.append("category", values.category);
     form.append("subject", values.subject);
@@ -167,7 +194,11 @@ export function UploadDocumentDialog({
     setSubmitting(true);
     try {
       const doc = await http.upload<DocumentItem>("/documents/", form);
-      toast.success("Document uploaded successfully.");
+      toast.success(
+        extraSections.length > 1
+          ? `Document uploaded & shared with ${extraSections.length} sections.`
+          : "Document uploaded successfully."
+      );
       onUploaded(doc);
       onOpenChange(false);
     } catch (error) {
@@ -248,6 +279,7 @@ export function UploadDocumentDialog({
                   setValue("branch", v ?? "");
                   setValue("section", "");
                   setValue("subject", "");
+                  setSharedSections([]);
                 }}
                 disabled={lockBranchSection}
               >
@@ -283,6 +315,39 @@ export function UploadDocumentDialog({
               </Select>
             </div>
           </div>
+
+          {isAdmin && selectedBranch && (
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1.5">
+                <Share2 className="size-3.5 text-muted-foreground" /> Share with additional sections
+                <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <div className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border p-3">
+                {shareableSections.map((s) => (
+                  <label
+                    key={s.id}
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
+                  >
+                    <Checkbox
+                      checked={sharedSections.includes(s.id)}
+                      onCheckedChange={(v) => toggleShared(s.id, v === true)}
+                    />
+                    <span className="truncate">
+                      {s.branch_name} - Sec {s.name}
+                    </span>
+                  </label>
+                ))}
+                {shareableSections.length === 0 && (
+                  <p className="col-span-2 text-xs text-muted-foreground">
+                    No other sections in this branch.
+                  </p>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Students in the selected sections will see this document.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">

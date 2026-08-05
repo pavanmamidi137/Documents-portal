@@ -191,16 +191,32 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
       {/* Footer — profile + logout */}
       <div className="shrink-0 border-t p-3">
         <div className={cn("flex items-center gap-3 rounded-lg px-2 py-2", compact && "flex-col gap-2 px-0")}>
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 dark:text-indigo-400">
-            {initials(user?.full_name ?? "?")}
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Link
+                  href="/profile"
+                  onClick={onClose}
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 transition-transform hover:scale-105 dark:text-indigo-400"
+                  aria-label="Open profile"
+                >
+                  {initials(user?.full_name ?? "?")}
+                </Link>
+              }
+            />
+            <TooltipContent>Profile</TooltipContent>
+          </Tooltip>
           {!compact && (
-            <div className="min-w-0 flex-1">
+            <Link
+              href="/profile"
+              onClick={onClose}
+              className="min-w-0 flex-1 rounded-md transition-colors hover:text-foreground"
+            >
               <p className="truncate text-sm font-medium">{user?.full_name}</p>
               <p className="truncate text-[11px] capitalize text-muted-foreground">
                 {user?.role_label.toLowerCase()}
               </p>
-            </div>
+            </Link>
           )}
           <Tooltip>
             <TooltipTrigger

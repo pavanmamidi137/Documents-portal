@@ -101,6 +101,7 @@ Default super admin after `seed_data`: **roll number `admin` / password `Admin@1
 - **Students** — `GET/POST/PATCH/DELETE /students/`, `POST /students/import_csv/`, `GET /students/export_csv/`, `POST /students/{id}/promote|demote|activate|deactivate|reset_password/`
 - **Documents** — `GET/POST/DELETE /documents/` (multipart upload), `POST /documents/{id}/download/`, `GET /documents/export_csv/`
 - **Announcements** — `GET/POST/PATCH/DELETE /announcements/`
+- **Documents** — `GET/POST /documents/` (upload once, `sections: [ids]` shares one file to many sections), `POST /documents/{id}/share/` (admin, share to more sections), `POST /documents/{id}/fork/` (CR/admin, copy a document into a section without re-uploading), `GET /documents/forkable/` (documents from other sections available to fork), `POST /documents/{id}/download/`, `GET /documents/export_csv/`
 - **Other** — `GET /dashboard/` (role-aware), `GET /search/?q=`, `GET /audit-logs/` (+ `POST /audit-logs/clear/` for selected ids or `{all: true}`), `GET/PUT /site-theme/` (public read / admin set, 7 color themes), `GET /health/`
 
 All endpoints (except login/refresh/health) require `Authorization: Bearer <access_token>`.

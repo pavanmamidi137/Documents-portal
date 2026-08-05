@@ -35,6 +35,8 @@ class AuditLog(models.Model):
         DOCUMENT_UPLOAD = "DOCUMENT_UPLOAD", "Document Upload"
         DOCUMENT_DELETE = "DOCUMENT_DELETE", "Document Delete"
         DOCUMENT_DOWNLOAD = "DOCUMENT_DOWNLOAD", "Document Download"
+        DOCUMENT_SHARE = "DOCUMENT_SHARE", "Document Shared"
+        DOCUMENT_FORK = "DOCUMENT_FORK", "Document Forked"
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -273,3 +273,185 @@ class DocumentApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Only PDF, PPT", str(response.data))
         mock_upload.assert_not_called()
+
+    def test_admin_upload_to_multiple_sections(self, mock_delete, mock_upload):
+        """One upload + sections list creates one row per section."""
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/multi.pdf",
+            "public_id": "documents/cse/a/3-1/notes/dbms/multi123",
+        }
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.post(
+            "/api/documents/",
+            {
+                "title": "Shared Notes",
+                "file": SimpleUploadedFile("notes.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+                "branch": self.branch.id,
+                "sections": [self.section.id, self.other_section.id],
+                "semester": self.semester.id,
+                "category": self.category.id,
+                "subject": self.subject.id,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Document.objects.count(), 2)
+        self.assertEqual(Document.objects.filter(public_id="documents/cse/a/3-1/notes/dbms/multi123").count(), 2)
+        mock_upload.assert_called_once()
+
+    def test_cr_upload_sections_limited_to_own_section(self, mock_delete, mock_upload):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.cr)}")
+        response = client.post(
+            "/api/documents/",
+            {
+                "title": "CR Notes",
+                "file": SimpleUploadedFile("notes.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+                "branch": self.branch.id,
+                "sections": [self.section.id, self.other_section.id],
+                "semester": self.semester.id,
+                "category": self.category.id,
+                "subject": self.subject.id,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        mock_upload.assert_not_called()
+
+
+@patch("apps.documents.services.cloudinary.api.delete_resources")
+class ShareForkTests(TestCase):
+    """Multi-section sharing and CR fork behaviour (no Cloudinary upload needed)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.semester = Semester.objects.create(name="3-1", order=5)
+        self.category = Category.objects.create(name="Notes")
+        self.subject = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.semester, branch=self.branch
+        )
+        self.cr_a = User.objects.create_user(
+            roll_number="cra", password="x", full_name="CR A",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        self.cr_b = User.objects.create_user(
+            roll_number="crb", password="x", full_name="CR B",
+            branch=self.branch, section=self.section_b, role=User.Role.CR,
+        )
+        self.student = User.objects.create_user(
+            roll_number="st1", password="x", full_name="Student",
+            branch=self.branch, section=self.section_b,
+        )
+        self.source = Document.objects.create(
+            title="DBMS Unit 1", description="",
+            file_name="notes.pdf", file_size=1024,
+            cloudinary_url="https://res.cloudinary.com/x/raw/upload/v1/n.pdf",
+            public_id="shared/pid-1",
+            branch=self.branch, section=self.section_a,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.cr_a,
+        )
+
+    def _client(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
+        return client
+
+    def test_admin_shares_to_other_section(self, mock_delete):
+        client = self._client(self.admin)
+        response = client.post(
+            f"/api/documents/{self.source.id}/share/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        copy = Document.objects.filter(section_id=self.section_b.id, public_id="shared/pid-1").first()
+        self.assertIsNotNone(copy)
+        self.assertEqual(copy.forked_from_id, self.source.id)
+
+    def test_admin_share_dedupes_existing_sections(self, mock_delete):
+        client = self._client(self.admin)
+        client.post(
+            f"/api/documents/{self.source.id}/share/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        )
+        response = client.post(
+            f"/api/documents/{self.source.id}/share/",
+            {"sections": [self.section_a.id, self.section_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.data["count"], 0)  # both already covered
+        self.assertEqual(Document.objects.filter(public_id="shared/pid-1").count(), 2)
+
+    def test_cr_cannot_share(self, mock_delete):
+        client = self._client(self.cr_b)
+        response = client.post(
+            f"/api/documents/{self.source.id}/share/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_cr_forks_into_own_section(self, mock_delete):
+        client = self._client(self.cr_b)
+        response = client.post(f"/api/documents/{self.source.id}/fork/")
+        self.assertEqual(response.status_code, 201, response.data)
+        forked = Document.objects.get(section_id=self.section_b.id, public_id="shared/pid-1")
+        self.assertEqual(forked.forked_from_id, self.source.id)
+        self.assertEqual(forked.uploaded_by_id, self.cr_b.id)
+
+    def test_cr_cannot_fork_duplicate(self, mock_delete):
+        client = self._client(self.cr_b)
+        client.post(f"/api/documents/{self.source.id}/fork/")
+        response = client.post(f"/api/documents/{self.source.id}/fork/")
+        self.assertEqual(response.status_code, 400)
+
+    def test_forkable_lists_other_sections_only(self, mock_delete):
+        client = self._client(self.cr_b)
+        response = client.get("/api/documents/forkable/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["id"], self.source.id)
+        # After forking, the source no longer appears (already in own section).
+        client.post(f"/api/documents/{self.source.id}/fork/")
+        self.assertEqual(client.get("/api/documents/forkable/").data["results"], [])
+
+    def test_student_cannot_fork(self, mock_delete):
+        client = self._client(self.student)
+        response = client.post(f"/api/documents/{self.source.id}/fork/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_delete_copy_keeps_cloudinary_file(self, mock_delete):
+        copy = Document.objects.create(
+            title="DBMS Unit 1", description="",
+            file_name="notes.pdf", file_size=1024,
+            cloudinary_url="https://res.cloudinary.com/x/raw/upload/v1/n.pdf",
+            public_id="shared/pid-1",
+            branch=self.branch, section=self.section_b,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.cr_b,
+            forked_from=self.source,
+        )
+        client = self._client(self.cr_b)
+        response = client.delete(f"/api/documents/{copy.id}/")
+        self.assertEqual(response.status_code, 204)
+        # The file is still referenced by the source row -> never sent to Cloudinary.
+        mock_delete.assert_not_called()
+        self.assertTrue(Document.objects.filter(pk=self.source.id).exists())
+
+    def test_delete_last_copy_removes_cloudinary_file(self, mock_delete):
+        client = self._client(self.cr_a)
+        response = client.delete(f"/api/documents/{self.source.id}/")
+        self.assertEqual(response.status_code, 204)
+        mock_delete.assert_called_once_with(["shared/pid-1"], resource_type="raw")
+
