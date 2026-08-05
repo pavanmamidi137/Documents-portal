@@ -1,0 +1,52 @@
+# Render Blueprint - College Document Management Portal
+# Deploy both services from the Render dashboard: New + -> Blueprint -> select this repo.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Backend - Django REST API (Gunicorn)
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: documents-portal-api
+    runtime: python
+    rootDir: backend
+    buildCommand: ./build.sh
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --timeout 120
+    healthCheckPath: /api/health/
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: "*"
+      - key: DATABASE_URL
+        sync: false # paste the Supabase transaction-mode pooler URL
+      - key: DIRECT_URL
+        sync: false # paste the Supabase session-mode pooler URL
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false # e.g. https://documents-portal.onrender.com
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: MAX_PDF_SIZE_MB
+        value: "20"
+      - key: ADMIN_ROLL_NUMBER
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false # your super admin password
+
+  # ---------------------------------------------------------------------------
+  # Frontend - Next.js (Node)
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: documents-portal-web
+    runtime: node
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        sync: false # e.g. https://documents-portal-api.onrender.com/api

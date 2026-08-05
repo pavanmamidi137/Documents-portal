@@ -1,0 +1,109 @@
+from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+from .models import User
+
+
+class UserSerializer(serializers.ModelSerializer):
+    role_label = serializers.CharField(read_only=True)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    section_name = serializers.CharField(source="section.name", read_only=True, default=None)
+
+    class Meta:
+        model = User
+        fields = [
+            "id", "roll_number", "full_name", "email", "phone", "role", "role_label",
+            "branch", "branch_name", "section", "section_name",
+            "is_active", "is_staff", "is_super_admin", "is_cr", "is_student", "date_joined",
+        ]
+        read_only_fields = ["id", "date_joined", "is_staff"]
+
+
+class LoginSerializer(TokenObtainPairSerializer):
+    """Extends JWT login to also return the user profile."""
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        data["user"] = UserSerializer(self.user).data
+        return data
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(trim_whitespace=False)
+    new_password = serializers.CharField(min_length=6, trim_whitespace=False)
+
+    def validate_old_password(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value
+
+    def validate_new_password(self, value):
+        if value == self.initial_data.get("old_password"):
+            raise serializers.ValidationError("New password must differ from the current password.")
+        return value
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    new_password = serializers.CharField(min_length=6, trim_whitespace=False)
+
+
+class StudentCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=6, required=False, allow_blank=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id", "roll_number", "full_name", "email", "phone",
+            "branch", "section", "password", "is_active",
+        ]
+        read_only_fields = ["id"]
+
+    def validate_roll_number(self, value):
+        value = value.strip()
+        if User.objects.filter(roll_number=value).exists():
+            raise serializers.ValidationError("A student with this roll number already exists.")
+        return value
+
+    def validate_email(self, value):
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A student with this email already exists.")
+        return value
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        # CRs may only create students inside their own section.
+        if user.is_cr:
+            attrs["role"] = User.Role.STUDENT
+            attrs["branch"] = user.branch
+            attrs["section"] = user.section
+        else:
+            attrs.setdefault("role", User.Role.STUDENT)
+            if not attrs.get("branch"):
+                raise serializers.ValidationError({"branch": "Branch is required."})
+            if not attrs.get("section"):
+                raise serializers.ValidationError({"section": "Section is required."})
+        return attrs
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None) or "Student@123"
+        return User.objects.create_user(
+            validated_data.pop("roll_number"), password, **validated_data
+        )
+
+
+class StudentUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "full_name", "email", "phone", "branch", "section", "is_active"]
+        read_only_fields = ["id", "role"]
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        if user.is_cr:
+            # CR cannot move students across branches/sections, and cannot
+            # activate/deactivate them (reserved for the Super Admin).
+            attrs.pop("branch", None)
+            attrs.pop("section", None)
+            attrs.pop("is_active", None)
+        return attrs
