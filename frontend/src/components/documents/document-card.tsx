@@ -1,8 +1,10 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Download, Eye, FileText, Trash2 } from "lucide-react";
+import { Download, Eye, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+
+import { getDocumentTypeMeta } from "@/lib/document-types";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +20,9 @@ interface Props {
 }
 
 export function DocumentCard({ document, index = 0, canDelete = false, onDeleted }: Props) {
+  const typeMeta = getDocumentTypeMeta(document.file_name);
+  const FileIcon = typeMeta.Icon;
+
   const handleDownload = async () => {
     try {
       const res = await http.post<{ download_url: string }>(`/documents/${document.id}/download/`);
@@ -45,8 +50,8 @@ export function DocumentCard({ document, index = 0, canDelete = false, onDeleted
       className="group flex flex-col rounded-xl border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
     >
       <div className="flex items-start gap-3">
-        <div className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-rose-500/15 to-orange-500/15 text-rose-500 ring-1 ring-rose-500/20">
-          <FileText className="size-5" />
+        <div className={`flex size-11 shrink-0 items-center justify-center rounded-lg ring-1 ${typeMeta.classes}`}>
+          <FileIcon className="size-5" />
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold" title={document.title}>

@@ -4,20 +4,43 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
-import { Sidebar } from "@/components/layout/sidebar";
+import { Sidebar, type SidebarMode } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { useAuth } from "@/lib/auth";
+
+const SIDEBAR_STORAGE_KEY = "portal_sidebar_mode";
+
+function loadSidebarMode(): SidebarMode {
+  if (typeof window === "undefined") return "expanded";
+  try {
+    const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    if (saved === "collapsed" || saved === "hidden") return saved;
+  } catch {
+    /* ignore */
+  }
+  return "expanded";
+}
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // mobile overlay
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(loadSidebarMode);
 
   useEffect(() => {
     if (!loading && !user) {
       router.replace("/login");
     }
   }, [loading, user, router]);
+
+  const changeSidebarMode = (mode: SidebarMode) => {
+    setSidebarMode(mode);
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  };
 
   if (loading || !user) {
     return (
@@ -32,9 +55,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        mode={sidebarMode}
+        onModeChange={changeSidebarMode}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onOpen={() => setSidebarOpen(true)}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar onMenuClick={() => setSidebarOpen(true)} />
+        <Topbar
+          onMenuClick={() => setSidebarOpen(true)}
+          sidebarMode={sidebarMode}
+          onSidebarModeChange={changeSidebarMode}
+        />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">{children}</div>
         </main>

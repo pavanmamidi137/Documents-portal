@@ -2,6 +2,20 @@ from django.conf import settings
 from django.db import models
 
 
+class SiteSetting(models.Model):
+    """Small key/value store for site-wide settings (e.g. the portal theme)."""
+
+    key = models.CharField(max_length=60, unique=True)
+    value = models.CharField(max_length=120, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["key"]
+
+    def __str__(self) -> str:
+        return f"{self.key} = {self.value}"
+
+
 class AuditLog(models.Model):
     """Immutable audit trail for security-sensitive actions."""
 

@@ -216,6 +216,41 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       key: "actions",
       header: "",
       cell: (s) => (
+        <div className="flex items-center justify-end gap-0.5">
+          {isAdmin && s.role === "STUDENT" && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8 text-violet-500 hover:bg-violet-500/10 hover:text-violet-500"
+              title={`Promote ${s.full_name} to CR`}
+              aria-label={`Promote ${s.full_name} to CR`}
+              onClick={() =>
+                runAction(
+                  () => http.post(`/students/${s.id}/promote/`),
+                  `${s.full_name} promoted to CR.`
+                )
+              }
+            >
+              <ArrowUpCircle className="size-4" />
+            </Button>
+          )}
+          {isAdmin && s.role === "CR" && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8 text-orange-500 hover:bg-orange-500/10 hover:text-orange-500"
+              title={`Demote ${s.full_name} to Student`}
+              aria-label={`Demote ${s.full_name} to Student`}
+              onClick={() =>
+                runAction(
+                  () => http.post(`/students/${s.id}/demote/`),
+                  `${s.full_name} demoted to student.`
+                )
+              }
+            >
+              <ArrowDownCircle className="size-4" />
+            </Button>
+          )}
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" size="sm">Actions</Button>} />
           <DropdownMenuContent align="end" className="w-48">
@@ -259,6 +294,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       ),
     },
   ];

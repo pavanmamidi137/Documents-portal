@@ -9,7 +9,7 @@ from apps.college.models import Branch, Category, Section, Semester, Subject
 
 from .models import Document
 from .serializers import DocumentCreateSerializer
-from .services import build_folder, validate_pdf
+from .services import build_folder, validate_document
 
 
 class FolderTests(TestCase):
@@ -26,15 +26,45 @@ class FolderTests(TestCase):
         )
 
 
-class PdfValidationTests(TestCase):
-    def test_rejects_non_pdf(self):
-        fake = SimpleUploadedFile("notes.txt", b"hello", content_type="text/plain")
+class DocumentValidationTests(TestCase):
+    def test_rejects_unsupported_extension(self):
+        fake = SimpleUploadedFile("notes.exe", b"MZ\x90", content_type="application/octet-stream")
         with self.assertRaises(Exception):
-            validate_pdf(fake)
+            validate_document(fake)
 
     def test_accepts_pdf(self):
         fake = SimpleUploadedFile("notes.pdf", b"%PDF-1.4 fake", content_type="application/pdf")
-        validate_pdf(fake)  # should not raise
+        validate_document(fake)  # should not raise
+
+    def test_accepts_pptx(self):
+        fake = SimpleUploadedFile(
+            "slides.pptx", b"PK\x03\x04fakezip",
+            content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )
+        validate_document(fake)
+
+    def test_accepts_docx(self):
+        fake = SimpleUploadedFile(
+            "report.docx", b"PK\x03\x04fakezip",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        validate_document(fake)
+
+    def test_accepts_old_binary_ppt(self):
+        fake = SimpleUploadedFile(
+            "deck.ppt", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1fake",
+            content_type="application/vnd.ms-powerpoint",
+        )
+        validate_document(fake)
+
+    def test_accepts_txt(self):
+        fake = SimpleUploadedFile("notes.txt", b"plain text notes", content_type="text/plain")
+        validate_document(fake)
+
+    def test_rejects_renamed_html_pretending_to_be_pdf(self):
+        fake = SimpleUploadedFile("evil.pdf", b"<html>nope</html>", content_type="application/pdf")
+        with self.assertRaises(Exception):
+            validate_document(fake)
 
 
 class DocumentCreateSerializerTests(TestCase):
@@ -193,4 +223,53 @@ class DocumentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("not a valid PDF", str(response.data))
+        mock_upload.assert_not_called()
+
+    def test_pptx_upload_succeeds(self, mock_delete, mock_upload):
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/slides.pptx",
+            "public_id": "documents/cse/a/3-1/notes/dbms/slides123",
+        }
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.post(
+            "/api/documents/",
+            {
+                "title": "Unit 1 Slides",
+                "file": SimpleUploadedFile(
+                    "slides.pptx", b"PK\x03\x04fakezip",
+                    content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ),
+                "branch": self.branch.id,
+                "section": self.section.id,
+                "semester": self.semester.id,
+                "category": self.category.id,
+                "subject": self.subject.id,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Document.objects.first().file_name, "slides.pptx")
+
+    def test_unsupported_format_rejected(self, mock_delete, mock_upload):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.post(
+            "/api/documents/",
+            {
+                "title": "Zipped Archive",
+                "file": SimpleUploadedFile(
+                    "archive.zip", b"PK\x03\x04fakezip",
+                    content_type="application/zip",
+                ),
+                "branch": self.branch.id,
+                "section": self.section.id,
+                "semester": self.semester.id,
+                "category": self.category.id,
+                "subject": self.subject.id,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Only PDF, PPT", str(response.data))
         mock_upload.assert_not_called()

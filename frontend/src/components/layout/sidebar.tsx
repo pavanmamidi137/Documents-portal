@@ -1,17 +1,21 @@
 "use client";
 
+import { useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   BookOpenText,
-  Boxes,
   Building2,
+  ChevronsLeft,
+  ChevronsRight,
   FolderKanban,
   GraduationCap,
   Layers,
   LayoutDashboard,
+  LogOut,
   Megaphone,
+  PanelLeftClose,
   ScrollText,
   Settings2,
   Tags,
@@ -21,6 +25,9 @@ import {
 
 import { useAuth } from "@/lib/auth";
 import { cn, initials } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+export type SidebarMode = "expanded" | "collapsed" | "hidden";
 
 interface NavItem {
   href: string;
@@ -44,19 +51,19 @@ const ADMIN_ONLY: NavItem[] = [
   { href: "/admin/audit-logs", label: "Audit Logs", icon: ScrollText },
 ];
 
-const CR_ONLY: NavItem[] = [
-  { href: "/cr/students", label: "Students", icon: Users },
-];
+const CR_ONLY: NavItem[] = [{ href: "/cr/students", label: "Students", icon: Users }];
 
-export function Sidebar({
-  open,
-  onClose,
-}: {
+interface SidebarProps {
+  mode: SidebarMode;
+  onModeChange: (mode: SidebarMode) => void;
   open: boolean;
   onClose: () => void;
-}) {
+  onOpen: () => void;
+}
+
+export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarProps) {
   const pathname = usePathname();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   const items: NavItem[] = [];
   if (user?.is_super_admin) {
@@ -67,38 +74,94 @@ export function Sidebar({
     items.push(...COMMON);
   }
 
-  const nav = (
+  const collapsed = mode === "collapsed";
+
+  const headerButtons = (compact: boolean) => (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              onClick={() => onModeChange(compact ? "expanded" : "collapsed")}
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label={compact ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {compact ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
+            </button>
+          }
+        />
+        <TooltipContent>{compact ? "Expand" : "Minimize"}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              onClick={() => onModeChange("hidden")}
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Hide sidebar"
+            >
+              <PanelLeftClose className="size-4" />
+            </button>
+          }
+        />
+        <TooltipContent>Hide sidebar</TooltipContent>
+      </Tooltip>
+    </>
+  );
+
+  /**
+   * @param compact  icons-only layout (desktop collapsed mode)
+   * @param showControls  render the desktop collapse/hide buttons (never on mobile)
+   */
+  const nav = (compact: boolean, showControls: boolean) => (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center gap-3 border-b px-5">
-        <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-md shadow-indigo-500/30">
-          <GraduationCap className="size-5 text-white" />
-        </div>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight">Document Portal</p>
-          <p className="truncate text-[11px] text-muted-foreground">College Management</p>
+      {/* Header */}
+      <div
+        className={cn(
+          "flex min-h-16 shrink-0 items-center gap-3 border-b px-3",
+          compact && "flex-col gap-2 px-1 py-2"
+        )}
+      >
+        <Link
+          href="/dashboard"
+          onClick={onClose}
+          className={cn("flex items-center gap-3", compact && "flex-col gap-1.5")}
+        >
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-md shadow-indigo-500/30">
+            <GraduationCap className="size-5 text-white" />
+          </div>
+          {!compact && (
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold leading-tight">Document Portal</p>
+              <p className="truncate text-[11px] text-muted-foreground">College Management</p>
+            </div>
+          )}
+        </Link>
+        <div className={cn("ml-auto flex items-center gap-1", compact && "ml-0 mt-1")}>
+          {showControls && headerButtons(compact)}
         </div>
         <button
           onClick={onClose}
-          className="ml-auto rounded-md p-1 text-muted-foreground hover:bg-muted lg:hidden"
+          className="rounded-md p-1 text-muted-foreground hover:bg-muted lg:hidden"
           aria-label="Close sidebar"
         >
           <X className="size-4" />
         </button>
       </div>
 
+      {/* Nav */}
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
         {items.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
-          return (
+          const link = (
             <Link
               key={item.href}
               href={item.href}
               onClick={onClose}
               className={cn(
                 "relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                active
-                  ? "text-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                compact && "justify-center px-0 py-2.5",
+                active ? "text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
               {active && (
@@ -109,24 +172,53 @@ export function Sidebar({
                 />
               )}
               <item.icon className="relative z-10 size-4.5 shrink-0" />
-              <span className="relative z-10">{item.label}</span>
+              {!compact && <span className="relative z-10">{item.label}</span>}
             </Link>
           );
+
+          if (compact) {
+            return (
+              <Tooltip key={item.href}>
+                <TooltipTrigger render={link} />
+                <TooltipContent side="right">{item.label}</TooltipContent>
+              </Tooltip>
+            );
+          }
+          return link;
         })}
       </nav>
 
-      <div className="border-t p-3">
-        <div className="flex items-center gap-3 rounded-lg px-2 py-2">
-          <div className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 dark:text-indigo-400">
+      {/* Footer — profile + logout */}
+      <div className="shrink-0 border-t p-3">
+        <div className={cn("flex items-center gap-3 rounded-lg px-2 py-2", compact && "flex-col gap-2 px-0")}>
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 dark:text-indigo-400">
             {initials(user?.full_name ?? "?")}
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{user?.full_name}</p>
-            <p className="truncate text-[11px] capitalize text-muted-foreground">
-              {user?.role_label.toLowerCase()}
-            </p>
-          </div>
-          <Boxes className="ml-auto size-4 text-muted-foreground/50" />
+          {!compact && (
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{user?.full_name}</p>
+              <p className="truncate text-[11px] capitalize text-muted-foreground">
+                {user?.role_label.toLowerCase()}
+              </p>
+            </div>
+          )}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={logout}
+                  className={cn(
+                    "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive",
+                    !compact && "ml-auto"
+                  )}
+                  aria-label="Log out"
+                >
+                  <LogOut className="size-4" />
+                </button>
+              }
+            />
+            <TooltipContent>Log out</TooltipContent>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -135,21 +227,80 @@ export function Sidebar({
   return (
     <>
       {/* Desktop */}
-      <aside className="hidden w-64 shrink-0 border-r bg-sidebar lg:block">{nav}</aside>
-      {/* Mobile overlay */}
-      {open && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-          <motion.aside
-            initial={{ x: "-100%" }}
-            animate={{ x: 0 }}
-            transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className="absolute inset-y-0 left-0 w-72 border-r bg-sidebar shadow-2xl"
-          >
-            {nav}
-          </motion.aside>
-        </div>
+      {mode !== "hidden" && (
+        <motion.aside
+          initial={false}
+          animate={{ width: collapsed ? 76 : 256 }}
+          transition={{ type: "spring", stiffness: 300, damping: 32 }}
+          className="hidden shrink-0 overflow-hidden border-r bg-sidebar lg:block"
+        >
+          {nav(collapsed, true)}
+        </motion.aside>
       )}
+
+      {/* Mobile edge swipe handle (drag right to open) */}
+      {!open && (
+        <EdgeSwipeHandle onOpen={onOpen} />
+      )}
+
+      {/* Mobile overlay */}
+      <AnimatePresence>
+        {open && (
+          <div className="fixed inset-0 z-50 lg:hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/50"
+              onClick={onClose}
+            />
+            <motion.aside
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 34 }}
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={{ left: 0.22, right: 0 }}
+              onDragEnd={(_, info) => {
+                if (info.offset.x < -64 || info.velocity.x < -500) onClose();
+              }}
+              className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r bg-sidebar shadow-2xl"
+            >
+              {nav(false, false)}
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
     </>
+  );
+}
+
+/** Small left-edge grabber: tap or swipe right to open the mobile sidebar. */
+function EdgeSwipeHandle({ onOpen }: { onOpen: () => void }) {
+  const draggedRef = useRef(false);
+
+  return (
+    <motion.button
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.3}
+      onDragStart={() => {
+        draggedRef.current = false;
+      }}
+      onDrag={(_, info) => {
+        if (Math.abs(info.offset.x) > 6) draggedRef.current = true;
+      }}
+      onDragEnd={(_, info) => {
+        if (info.offset.x > 56 || info.velocity.x > 400) onOpen();
+      }}
+      onClick={() => {
+        if (!draggedRef.current) onOpen();
+      }}
+      className="fixed inset-y-0 left-0 z-40 flex w-4 cursor-ew-resize items-center justify-center lg:hidden"
+      aria-label="Swipe or tap to open sidebar"
+    >
+      <span className="h-16 w-1.5 rounded-full bg-foreground/15 transition-colors hover:bg-foreground/30" />
+    </motion.button>
   );
 }

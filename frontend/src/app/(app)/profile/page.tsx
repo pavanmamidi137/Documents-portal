@@ -13,10 +13,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Palette } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { useAuth } from "@/lib/auth";
 import { http } from "@/lib/api";
-import { formatDate, getErrorMessage, initials, roleColor } from "@/lib/utils";
+import { useSiteTheme } from "@/lib/site-theme";
+import { cn, formatDate, getErrorMessage, initials, roleColor } from "@/lib/utils";
 
 const schema = z
   .object({
@@ -30,6 +32,82 @@ const schema = z
   });
 
 type FormValues = z.infer<typeof schema>;
+
+function ThemePickerCard() {
+  const { theme, themes, setTheme } = useSiteTheme();
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const apply = async (key: string) => {
+    if (key === theme || saving) return;
+    setSaving(key);
+    try {
+      await setTheme(key);
+      toast.success(`Theme changed to ${themes.find((t) => t.key === key)?.label}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Palette className="size-5 text-primary" /> Portal Theme
+          </CardTitle>
+          <CardDescription>
+            Choose the color theme for the whole college. It is applied instantly for everyone —
+            students, CRs and admins.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {themes.map((t) => {
+              const active = t.key === theme;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => apply(t.key)}
+                  disabled={!!saving}
+                  className={cn(
+                    "group flex items-center gap-3 rounded-xl border p-3 text-left transition-all",
+                    active
+                      ? "border-primary bg-primary/5 ring-2 ring-primary/30"
+                      : "hover:-translate-y-0.5 hover:border-primary/40 hover:bg-muted/40"
+                  )}
+                >
+                  <span
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full ring-1 ring-foreground/10"
+                    style={{
+                      background: `linear-gradient(135deg, ${t.colors[0]}, ${t.colors[1]})`,
+                    }}
+                  >
+                    {active && <span className="size-3 rounded-full bg-white/90 shadow" />}
+                    {saving === t.key && <span className="size-3 animate-ping rounded-full bg-white/70" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{t.label}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{t.description}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-4 text-xs text-muted-foreground">
+            Tip: pair the theme with the light/dark toggle in the top bar.
+          </p>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -62,6 +140,12 @@ export default function ProfilePage() {
   return (
     <div>
       <PageHeader title="My Profile" description="Your account details and security settings." />
+
+      {user.is_super_admin && (
+        <div className="mb-6">
+          <ThemePickerCard />
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>

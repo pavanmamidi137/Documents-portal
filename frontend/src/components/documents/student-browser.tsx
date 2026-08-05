@@ -209,7 +209,14 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
                   <BookOpen className="size-5" />
                 </div>
                 <div>
-                  <p className="font-semibold">{subject.name}</p>
+                  <p className="font-semibold">
+                    {subject.name}
+                    {subject.code && (
+                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                        ({subject.code})
+                      </span>
+                    )}
+                  </p>
                   <p className="text-xs text-muted-foreground">{count} documents</p>
                 </div>
               </motion.button>

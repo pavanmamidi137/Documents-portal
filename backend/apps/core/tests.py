@@ -1,10 +1,13 @@
 from types import SimpleNamespace
 
 from django.test import TestCase
+from rest_framework.test import APIClient
 
 from apps.accounts.models import User
+from apps.core.models import AuditLog, SiteSetting
 from apps.core.permissions import IsSuperAdmin, IsSuperAdminOrCR, IsStudent
 from apps.core.utils import csv_safe
+from apps.core.views_settings import get_site_theme
 
 
 class CsvSafeTests(TestCase):
@@ -42,3 +45,95 @@ class PermissionTests(TestCase):
         self.assertFalse(self._user_permission(IsSuperAdminOrCR, self.student))
         self.assertTrue(self._user_permission(IsStudent, self.student))
         self.assertFalse(self._user_permission(IsStudent, self.cr))
+
+
+class SiteThemeTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(roll_number="admin", password="x", full_name="Admin")
+        self.cr = User.objects.create_user(
+            roll_number="cr1", password="x", full_name="CR", role=User.Role.CR
+        )
+
+    def _token(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        return str(AccessToken.for_user(user))
+
+    def test_public_get_returns_default_theme(self):
+        client = APIClient()
+        response = client.get("/api/site-theme/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["theme"], "default")
+
+    def test_admin_can_change_theme(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.put(
+            "/api/site-theme/", {"theme": "flame"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["theme"], "flame")
+        self.assertEqual(get_site_theme(), "flame")
+        self.assertEqual(SiteSetting.objects.get(key="site_theme").value, "flame")
+
+        # A fresh anonymous request now sees the new theme.
+        anon = APIClient()
+        self.assertEqual(anon.get("/api/site-theme/").data["theme"], "flame")
+
+    def test_non_admin_cannot_change_theme(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.cr)}")
+        response = client.put("/api/site-theme/", {"theme": "ocean"}, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(get_site_theme(), "default")
+
+    def test_unknown_theme_rejected(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.put("/api/site-theme/", {"theme": "neon"}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+
+class AuditLogClearTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(roll_number="admin", password="x", full_name="Admin")
+        self.cr = User.objects.create_user(
+            roll_number="cr1", password="x", full_name="CR", role=User.Role.CR
+        )
+        for i in range(5):
+            AuditLog.objects.create(actor=self.admin, action="CREATE", target_type="Branch", details={"n": i})
+
+    def _client(self, user=None):
+        client = APIClient()
+        if user:
+            from rest_framework_simplejwt.tokens import AccessToken
+
+            client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
+        return client
+
+    def test_clear_selected(self):
+        client = self._client(self.admin)
+        ids = list(AuditLog.objects.values_list("id", flat=True)[:2])
+        response = client.post("/api/audit-logs/clear/", {"ids": ids}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        # The clear action itself is logged afterwards, so 5 - 2 + 1 = 4.
+        self.assertEqual(AuditLog.objects.count(), 4)
+
+    def test_clear_all(self):
+        client = self._client(self.admin)
+        response = client.post("/api/audit-logs/clear/", {"all": True}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 5)
+        # The clearing action is logged after the wipe, so exactly 1 survives.
+        self.assertEqual(AuditLog.objects.count(), 1)
+
+    def test_requires_payload(self):
+        client = self._client(self.admin)
+        response = client.post("/api/audit-logs/clear/", {}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_cr_cannot_clear(self):
+        client = self._client(self.cr)
+        response = client.post("/api/audit-logs/clear/", {"all": True}, format="json")
+        self.assertEqual(response.status_code, 403)

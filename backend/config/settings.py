@@ -181,7 +181,10 @@ CLOUDINARY = {
     "API_KEY": os.getenv("CLOUDINARY_API_KEY", ""),
     "API_SECRET": os.getenv("CLOUDINARY_API_SECRET", ""),
 }
-MAX_PDF_SIZE_MB = int(os.getenv("MAX_PDF_SIZE_MB", "20"))
+# Max upload size for documents (PDF / PPT / PPTX / DOC / DOCX / TXT).
+MAX_DOCUMENT_SIZE_MB = int(
+    os.getenv("MAX_DOCUMENT_SIZE_MB", os.getenv("MAX_PDF_SIZE_MB", "20"))
+)
 
 # ---------------------------------------------------------------------------
 # Static files (Whitenoise for Render)

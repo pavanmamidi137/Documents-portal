@@ -3,7 +3,19 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Menu, Moon, Search, Sun, UserRound, LogOut, KeyRound } from "lucide-react";
+import {
+  ChevronsLeft,
+  ChevronsRight,
+  Menu,
+  Moon,
+  PanelLeft,
+  PanelLeftClose,
+  Search,
+  Sun,
+  UserRound,
+  LogOut,
+  KeyRound,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 
 import { Button } from "@/components/ui/button";
@@ -19,8 +31,15 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/lib/auth";
 import { initials } from "@/lib/utils";
+import type { SidebarMode } from "./sidebar";
 
-export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
+interface TopbarProps {
+  onMenuClick: () => void;
+  sidebarMode: SidebarMode;
+  onSidebarModeChange: (mode: SidebarMode) => void;
+}
+
+export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: TopbarProps) {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
@@ -42,6 +61,47 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
       >
         <Menu className="size-5" />
       </button>
+
+      {/* Desktop sidebar controls: show / minimize / hide */}
+      <div className="hidden items-center gap-1 lg:flex">
+        {sidebarMode === "hidden" ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onSidebarModeChange("expanded")}
+            className="text-muted-foreground"
+          >
+            <PanelLeft className="size-4" /> Sidebar
+          </Button>
+        ) : (
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() =>
+                onSidebarModeChange(sidebarMode === "collapsed" ? "expanded" : "collapsed")
+              }
+              aria-label={sidebarMode === "collapsed" ? "Expand sidebar" : "Minimize sidebar"}
+              className="text-muted-foreground"
+            >
+              {sidebarMode === "collapsed" ? (
+                <ChevronsRight className="size-5" />
+              ) : (
+                <ChevronsLeft className="size-5" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSidebarModeChange("hidden")}
+              aria-label="Hide sidebar"
+              className="text-muted-foreground"
+            >
+              <PanelLeftClose className="size-5" />
+            </Button>
+          </>
+        )}
+      </div>
 
       <form onSubmit={submitSearch} className="relative hidden max-w-md flex-1 sm:block">
         <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />

@@ -7,6 +7,13 @@ import { z } from "zod";
 import { FileUp, Loader2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 
+import {
+  ALLOWED_UPLOAD_EXTENSIONS,
+  getDocumentTypeMeta,
+  isAllowedDocument,
+  MAX_DOCUMENT_SIZE_MB,
+} from "@/lib/document-types";
+
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,6 +67,29 @@ export function UploadDocumentDialog({
   const { user } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [fileError, setFileError] = useState("");
+  const fileMeta = file ? getDocumentTypeMeta(file.name) : null;
+
+  const handleFileChange = (f: File | null) => {
+    setFileError("");
+    if (!f) {
+      setFile(null);
+      return;
+    }
+    if (!isAllowedDocument(f.name)) {
+      setFileError(
+        `Unsupported format. Choose a ${ALLOWED_UPLOAD_EXTENSIONS.join(", ").toUpperCase()} file.`
+      );
+      setFile(null);
+      return;
+    }
+    if (f.size > MAX_DOCUMENT_SIZE_MB * 1024 * 1024) {
+      setFileError(`File exceeds the ${MAX_DOCUMENT_SIZE_MB} MB size limit.`);
+      setFile(null);
+      return;
+    }
+    setFile(f);
+  };
   const {
     register,
     handleSubmit,
@@ -107,13 +137,17 @@ export function UploadDocumentDialog({
         subject: "",
       });
       setFile(null);
+      setFileError("");
     }
   }, [open, reset, lockBranchSection, user?.branch, user?.section]);
 
-
   const onSubmit = async (values: FormValues) => {
     if (!file) {
-      toast.error("Please choose a PDF file.");
+      toast.error("Please choose a document file.");
+      return;
+    }
+    if (!isAllowedDocument(file.name)) {
+      toast.error("Unsupported file format.");
       return;
     }
     if (!values.branch || !values.section) {
@@ -151,7 +185,8 @@ export function UploadDocumentDialog({
             <UploadCloud className="size-5 text-primary" /> Upload Document
           </DialogTitle>
           <DialogDescription>
-            PDFs are stored securely in Cloudinary — only the link is saved in the database.
+            PDF, PPT, DOCX or TXT files are stored securely in Cloudinary — only the link is saved
+            in the database.
           </DialogDescription>
         </DialogHeader>
 
@@ -173,29 +208,35 @@ export function UploadDocumentDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>PDF File</Label>
+            <Label>Document File</Label>
             <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-colors hover:border-primary/50 hover:bg-muted/40">
-              <FileUp className="size-6 text-muted-foreground" />
-              {file ? (
-                <div>
+              {file && fileMeta ? (
+                <>
+                  <div className={`flex size-10 items-center justify-center rounded-lg ring-1 ${fileMeta.classes}`}>
+                    <fileMeta.Icon className="size-5" />
+                  </div>
                   <p className="text-sm font-medium text-foreground">{file.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                    {(file.size / 1024 / 1024).toFixed(2)} MB · {fileMeta.label}
                   </p>
-                </div>
+                </>
               ) : (
                 <>
-                  <p className="text-sm font-medium">Click to choose a PDF</p>
-                  <p className="text-xs text-muted-foreground">PDF only, max 20 MB</p>
+                  <FileUp className="size-6 text-muted-foreground" />
+                  <p className="text-sm font-medium">Click to choose a document</p>
+                  <p className="text-xs text-muted-foreground">
+                    PDF, PPT, PPTX, DOC, DOCX or TXT · max {MAX_DOCUMENT_SIZE_MB} MB
+                  </p>
                 </>
               )}
               <input
                 type="file"
-                accept="application/pdf,.pdf"
+                accept=".pdf,.ppt,.pptx,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain"
                 className="hidden"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
               />
             </label>
+            {fileError && <p className="text-xs text-destructive">{fileError}</p>}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -206,6 +247,7 @@ export function UploadDocumentDialog({
                 onValueChange={(v) => {
                   setValue("branch", v ?? "");
                   setValue("section", "");
+                  setValue("subject", "");
                 }}
                 disabled={lockBranchSection}
               >
@@ -245,7 +287,13 @@ export function UploadDocumentDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>Semester</Label>
-              <Select value={selectedSemester} onValueChange={(v) => setValue("semester", v ?? "")}>
+              <Select
+                value={selectedSemester}
+                onValueChange={(v) => {
+                  setValue("semester", v ?? "");
+                  setValue("subject", "");
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select semester" />
                 </SelectTrigger>
@@ -286,7 +334,8 @@ export function UploadDocumentDialog({
               <SelectContent>
                 {subjects.map((s) => (
                   <SelectItem key={s.id} value={String(s.id)}>
-                    {s.name}
+                    <span>{s.name}</span>
+                    {s.code && <span className="ml-1 text-xs text-muted-foreground">({s.code})</span>}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -300,7 +349,7 @@ export function UploadDocumentDialog({
             </Button>
             <Button type="submit" disabled={submitting || !file}>
               {submitting && <Loader2 className="size-4 animate-spin" />}
-              {submitting ? "Uploading…" : "Upload PDF"}
+              {submitting ? "Uploading…" : "Upload Document"}
             </Button>
           </div>
         </form>

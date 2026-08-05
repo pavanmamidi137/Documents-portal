@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
 
 import { AuthProvider } from "@/lib/auth";
+import { SiteThemeProvider } from "@/lib/site-theme";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -29,8 +30,10 @@ export function Providers({ children }: { children: ReactNode }) {
         enableSystem
         disableTransitionOnChange
       >
-        <AuthProvider>{children}</AuthProvider>
-        <Toaster position="top-right" richColors closeButton />
+        <SiteThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+          <Toaster position="top-right" richColors closeButton />
+        </SiteThemeProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

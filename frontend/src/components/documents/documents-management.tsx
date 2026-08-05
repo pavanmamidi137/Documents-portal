@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Eye, FileText, Plus, Trash2 } from "lucide-react";
+import { Download, Eye, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+
+import { getDocumentExt, getDocumentTypeMeta } from "@/lib/document-types";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -85,19 +87,26 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
     {
       key: "title",
       header: "Document",
-      cell: (d) => (
-        <div className="flex items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-rose-500/10 text-rose-500 ring-1 ring-rose-500/20">
-            <FileText className="size-4" />
+      cell: (d) => {
+        const meta = getDocumentTypeMeta(d.file_name);
+        const Icon = meta.Icon;
+        return (
+          <div className="flex items-center gap-3">
+            <div className={`flex size-9 shrink-0 items-center justify-center rounded-lg ring-1 ${meta.classes}`}>
+              <Icon className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate font-medium">{d.title}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {d.file_name} · {formatBytes(d.file_size)}
+                <span className="ml-1.5 rounded border px-1 py-px text-[10px] font-semibold uppercase">
+                  {getDocumentExt(d.file_name)}
+                </span>
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="truncate font-medium">{d.title}</p>
-            <p className="truncate text-xs text-muted-foreground">
-              {d.file_name} · {formatBytes(d.file_size)}
-            </p>
-          </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: "subject",
@@ -193,10 +202,10 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         actions={
           <>
             <Button variant="outline" onClick={handleExport}>
-              <Download className="size-4" /> Export CSV
+              <Download className="size-4" /> Export Reports
             </Button>
             <Button onClick={() => setUploadOpen(true)}>
-              <Plus className="size-4" /> Upload PDF
+              <Plus className="size-4" /> Upload Document
             </Button>
           </>
         }
@@ -228,13 +237,14 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
           </SelectContent>
         </Select>
         <Select value={filters.subject ?? ""} onValueChange={(v) => setFilter("subject", v ?? "")}>
-          <SelectTrigger className="w-44">
+          <SelectTrigger className="w-52">
             <SelectValue placeholder="Subject" />
           </SelectTrigger>
           <SelectContent>
             {meta.subjects.map((s) => (
               <SelectItem key={s.id} value={String(s.id)}>
-                {s.name}
+                <span>{s.name}</span>
+                {s.code && <span className="ml-1 text-xs text-muted-foreground">({s.code})</span>}
               </SelectItem>
             ))}
           </SelectContent>

@@ -1,6 +1,7 @@
 """Document upload lifecycle.
 
-PDFs go to Cloudinary as RAW files under:
+Documents (PDF / PPT / PPTX / DOC / DOCX / TXT) go to Cloudinary as RAW
+files under:
     documents/{branch}/{section}/{semester}/{category}/{subject}/
 
 The database stores only the Cloudinary URL + public id.
@@ -22,32 +23,74 @@ cloudinary.config(
 )
 
 
-def validate_pdf(pdf_file) -> None:
-    """Reject non-PDF files and files over the size limit.
+# Extension -> (magic bytes, allowed content types). None magic bytes means
+# no signature check (plain text files). All lowercase.
+ALLOWED_DOCUMENT_TYPES = {
+    ".pdf": (
+        b"%PDF-",
+        ["application/pdf"],
+    ),
+    ".ppt": (
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",  # OLE compound document
+        ["application/vnd.ms-powerpoint"],
+    ),
+    ".pptx": (
+        b"PK\x03\x04",  # ZIP container (OOXML)
+        ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+    ),
+    ".doc": (
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",  # OLE compound document
+        ["application/msword"],
+    ),
+    ".docx": (
+        b"PK\x03\x04",  # ZIP container (OOXML)
+        ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    ),
+    ".txt": (None, ["text/plain"]),
+}
+
+VALID_EXTENSIONS = tuple(ALLOWED_DOCUMENT_TYPES)
+
+
+def validate_document(document_file) -> None:
+    """Reject unsupported files and files over the size limit.
 
     Checks the client-supplied content type/extension AND the file's magic
-    bytes ("%PDF-"), so a renamed HTML/JS file cannot be stored and previewed.
+    bytes, so a renamed HTML/JS file cannot be stored or previewed.
     """
-    if not pdf_file:
-        raise ValidationError({"file": "A PDF file is required."})
-    if pdf_file.size <= 0:
+    if not document_file:
+        raise ValidationError({"file": "A document file is required."})
+    if document_file.size <= 0:
         raise ValidationError({"file": "The uploaded file is empty."})
 
-    content_type = (getattr(pdf_file, "content_type", "") or "").lower()
-    name = (getattr(pdf_file, "name", "") or "").lower()
-    if content_type != "application/pdf" and not name.endswith(".pdf"):
-        raise ValidationError({"file": "Only PDF files are allowed."})
+    content_type = (getattr(document_file, "content_type", "") or "").lower()
+    name = (getattr(document_file, "name", "") or "").lower()
+    _, _, ext_part = name.rpartition(".")
+    ext = f".{ext_part}" if ext_part else ""
 
-    # Magic-byte check: the first 5 bytes of every PDF are "%PDF-".
-    header = pdf_file.read(5)
-    pdf_file.seek(0)
-    if header != b"%PDF-":
-        raise ValidationError({"file": "The file is not a valid PDF."})
+    allowed = ALLOWED_DOCUMENT_TYPES.get(ext)
+    if not allowed:
+        raise ValidationError({"file": "Only PDF, PPT, PPTX, DOC, DOCX or TXT files are allowed."})
 
-    max_bytes = settings.MAX_PDF_SIZE_MB * 1024 * 1024
-    if pdf_file.size > max_bytes:
+    magic, content_types = allowed
+    if content_types and content_type and content_type not in content_types:
         raise ValidationError(
-            {"file": f"File exceeds the {settings.MAX_PDF_SIZE_MB}MB size limit."}
+            {"file": "The file type does not match its extension."}
+        )
+
+    if magic is not None:
+        # Magic-byte check: read enough bytes for the longest signature.
+        header = document_file.read(len(magic))
+        document_file.seek(0)
+        if header != magic:
+            raise ValidationError(
+                {"file": f"The file is not a valid {ext.upper().lstrip('.')} document."}
+            )
+
+    max_bytes = settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024
+    if document_file.size > max_bytes:
+        raise ValidationError(
+            {"file": f"File exceeds the {settings.MAX_DOCUMENT_SIZE_MB}MB size limit."}
         )
 
 
@@ -64,12 +107,12 @@ def build_folder(branch, section, semester, category, subject) -> str:
     return "/".join(parts)
 
 
-def upload_pdf(pdf_file, folder: str) -> dict:
-    """Upload a validated PDF to Cloudinary and return its references."""
-    validate_pdf(pdf_file)
+def upload_document(document_file, folder: str) -> dict:
+    """Upload a validated document to Cloudinary and return its references."""
+    validate_document(document_file)
     try:
         result = cloudinary.uploader.upload(
-            pdf_file,
+            document_file,
             resource_type="raw",
             folder=folder,
             use_filename=True,
@@ -81,12 +124,12 @@ def upload_pdf(pdf_file, folder: str) -> dict:
     return {
         "url": result["secure_url"],
         "public_id": result["public_id"],
-        "file_name": pdf_file.name,
-        "file_size": pdf_file.size,
+        "file_name": document_file.name,
+        "file_size": document_file.size,
     }
 
 
-def delete_pdf(public_id: str) -> bool:
+def delete_document_file(public_id: str) -> bool:
     """Remove a raw file from Cloudinary. Returns False on failure."""
     try:
         cloudinary.api.delete_resources([public_id], resource_type="raw")
@@ -95,13 +138,13 @@ def delete_pdf(public_id: str) -> bool:
         return False
 
 
-def create_document(data: dict, pdf_file, actor, request=None):
-    """Upload the PDF and persist the document record."""
+def create_document(data: dict, document_file, actor, request=None):
+    """Upload the document and persist the record."""
     folder = build_folder(
         data["branch"], data["section"], data["semester"],
         data["category"], data["subject"],
     )
-    uploaded = upload_pdf(pdf_file, folder)
+    uploaded = upload_document(document_file, folder)
 
     from .models import Document
 
@@ -139,7 +182,7 @@ def delete_document(document, actor, request=None) -> None:
     """Delete the Cloudinary file, then the record."""
     title = document.title
     public_id = document.public_id
-    cloudinary_ok = delete_pdf(public_id)
+    cloudinary_ok = delete_document_file(public_id)
     document.delete()
     log_audit(
         actor, "DOCUMENT_DELETE", "Document", title,
