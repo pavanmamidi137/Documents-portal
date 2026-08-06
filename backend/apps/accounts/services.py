@@ -27,10 +27,15 @@ def get_or_create_branch_section(branch_name: str, section_name: str):
 
 @transaction.atomic
 def create_student(data: dict, actor: User, request=None) -> User:
-    """Create a student account with audit logging."""
+    """Create a student account with audit logging.
+
+    Roll numbers are stored in UPPERCASE and the default password is the
+    student's own roll number (they can change it after first login).
+    """
     data.setdefault("role", User.Role.STUDENT)
-    password = data.pop("password", None) or "Student@123"
-    student = User.objects.create_user(data.pop("roll_number"), password, **data)
+    roll_number = data.pop("roll_number").strip().upper()
+    password = data.pop("password", None) or roll_number
+    student = User.objects.create_user(roll_number, password, **data)
     log_audit(
         actor, "CREATE", "Student", student.id,
         {"roll_number": student.roll_number, "branch": student.branch_id, "section": student.section_id},
@@ -103,6 +108,9 @@ def import_students_csv(file, actor: User, request=None) -> dict:
     (headers are matched case-insensitively; spaces/underscores tolerated).
     Existing roll numbers are updated in place.
 
+    Roll numbers are normalized to UPPERCASE. When no password is supplied the
+    default password is the student's roll number (in capitals).
+
     CR imports are confined to the actor's own branch/section: Branch/Section
     columns are ignored, and roll numbers belonging to a different section are
     skipped rather than overwritten.
@@ -137,14 +145,16 @@ def import_students_csv(file, actor: User, request=None) -> dict:
     with transaction.atomic():
         for row in reader:
             seen += 1
-            roll = (row.get(col["roll number"]) or "").strip()
+            roll = (row.get(col["roll number"]) or "").strip().upper()
             full_name = (row.get(col["student name"]) or "").strip()
             if not roll or not full_name:
                 errors.append({"row": seen, "error": "Missing roll number or student name."})
                 continue
             email = (row.get(header_map.get("email")) or "").strip() if header_map.get("email") else ""
             phone = (row.get(header_map.get("phone")) or "").strip() if header_map.get("phone") else ""
-            password = (row.get(header_map.get("password")) or "Student@123").strip() if header_map.get("password") else "Student@123"
+            # Optional password column; defaults to the roll number (uppercase).
+            raw_password = (row.get(header_map.get("password")) or "").strip() if header_map.get("password") else ""
+            password = raw_password or roll
             branch_name = (row.get(header_map.get("branch")) or "").strip() if header_map.get("branch") else ""
             section_name = (row.get(header_map.get("section")) or "").strip() if header_map.get("section") else ""
 
@@ -184,9 +194,9 @@ def import_students_csv(file, actor: User, request=None) -> dict:
                         student.section = section
                     student.save()
                 # Apply the CSV password only for new accounts (or when the
-                # CSV row explicitly carries a non-default password).
-                if was_created or (password and password != "Student@123"):
-                    student.set_password(password or "Student@123")
+                # CSV row explicitly carries a custom password).
+                if was_created or raw_password:
+                    student.set_password(password)
                     student.save(update_fields=["password"])
                 if was_created:
                     created += 1

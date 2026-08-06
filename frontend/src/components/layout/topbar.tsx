@@ -19,6 +19,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { useSiteTheme } from "@/lib/site-theme";
 import { cn, getErrorMessage } from "@/lib/utils";
+import { ShareRequestBell } from "@/components/documents/share-request-bell";
 import type { SidebarMode } from "./sidebar";
 
 interface TopbarProps {
@@ -84,6 +85,8 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
       </form>
 
       <div className="ml-auto flex items-center gap-2">
+        <ShareRequestBell />
+
         <Button
           variant="ghost"
           size="icon"

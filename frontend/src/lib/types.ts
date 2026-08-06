@@ -153,3 +153,28 @@ export interface ImportResult {
   updated: number;
   skipped_errors: { row: number; roll_number?: string; error: string }[];
 }
+
+export type ShareRequestStatus = "PENDING" | "ACCEPTED" | "DECLINED";
+
+export interface DocumentShareRequest {
+  id: number;
+  document: number;
+  document_title: string;
+  file_name: string;
+  subject_name: string;
+  category_name: string;
+  semester_name: string;
+  from_section: number;
+  from_section_name: string;
+  from_branch_name: string;
+  to_section: number;
+  to_section_name: string;
+  requested_by: number | null;
+  requested_by_name: string | null;
+  requested_by_roll: string | null;
+  status: ShareRequestStatus;
+  status_label: string;
+  note: string;
+  created_at: string;
+  responded_at: string | null;
+}

@@ -1,7 +1,7 @@
 from django.db.models import F, Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -9,8 +9,12 @@ from apps.core.permissions import IsSuperAdmin, IsSuperAdminOrCR
 from apps.core.utils import csv_response, log_audit
 
 from . import services
-from .models import Document
-from .serializers import DocumentCreateSerializer, DocumentListSerializer
+from .models import Document, DocumentShareRequest
+from .serializers import (
+    DocumentCreateSerializer,
+    DocumentListSerializer,
+    DocumentShareRequestSerializer,
+)
 
 
 def _get_document_or_404(pk):
@@ -66,12 +70,10 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return DocumentListSerializer
 
     def get_permissions(self):
-        if self.action in ("create", "destroy"):
+        if self.action in ("create", "destroy", "share_request"):
             return [IsSuperAdminOrCR()]
-        if self.action in ("share",):
+        if self.action in ("share", "fork", "forkable"):
             return [IsSuperAdmin()]
-        if self.action in ("fork", "forkable"):
-            return [IsSuperAdminOrCR()]
         return [IsAuthenticated()]
 
     def create(self, request, *args, **kwargs):
@@ -81,9 +83,37 @@ class DocumentViewSet(viewsets.ModelViewSet):
         document = services.create_document(
             data, data.pop("file"), request.user, request=request
         )
-        return Response(
-            DocumentListSerializer(document).data, status=status.HTTP_201_CREATED
-        )
+        # CRs may request that other sections' CRs accept this document right
+        # from the upload dialog (still no extra storage - the file is shared).
+        created_requests = []
+        if request.user.is_cr:
+            # Uploads are multipart, but stay defensive for JSON payloads.
+            raw = (
+                request.data.getlist("share_with_sections")
+                if hasattr(request.data, "getlist")
+                else request.data.get("share_with_sections")
+            ) or request.data.get("share_with_sections")
+            if raw:
+                if isinstance(raw, str):
+                    raw = raw.split(",")
+                ids = [int(i) for i in raw if str(i).lstrip("-").isdigit()]
+                if ids:
+                    from apps.college.models import Section
+
+                    sections = (
+                        Section.objects.filter(id__in=ids, branch_id=document.branch_id)
+                        .exclude(id=document.section_id)
+                    )
+                    if sections:
+                        created_requests = services.create_share_requests(
+                            document, sections, request.user, request
+                        )
+        response_data = DocumentListSerializer(document).data
+        if created_requests:
+            response_data["share_requests"] = DocumentShareRequestSerializer(
+                created_requests, many=True
+            ).data
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], permission_classes=[IsSuperAdmin])
     def share(self, request, pk=None):
@@ -109,11 +139,45 @@ class DocumentViewSet(viewsets.ModelViewSet):
             "count": len(created),
         })
 
-    @action(detail=True, methods=["post"], permission_classes=[IsSuperAdminOrCR])
-    def fork(self, request, pk=None):
-        """Fork a document into a section without re-uploading the file.
+    @action(detail=True, methods=["post"], permission_classes=[IsSuperAdmin])
+    def share_request(self, request, pk=None):
+        """Request that other sections' CRs accept a copy of this document.
 
-        CRs always fork into their own assigned section; admins pass a target
+        CRs may only request sharing for documents in their own assigned
+        section. The receiving section's CR accepts or declines via
+        /document-share-requests/{id}/respond/.
+        """
+        from apps.college.models import Section
+
+        document = _get_document_or_404(pk)
+        user = request.user
+        if user.is_cr and document.section_id != user.section_id:
+            raise PermissionDenied(
+                "You can only request sharing for documents in your own section."
+            )
+        section_ids = request.data.get("sections")
+        if not isinstance(section_ids, list) or not section_ids:
+            raise PermissionDenied('Provide a "sections" list to request sharing with.')
+        sections = Section.objects.filter(
+            id__in=[int(i) for i in section_ids if str(i).lstrip("-").isdigit()]
+        )
+        if not sections:
+            raise PermissionDenied("No valid sections provided.")
+        if any(s.branch_id != document.branch_id for s in sections):
+            raise PermissionDenied(
+                "All target sections must belong to the document's branch."
+            )
+        created = services.create_share_requests(document, sections, user, request)
+        return Response({
+            "requests": DocumentShareRequestSerializer(created, many=True).data,
+            "count": len(created),
+        })
+
+    @action(detail=True, methods=["post"], permission_classes=[IsSuperAdmin])
+    def fork(self, request, pk=None):
+        """Fork a document into a section without re-uploading the file (admin).
+
+        CRs use share requests instead; only a Super Admin may pass a target
         section id in the body.
         """
         from apps.college.models import Section
@@ -143,7 +207,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
             DocumentListSerializer(forked).data, status=status.HTTP_201_CREATED
         )
 
-    @action(detail=False, methods=["get"], permission_classes=[IsSuperAdminOrCR])
+    @action(detail=False, methods=["get"], permission_classes=[IsSuperAdmin])
     def forkable(self, request):
         """Documents that can be forked into the caller's section.
 
@@ -216,3 +280,75 @@ class DocumentViewSet(viewsets.ModelViewSet):
              "Subject", "Uploaded By", "Upload Date", "Downloads"],
             rows,
         )
+
+
+class DocumentShareRequestViewSet(viewsets.ModelViewSet):
+    """In-app notifications for cross-section document sharing.
+
+    CRs see the requests they receive (incoming) and the ones they sent
+    (outgoing); Super Admins see everything. Accepting a request materializes
+    the document in the receiving section.
+    """
+
+    http_method_names = ["get", "post", "delete", "head", "options"]
+    serializer_class = DocumentShareRequestSerializer
+    permission_classes = [IsSuperAdminOrCR]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = DocumentShareRequest.objects.select_related(
+            "document",
+            "document__subject",
+            "document__category",
+            "document__semester",
+            "from_section",
+            "from_section__branch",
+            "to_section",
+            "requested_by",
+        )
+        if not user.is_super_admin:
+            qs = qs.filter(
+                Q(to_section_id=user.section_id) | Q(from_section_id=user.section_id)
+            )
+        params = self.request.query_params
+        scope = params.get("scope", "").lower()
+        if scope == "incoming":
+            qs = qs.filter(to_section_id=user.section_id)
+        elif scope == "outgoing":
+            qs = qs.filter(from_section_id=user.section_id)
+        if params.get("status"):
+            qs = qs.filter(status=params["status"].upper())
+        return qs
+
+    def destroy(self, request, *args, **kwargs):
+        share_request = self.get_object()
+        if not request.user.is_super_admin and share_request.requested_by_id != request.user.id:
+            raise PermissionDenied(
+                "Only the requester (or a Super Admin) can cancel this request."
+            )
+        if share_request.status != DocumentShareRequest.Status.PENDING:
+            raise PermissionDenied("Only pending requests can be cancelled.")
+        share_request.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"])
+    def respond(self, request, pk=None):
+        """Accept or decline a pending request received for the caller's section."""
+        share_request = self.get_object()
+        user = request.user
+        if (
+            not user.is_super_admin
+            and share_request.to_section_id != user.section_id
+        ):
+            raise PermissionDenied(
+                "Only the receiving section's CR can respond to this request."
+            )
+        if share_request.status != DocumentShareRequest.Status.PENDING:
+            raise ValidationError(
+                {"detail": "This request has already been responded to."}
+            )
+        accept = request.data.get("accept") in (True, "true", "1", 1)
+        share_request, _copy = services.respond_share_request(
+            share_request, accept, user, request
+        )
+        return Response(DocumentShareRequestSerializer(share_request).data)

@@ -36,7 +36,6 @@ const schema = z.object({
   phone: z.string().optional(),
   branch: z.string().optional(),
   section: z.string().optional(),
-  password: z.string().min(6, "Minimum 6 characters").optional().or(z.literal("")),
   is_active: z.boolean(),
 });
 
@@ -86,7 +85,6 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
         phone: student?.phone ?? "",
         branch: student?.branch ? String(student.branch) : "",
         section: student?.section ? String(student.section) : "",
-        password: "",
         is_active: student?.is_active ?? true,
       });
     }
@@ -114,7 +112,6 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
           phone: values.phone ?? "",
           branch: values.branch ? Number(values.branch) : null,
           section: values.section ? Number(values.section) : null,
-          password: values.password || undefined,
         });
         toast.success("Student added.");
       }
@@ -217,16 +214,12 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
           </div>
 
           {!editing && (
-            <div className="space-y-2">
-              <Label>Password</Label>
-              <Input
-                type="text"
-                placeholder="Leave blank for default (Student@123)"
-                {...register("password")}
-              />
-              {errors.password && (
-                <p className="text-xs text-destructive">{errors.password.message}</p>
-              )}
+            <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+              <p className="font-medium text-foreground">No password needed</p>
+              <p className="mt-0.5">
+                The student&apos;s default password is their <span className="font-semibold">Roll Number</span>{" "}
+                (in capitals). They can change it after their first login.
+              </p>
             </div>
           )}
 

@@ -10,6 +10,7 @@ import cloudinary
 import cloudinary.api
 import cloudinary.uploader
 from django.conf import settings
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.core.utils import log_audit, slugify
@@ -229,6 +230,80 @@ def share_document(document, sections, actor, request=None):
         request,
     )
     return created
+
+
+def create_share_requests(document, sections, actor, request=None):
+    """Request that other sections' CRs accept a copy of a document.
+
+    The file is never re-uploaded; the receiving section's CR decides whether
+    to accept (which creates the local Document row). Sections that already
+    have the document are skipped, and duplicate pending requests are avoided.
+    Returns the list of newly created DocumentShareRequest rows.
+    """
+    from .models import Document, DocumentShareRequest
+
+    existing = set(
+        Document.objects.filter(public_id=document.public_id).values_list(
+            "section_id", flat=True
+        )
+    )
+    created = []
+    for section in sections:
+        if section.id in existing or section.id == document.section_id:
+            continue
+        if DocumentShareRequest.objects.filter(
+            document=document,
+            to_section=section,
+            status=DocumentShareRequest.Status.PENDING,
+        ).exists():
+            continue
+        # A declined/older request is superseded by a fresh one.
+        DocumentShareRequest.objects.filter(
+            document=document, to_section=section
+        ).delete()
+        created.append(
+            DocumentShareRequest.objects.create(
+                document=document,
+                from_section=document.section,
+                to_section=section,
+                requested_by=actor,
+            )
+        )
+    log_audit(
+        actor, "DOCUMENT_SHARE", "Document", document.id,
+        {
+            "title": document.title,
+            "public_id": document.public_id,
+            "requested_sections": [s.name for s in sections],
+            "requests_created": len(created),
+        },
+        request,
+    )
+    return created
+
+
+def respond_share_request(share_request, accept: bool, actor, request=None):
+    """Accept or decline a pending document share request.
+
+    Accepting creates a copy of the document in the target section (same
+    Cloudinary file, no re-upload) so that section's students can access it.
+    Returns the updated request and the created copy (or None when declined).
+    """
+    from .models import DocumentShareRequest
+
+    copy = None
+    if accept:
+        copy = fork_document(
+            share_request.document, share_request.to_section, actor, request
+        )
+        new_status = DocumentShareRequest.Status.ACCEPTED
+    else:
+        new_status = DocumentShareRequest.Status.DECLINED
+
+    share_request.status = new_status
+    share_request.responded_at = timezone.now()
+    share_request.save(update_fields=["status", "responded_at"])
+    return share_request, copy
 
 
 def fork_document(document, section, actor, request=None):

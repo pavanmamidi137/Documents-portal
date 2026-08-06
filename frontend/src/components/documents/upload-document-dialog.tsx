@@ -68,6 +68,7 @@ export function UploadDocumentDialog({
 }: Props) {
   const { user } = useAuth();
   const isAdmin = user?.is_super_admin ?? false;
+  const isCr = user?.is_cr ?? false;
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fileError, setFileError] = useState("");
@@ -126,16 +127,17 @@ export function UploadDocumentDialog({
     },
     [meta.subjects, watch]
   );
-  // Sections the admin can additionally share with (same branch, excluding the primary one).
+  // Sections the admin can additionally share with (same branch, excluding the
+  // primary one). For CRs the primary is always their own assigned section.
   const shareableSections = useMemo(
     () => {
       const branch = watch("branch");
-      const primary = Number(watch("section"));
+      const primary = isCr ? user?.section : Number(watch("section"));
       return meta.sections.filter(
         (s) => s.branch === Number(branch) && s.id !== primary
       );
     },
-    [meta.sections, watch]
+    [meta.sections, watch, isCr, user?.section]
   );
 
   const toggleShared = (id: number, checked: boolean) => {
@@ -187,6 +189,10 @@ export function UploadDocumentDialog({
       ? Array.from(new Set([Number(values.section), ...sharedSections])).filter(Boolean)
       : [];
     extraSections.forEach((id) => form.append("sections", String(id)));
+    // CR: request that other sections' CRs accept this document.
+    if (isCr) {
+      sharedSections.forEach((id) => form.append("share_with_sections", String(id)));
+    }
     form.append("semester", values.semester);
     form.append("category", values.category);
     form.append("subject", values.subject);
@@ -195,7 +201,9 @@ export function UploadDocumentDialog({
     try {
       const doc = await http.upload<DocumentItem>("/documents/", form);
       toast.success(
-        extraSections.length > 1
+        isCr && sharedSections.length > 0
+          ? `Document uploaded & share requests sent to ${sharedSections.length} section${sharedSections.length === 1 ? "" : "s"}.`
+          : extraSections.length > 1
           ? `Document uploaded & shared with ${extraSections.length} sections.`
           : "Document uploaded successfully."
       );
@@ -316,10 +324,11 @@ export function UploadDocumentDialog({
             </div>
           </div>
 
-          {isAdmin && selectedBranch && (
+          {selectedBranch && (isAdmin || isCr) && (
             <div className="space-y-2">
               <Label className="flex items-center gap-1.5">
-                <Share2 className="size-3.5 text-muted-foreground" /> Share with additional sections
+                <Share2 className="size-3.5 text-muted-foreground" />{" "}
+                {isCr ? "Request share with other sections" : "Share with additional sections"}
                 <span className="text-xs font-normal text-muted-foreground">(optional)</span>
               </Label>
               <div className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border p-3">
@@ -344,7 +353,9 @@ export function UploadDocumentDialog({
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Students in the selected sections will see this document.
+                {isCr
+                  ? "Their CRs get a notification and accept the document into their section — no extra upload or storage."
+                  : "Students in the selected sections will see this document."}
               </p>
             </div>
           )}

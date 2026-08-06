@@ -12,6 +12,7 @@ import {
   Pencil,
   Plus,
   Power,
+  Trash2,
 } from "lucide-react";
 import {
   Dialog,
@@ -73,6 +74,8 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   const [resetting, setResetting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [bulkDeleteTargets, setBulkDeleteTargets] = useState<User[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["students", page, pageSize, q, filters],
@@ -122,6 +125,30 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       setDeleting(false);
       setDeleteTarget(null);
     });
+  };
+
+  const confirmBulkDelete = async () => {
+    if (bulkDeleteTargets.length === 0) return;
+    setBulkDeleting(true);
+    let ok = 0;
+    const failed: string[] = [];
+    try {
+      for (const s of bulkDeleteTargets) {
+        try {
+          await http.delete(`/students/${s.id}/`);
+          ok += 1;
+        } catch {
+          failed.push(s.roll_number);
+        }
+      }
+      if (ok > 0) toast.success(`${ok} student${ok === 1 ? "" : "s"} deleted.`);
+      if (failed.length > 0)
+        toast.error(`Could not delete ${failed.length}: ${failed.join(", ")}`);
+      setBulkDeleteTargets([]);
+      invalidate();
+    } finally {
+      setBulkDeleting(false);
+    }
   };
 
   const confirmReset = () => {
@@ -387,6 +414,27 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         }}
         searchPlaceholder="Search roll number, name, email…"
         rowKey={(s) => s.id}
+        selectable={isAdmin || isCr}
+        selectionBar={(selected, clear) => (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-medium">
+              <span className="text-foreground">{selected.length}</span> selected — hold{" "}
+              <kbd className="rounded border bg-background px-1 text-[10px]">Ctrl</kbd> and click rows
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={clear}>
+                Clear
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setBulkDeleteTargets(selected)}
+              >
+                <Trash2 className="size-4" /> Delete Selected
+              </Button>
+            </div>
+          </div>
+        )}
       />
 
       <StudentFormDialog
@@ -416,6 +464,17 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         loading={deleting}
         onConfirm={confirmDelete}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteTargets.length > 0}
+        onOpenChange={(open) => !open && setBulkDeleteTargets([])}
+        title={`Delete ${bulkDeleteTargets.length} student${bulkDeleteTargets.length === 1 ? "" : "s"}?`}
+        description={`This permanently removes ${bulkDeleteTargets.length === 1 ? "this student account" : `these ${bulkDeleteTargets.length} student accounts`}. This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        loading={bulkDeleting}
+        onConfirm={confirmBulkDelete}
       />
     </div>
   );

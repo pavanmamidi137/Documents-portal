@@ -128,7 +128,11 @@ export default function LoginPage() {
           </form>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
-            Students, CRs and admins sign in with their roll number &amp; password.
+            Students &amp; CRs sign in with their roll number &amp; password.
+          </p>
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            First time? Your default password is your <span className="font-semibold text-foreground">Roll Number</span>{" "}
+            (in capitals) — you can change it after logging in.
           </p>
         </div>
       </motion.div>

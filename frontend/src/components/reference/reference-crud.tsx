@@ -44,6 +44,8 @@ export function ReferenceCrud<T extends { id: number }>({
   const [editing, setEditing] = useState<T | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<T | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [bulkDeleteTargets, setBulkDeleteTargets] = useState<T[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: [apiPath, page, pageSize, q],
@@ -69,6 +71,33 @@ export function ReferenceCrud<T extends { id: number }>({
       toast.error(getErrorMessage(error));
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const confirmBulkDelete = async () => {
+    if (bulkDeleteTargets.length === 0) return;
+    setBulkDeleting(true);
+    let ok = 0;
+    const failed: string[] = [];
+    try {
+      for (const item of bulkDeleteTargets) {
+        try {
+          await http.delete(`/${apiPath}/${item.id}/`);
+          ok += 1;
+        } catch {
+          failed.push(String(item.id));
+        }
+      }
+      if (ok > 0)
+        toast.success(`${ok} ${singular.toLowerCase()}${ok === 1 ? "" : "s"} deleted.`);
+      if (failed.length > 0)
+        toast.error(
+          `${failed.length} in use or protected (${failed.join(", ")}) — delete them individually.`
+        );
+      setBulkDeleteTargets([]);
+      invalidate();
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -132,6 +161,27 @@ export function ReferenceCrud<T extends { id: number }>({
         }}
         searchPlaceholder={`Search ${title.toLowerCase()}…`}
         rowKey={(row) => row.id}
+        selectable
+        selectionBar={(selected, clear) => (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-medium">
+              <span className="text-foreground">{selected.length}</span> selected — hold{" "}
+              <kbd className="rounded border bg-background px-1 text-[10px]">Ctrl</kbd> and click rows
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={clear}>
+                Clear
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setBulkDeleteTargets(selected)}
+              >
+                <Trash2 className="size-4" /> Delete Selected
+              </Button>
+            </div>
+          </div>
+        )}
       />
 
       <ReferenceFormDialog
@@ -154,6 +204,17 @@ export function ReferenceCrud<T extends { id: number }>({
         destructive
         loading={deleting}
         onConfirm={confirmDelete}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteTargets.length > 0}
+        onOpenChange={(open) => !open && setBulkDeleteTargets([])}
+        title={`Delete ${bulkDeleteTargets.length} ${singular.toLowerCase()}${bulkDeleteTargets.length === 1 ? "" : "s"}?`}
+        description={`This permanently removes ${bulkDeleteTargets.length === 1 ? "this record" : `these ${bulkDeleteTargets.length} records`}. Records still in use cannot be deleted.`}
+        confirmLabel="Delete"
+        destructive
+        loading={bulkDeleting}
+        onConfirm={confirmBulkDelete}
       />
     </div>
   );

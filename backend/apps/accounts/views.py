@@ -34,7 +34,8 @@ class LoginView(TokenObtainPairView):
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
-        user = User.objects.filter(roll_number=request.data.get("roll_number", "").strip()).first()
+        roll_input = request.data.get("roll_number", "").strip()
+        user = User.objects.filter(roll_number__iexact=roll_input).first()
         if user and response.status_code == status.HTTP_200_OK:
             log_audit(user, "LOGIN", "User", user.id,
                       {"roll_number": user.roll_number, "role": user.role}, request)

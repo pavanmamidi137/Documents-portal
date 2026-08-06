@@ -79,8 +79,8 @@ export function CsvImportDialog({ open, onOpenChange, onImported, isCr = false }
           </DialogTitle>
           <DialogDescription>
             {isCr
-              ? "CSV columns: Roll Number, Student Name, Email, Phone, Password. Students are added to your assigned section."
-              : "CSV columns: Roll Number, Student Name, Email, Phone, Branch, Section, Password. Existing roll numbers are updated."}
+              ? "CSV columns: Roll Number, Student Name, Email, Phone. Roll numbers are saved in capitals and the default password is the Roll Number. Students are added to your assigned section."
+              : "CSV columns: Roll Number, Student Name, Email, Phone, Branch, Section (Password optional). Roll numbers are saved in capitals and the default password is the Roll Number. Existing roll numbers are updated."}
           </DialogDescription>
         </DialogHeader>
 

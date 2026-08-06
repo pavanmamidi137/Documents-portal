@@ -65,3 +65,48 @@ class Document(models.Model):
     def download_url(self) -> str:
         """Cloudinary URL flagged to force browser download."""
         return self.cloudinary_url.replace("/raw/upload/", "/raw/upload/fl_attachment/", 1)
+
+
+class DocumentShareRequest(models.Model):
+    """A CR (or admin) requests that another section's CR accept a document.
+
+    Sharing stays storage-friendly: the file itself is never re-uploaded. When
+    the target section's CR accepts, a Document row pointing at the same
+    Cloudinary file is created in their section so their students can access it.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        DECLINED = "DECLINED", "Declined"
+
+    document = models.ForeignKey(
+        Document, on_delete=models.CASCADE, related_name="share_requests"
+    )
+    from_section = models.ForeignKey(
+        "college.Section", on_delete=models.CASCADE, related_name="sent_share_requests"
+    )
+    to_section = models.ForeignKey(
+        "college.Section",
+        on_delete=models.CASCADE,
+        related_name="received_share_requests",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_share_requests",
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    note = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.document.title} → {self.to_section} ({self.status})"

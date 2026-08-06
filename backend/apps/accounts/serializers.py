@@ -20,9 +20,24 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(TokenObtainPairSerializer):
-    """Extends JWT login to also return the user profile."""
+    """Extends JWT login to also return the user profile.
+
+    Roll numbers are normalized to UPPERCASE: new accounts are created with
+    uppercase roll numbers, so legacy lowercase accounts are matched via a
+    case-insensitive lookup before authenticating.
+    """
 
     def validate(self, attrs):
+        username = attrs.get(self.username_field)
+        if username:
+            attrs[self.username_field] = str(username).strip().upper()
+            # Legacy accounts may still be stored in lowercase - use the
+            # stored casing so authenticate() finds them.
+            legacy = User.objects.filter(
+                roll_number__iexact=attrs[self.username_field]
+            ).first()
+            if legacy:
+                attrs[self.username_field] = legacy.roll_number
         data = super().validate(attrs)
         data["user"] = UserSerializer(self.user).data
         return data
@@ -60,7 +75,8 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"]
 
     def validate_roll_number(self, value):
-        value = value.strip()
+        # Roll numbers are always stored in UPPERCASE.
+        value = value.strip().upper()
         if User.objects.filter(roll_number=value).exists():
             raise serializers.ValidationError("A student with this roll number already exists.")
         return value
@@ -86,9 +102,11 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        password = validated_data.pop("password", None) or "Student@123"
+        roll_number = validated_data.pop("roll_number")
+        # Default password is the student's roll number (in capitals).
+        password = validated_data.pop("password", None) or roll_number
         return User.objects.create_user(
-            validated_data.pop("roll_number"), password, **validated_data
+            roll_number, password, **validated_data
         )
 
 

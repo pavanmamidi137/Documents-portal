@@ -7,7 +7,7 @@ from rest_framework.test import APIClient, APIRequestFactory
 from apps.accounts.models import User
 from apps.college.models import Branch, Category, Section, Semester, Subject
 
-from .models import Document
+from .models import Document, DocumentShareRequest
 from .serializers import DocumentCreateSerializer
 from .services import build_folder, validate_document
 
@@ -319,6 +319,36 @@ class DocumentApiTests(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         mock_upload.assert_not_called()
 
+    def test_cr_upload_creates_share_requests(self, mock_delete, mock_upload):
+        """A CR upload with share_with_sections notifies the other section's CR."""
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/sr.pdf",
+            "public_id": "documents/cse/a/3-1/notes/dbms/sr123",
+        }
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.cr)}")
+        response = client.post(
+            "/api/documents/",
+            {
+                "title": "CR Shared Notes",
+                "file": SimpleUploadedFile("notes.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+                "branch": self.branch.id,
+                "section": self.section.id,
+                "semester": self.semester.id,
+                "category": self.category.id,
+                "subject": self.subject.id,
+                "share_with_sections": [self.other_section.id],
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(DocumentShareRequest.objects.count(), 1)
+        req = DocumentShareRequest.objects.first()
+        self.assertEqual(req.to_section_id, self.other_section.id)
+        self.assertEqual(req.status, "PENDING")
+        self.assertIn("share_requests", response.data)
+        mock_upload.assert_called_once()
+
 
 @patch("apps.documents.services.cloudinary.api.delete_resources")
 class ShareForkTests(TestCase):
@@ -402,29 +432,44 @@ class ShareForkTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
-    def test_cr_forks_into_own_section(self, mock_delete):
+    def test_cr_cannot_fork(self, mock_delete):
+        """Forking is admin-only now - CRs use share requests instead."""
         client = self._client(self.cr_b)
         response = client.post(f"/api/documents/{self.source.id}/fork/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_forks_into_section(self, mock_delete):
+        client = self._client(self.admin)
+        response = client.post(
+            f"/api/documents/{self.source.id}/fork/",
+            {"section": self.section_b.id},
+            format="json",
+        )
         self.assertEqual(response.status_code, 201, response.data)
         forked = Document.objects.get(section_id=self.section_b.id, public_id="shared/pid-1")
         self.assertEqual(forked.forked_from_id, self.source.id)
-        self.assertEqual(forked.uploaded_by_id, self.cr_b.id)
+        self.assertEqual(forked.uploaded_by_id, self.admin.id)
 
-    def test_cr_cannot_fork_duplicate(self, mock_delete):
-        client = self._client(self.cr_b)
-        client.post(f"/api/documents/{self.source.id}/fork/")
-        response = client.post(f"/api/documents/{self.source.id}/fork/")
+    def test_admin_cannot_fork_duplicate(self, mock_delete):
+        client = self._client(self.admin)
+        client.post(
+            f"/api/documents/{self.source.id}/fork/",
+            {"section": self.section_b.id},
+            format="json",
+        )
+        response = client.post(
+            f"/api/documents/{self.source.id}/fork/",
+            {"section": self.section_b.id},
+            format="json",
+        )
         self.assertEqual(response.status_code, 400)
 
-    def test_forkable_lists_other_sections_only(self, mock_delete):
-        client = self._client(self.cr_b)
+    def test_forkable_lists_documents_for_admin(self, mock_delete):
+        client = self._client(self.admin)
         response = client.get("/api/documents/forkable/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], self.source.id)
-        # After forking, the source no longer appears (already in own section).
-        client.post(f"/api/documents/{self.source.id}/fork/")
-        self.assertEqual(client.get("/api/documents/forkable/").data["results"], [])
 
     def test_student_cannot_fork(self, mock_delete):
         client = self._client(self.student)
@@ -454,4 +499,174 @@ class ShareForkTests(TestCase):
         response = client.delete(f"/api/documents/{self.source.id}/")
         self.assertEqual(response.status_code, 204)
         mock_delete.assert_called_once_with(["shared/pid-1"], resource_type="raw")
+
+
+class ShareRequestTests(TestCase):
+    """CR-initiated share requests between sections (no Cloudinary needed)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.section_c = Section.objects.create(branch=self.branch, name="C")
+        self.semester = Semester.objects.create(name="3-1", order=5)
+        self.category = Category.objects.create(name="Notes")
+        self.subject = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.semester, branch=self.branch
+        )
+        self.cr_a = User.objects.create_user(
+            roll_number="cra", password="x", full_name="CR A",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        self.cr_b = User.objects.create_user(
+            roll_number="crb", password="x", full_name="CR B",
+            branch=self.branch, section=self.section_b, role=User.Role.CR,
+        )
+        self.cr_c = User.objects.create_user(
+            roll_number="crc", password="x", full_name="CR C",
+            branch=self.branch, section=self.section_c, role=User.Role.CR,
+        )
+        self.student = User.objects.create_user(
+            roll_number="st1", password="x", full_name="Student",
+            branch=self.branch, section=self.section_b,
+        )
+        self.source = Document.objects.create(
+            title="DBMS Unit 1", description="",
+            file_name="notes.pdf", file_size=1024,
+            cloudinary_url="https://res.cloudinary.com/x/raw/upload/v1/n.pdf",
+            public_id="shared/pid-2",
+            branch=self.branch, section=self.section_a,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.cr_a,
+        )
+
+    def _client(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
+        return client
+
+    def test_cr_requests_share_with_other_sections(self):
+        client = self._client(self.cr_a)
+        response = client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id, self.section_c.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(
+            DocumentShareRequest.objects.filter(document=self.source, status="PENDING").count(),
+            2,
+        )
+
+    def test_duplicate_pending_requests_are_skipped(self):
+        client = self._client(self.cr_a)
+        client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        )
+        response = client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 0)
+
+    def test_cr_cannot_request_share_for_other_sections_document(self):
+        client = self._client(self.cr_b)  # CR B trying to share A's document
+        response = client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_c.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_student_cannot_create_share_request(self):
+        client = self._client(self.student)
+        response = client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_target_cr_accept_creates_copy(self):
+        client = self._client(self.cr_a)
+        req = client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        ).data["requests"][0]
+        resp = self._client(self.cr_b).post(
+            f"/api/document-share-requests/{req['id']}/respond/",
+            {"accept": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["status"], "ACCEPTED")
+        copy = Document.objects.get(section_id=self.section_b.id, public_id="shared/pid-2")
+        self.assertEqual(copy.forked_from_id, self.source.id)
+        self.assertEqual(copy.uploaded_by_id, self.cr_b.id)
+
+    def test_target_cr_decline_creates_no_copy(self):
+        client = self._client(self.cr_a)
+        req = client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        ).data["requests"][0]
+        resp = self._client(self.cr_b).post(
+            f"/api/document-share-requests/{req['id']}/respond/",
+            {"accept": False},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["status"], "DECLINED")
+        self.assertFalse(
+            Document.objects.filter(section_id=self.section_b.id, public_id="shared/pid-2").exists()
+        )
+
+    def test_non_target_cr_cannot_respond(self):
+        client = self._client(self.cr_a)
+        req = client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        ).data["requests"][0]
+        resp = self._client(self.cr_c).post(
+            f"/api/document-share-requests/{req['id']}/respond/",
+            {"accept": True},
+            format="json",
+        )
+        self.assertIn(resp.status_code, (403, 404))
+
+    def test_incoming_and_outgoing_scopes(self):
+        client = self._client(self.cr_a)
+        client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        )
+        incoming = self._client(self.cr_b).get("/api/document-share-requests/?scope=incoming")
+        self.assertEqual(len(incoming.data["results"]), 1)
+        outgoing = self._client(self.cr_a).get("/api/document-share-requests/?scope=outgoing")
+        self.assertEqual(len(outgoing.data["results"]), 1)
+
+    def test_requester_can_cancel_pending_request(self):
+        client = self._client(self.cr_a)
+        req = client.post(
+            f"/api/documents/{self.source.id}/share_request/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        ).data["requests"][0]
+        resp = client.delete(f"/api/document-share-requests/{req['id']}/")
+        self.assertEqual(resp.status_code, 204)
+        self.assertEqual(DocumentShareRequest.objects.count(), 0)
 

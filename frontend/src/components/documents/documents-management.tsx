@@ -2,11 +2,16 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Eye, GitFork, Plus, Share2, Trash2 } from "lucide-react";
+import { Bell, Download, Eye, Plus, Send, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentExt, getDocumentTypeMeta } from "@/lib/document-types";
-import { ShareDocumentDialog, ForkDocumentDialog } from "./share-fork-dialogs";
+import {
+  ShareDocumentDialog,
+  ShareRequestDialog,
+  ShareRequestsDialog,
+  usePendingShareRequests,
+} from "./share-fork-dialogs";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +43,8 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [uploadOpen, setUploadOpen] = useState(false);
   const [shareTarget, setShareTarget] = useState<DocumentItem | null>(null);
-  const [forkOpen, setForkOpen] = useState(false);
+  const [requestTarget, setRequestTarget] = useState<DocumentItem | null>(null);
+  const [requestsOpen, setRequestsOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -52,6 +58,15 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         ...filters,
       }),
   });
+
+  const { data: pendingData } = usePendingShareRequests(isCr);
+  // The query is filtered to PENDING server-side, so `count` is accurate.
+  const pendingCount = pendingData?.count ?? (pendingData?.results ?? []).length;
+
+  const invalidateDocuments = () => {
+    queryClient.invalidateQueries({ queryKey: ["documents"] });
+    queryClient.invalidateQueries({ queryKey: ["share-requests", "incoming"] });
+  };
 
   const setFilter = (key: string, value: string) => {
     setPage(1);
@@ -78,7 +93,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
       await http.delete(`/documents/${deleteTarget.id}/`);
       toast.success("Document deleted.");
       setDeleteTarget(null);
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      invalidateDocuments();
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -99,17 +114,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
               <Icon className="size-4" />
             </div>
             <div className="min-w-0">
-              <p className="flex items-center gap-1.5 truncate font-medium">
-                {d.title}
-                {d.forked_from && (
-                  <span
-                    title="Forked from another section"
-                    className="inline-flex shrink-0 items-center gap-0.5 rounded border border-primary/30 bg-primary/10 px-1 py-px text-[10px] font-semibold text-primary"
-                  >
-                    <GitFork className="size-2.5" /> Forked
-                  </span>
-                )}
-              </p>
+              <p className="truncate font-medium">{d.title}</p>
               <p className="truncate text-xs text-muted-foreground">
                 {d.file_name} · {formatBytes(d.file_size)}
                 <span className="ml-1.5 rounded border px-1 py-px text-[10px] font-semibold uppercase">
@@ -190,7 +195,18 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
           >
             <Download className="size-4" />
           </Button>
-          {!isCr && (
+          {isCr ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8 text-primary hover:bg-primary/10 hover:text-primary"
+              title="Request share with other sections"
+              aria-label={`Request share for ${d.title}`}
+              onClick={() => setRequestTarget(d)}
+            >
+              <Send className="size-4" />
+            </Button>
+          ) : (
             <Button
               size="icon"
               variant="ghost"
@@ -221,14 +237,19 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         title="Documents"
         description={
           isCr
-            ? "Upload and manage documents for your assigned section."
+            ? "Upload and manage documents for your assigned section. Share them with other sections via requests."
             : "Upload PDFs, manage visibility and export reports."
         }
         actions={
           <>
             {isCr && (
-              <Button variant="outline" onClick={() => setForkOpen(true)}>
-                <GitFork className="size-4" /> Fork Document
+              <Button variant="outline" onClick={() => setRequestsOpen(true)} className="relative">
+                <Bell className="size-4" /> Requests
+                {pendingCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                    {pendingCount}
+                  </span>
+                )}
               </Button>
             )}
             <Button variant="outline" onClick={handleExport}>
@@ -303,7 +324,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         onOpenChange={setUploadOpen}
         meta={meta}
         lockBranchSection={isCr}
-        onUploaded={() => queryClient.invalidateQueries({ queryKey: ["documents"] })}
+        onUploaded={invalidateDocuments}
       />
 
       <ShareDocumentDialog
@@ -312,16 +333,22 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         onOpenChange={(open) => !open && setShareTarget(null)}
         document={shareTarget}
         meta={meta}
-        onShared={() => queryClient.invalidateQueries({ queryKey: ["documents"] })}
+        onShared={invalidateDocuments}
       />
 
-      <ForkDocumentDialog
-        open={forkOpen}
-        onOpenChange={setForkOpen}
-        onForked={() => {
-          queryClient.invalidateQueries({ queryKey: ["documents"] });
-          queryClient.invalidateQueries({ queryKey: ["forkable-documents"] });
-        }}
+      <ShareRequestDialog
+        key={requestTarget?.id ?? "none"}
+        open={!!requestTarget}
+        onOpenChange={(open) => !open && setRequestTarget(null)}
+        document={requestTarget}
+        meta={meta}
+        onRequested={invalidateDocuments}
+      />
+
+      <ShareRequestsDialog
+        open={requestsOpen}
+        onOpenChange={setRequestsOpen}
+        onResponded={invalidateDocuments}
       />
 
       <ConfirmDialog

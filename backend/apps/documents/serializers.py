@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.college.models import Branch, Category, Section, Semester, Subject
 
-from .models import Document
+from .models import Document, DocumentShareRequest
 
 
 class DocumentListSerializer(serializers.ModelSerializer):
@@ -28,6 +28,36 @@ class DocumentListSerializer(serializers.ModelSerializer):
 
 class DocumentSerializer(DocumentListSerializer):
     """Detail serializer (same fields; kept separate for clarity)."""
+
+
+class DocumentShareRequestSerializer(serializers.ModelSerializer):
+    document_title = serializers.CharField(source="document.title", read_only=True)
+    file_name = serializers.CharField(source="document.file_name", read_only=True)
+    subject_name = serializers.CharField(source="document.subject.name", read_only=True)
+    category_name = serializers.CharField(source="document.category.name", read_only=True)
+    semester_name = serializers.CharField(source="document.semester.name", read_only=True)
+    from_branch_name = serializers.CharField(source="from_section.branch.name", read_only=True)
+    from_section_name = serializers.CharField(source="from_section.name", read_only=True)
+    to_section_name = serializers.CharField(source="to_section.name", read_only=True)
+    requested_by_name = serializers.CharField(
+        source="requested_by.full_name", read_only=True, default=None
+    )
+    requested_by_roll = serializers.CharField(
+        source="requested_by.roll_number", read_only=True, default=None
+    )
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = DocumentShareRequest
+        fields = [
+            "id", "document", "document_title", "file_name",
+            "subject_name", "category_name", "semester_name",
+            "from_section", "from_section_name", "from_branch_name",
+            "to_section", "to_section_name",
+            "requested_by", "requested_by_name", "requested_by_roll",
+            "status", "status_label", "note", "created_at", "responded_at",
+        ]
+        read_only_fields = fields
 
 
 class DocumentCreateSerializer(serializers.Serializer):
