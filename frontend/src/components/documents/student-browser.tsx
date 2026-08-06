@@ -6,18 +6,24 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft,
   BookOpen,
+  Download,
   Layers,
+  ListChecks,
   Loader2,
   Search,
   Tag,
+  X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { http } from "@/lib/api";
 import type { Category, DocumentItem, MetaData, Semester, Subject } from "@/lib/types";
 import { DocumentCard } from "./document-card";
 import { EmptyState } from "@/components/empty-state";
+import { getErrorMessage } from "@/lib/utils";
 
 type Step =
   | { level: "semester" }
@@ -28,6 +34,110 @@ type Step =
 export function StudentBrowser({ meta }: { meta: MetaData }) {
   const [step, setStep] = useState<Step>({ level: "semester" });
   const [search, setSearch] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [downloading, setDownloading] = useState(false);
+
+  // Leaving a view clears the selection mode.
+  const goTo = (next: Step) => {
+    setSelectedIds(new Set());
+    setSelecting(false);
+    setStep(next);
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setSelecting(false);
+  };
+
+  // Tries a blob download first (no popup), falls back to opening the tab.
+  const downloadOne = async (doc: DocumentItem): Promise<boolean> => {
+    try {
+      const res = await http.post<{ download_url: string }>(`/documents/${doc.id}/download/`);
+      try {
+        const blobRes = await fetch(res.download_url);
+        if (!blobRes.ok) throw new Error("Download failed");
+        const blob = await blobRes.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = doc.file_name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch {
+        window.open(res.download_url, "_blank", "noopener");
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const downloadSelected = async (docs: DocumentItem[]) => {
+    // Only the checked documents are downloaded, not the whole visible list.
+    const targets = docs.filter((d) => selectedIds.has(d.id));
+    if (targets.length === 0) return;
+    setDownloading(true);
+    let ok = 0;
+    const failed: string[] = [];
+    try {
+      for (const doc of targets) {
+        if (await downloadOne(doc)) ok += 1;
+        else failed.push(doc.title);
+      }
+      if (ok > 0) toast.success(`${ok} document${ok === 1 ? "" : "s"} downloaded.`);
+      if (failed.length > 0)
+        toast.error(
+          `Couldn't download ${failed.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`
+        );
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDownloading(false);
+      clearSelection();
+    }
+  };
+
+  const selectionToolbar = (docs: DocumentItem[]) => {
+    if (docs.length === 0) return null;
+    return selecting ? (
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 p-2.5">
+        <p className="px-1 text-sm font-medium">
+          <span className="text-foreground">{selectedIds.size}</span> selected
+        </p>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Button size="sm" variant="ghost" onClick={clearSelection} disabled={downloading}>
+            <X className="size-3.5" /> Clear
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => downloadSelected(docs)}
+            disabled={downloading || selectedIds.size === 0}
+          >
+            {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+            {downloading ? "Downloading…" : "Download Selected"}
+          </Button>
+        </div>
+      </div>
+    ) : (
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={() => setSelecting(true)}>
+          <ListChecks className="size-3.5" /> Select
+        </Button>
+      </div>
+    );
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: [
@@ -45,7 +155,7 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
     },
   });
 
-  const documents = data?.results ?? [];
+  const documents = useMemo(() => data?.results ?? [], [data]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -64,7 +174,7 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
     return meta.semesters.filter((s) => ids.has(s.id));
   }, [documents, meta.semesters]);
 
-  const reset = () => setStep({ level: "semester" });
+  const reset = () => goTo({ level: "semester" });
 
   if (step.level === "semester") {
     return (
@@ -88,16 +198,26 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
         )}
 
         {search ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((doc, i) => (
-              <DocumentCard key={doc.id} document={doc} index={i} />
-            ))}
-            {filtered.length === 0 && (
-              <div className="sm:col-span-2 xl:col-span-3">
-                <EmptyState title="No matches" description="Try a different search term." />
-              </div>
-            )}
-          </div>
+          <>
+            {selectionToolbar(filtered)}
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map((doc, i) => (
+                <DocumentCard
+                  key={doc.id}
+                  document={doc}
+                  index={i}
+                  selecting={selecting}
+                  selected={selectedIds.has(doc.id)}
+                  onToggleSelect={toggleSelect}
+                />
+              ))}
+              {filtered.length === 0 && (
+                <div className="sm:col-span-2 xl:col-span-3">
+                  <EmptyState title="No matches" description="Try a different search term." />
+                </div>
+              )}
+            </div>
+          </>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {semestersWithDocs.map((semester, i) => {
@@ -108,7 +228,7 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.35, delay: i * 0.06 }}
-              onClick={() => setStep({ level: "category", semester })}
+              onClick={() => goTo({ level: "category", semester })}
               className="group relative overflow-hidden rounded-2xl border bg-card p-5 text-left shadow-sm transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
             >
               <div className="absolute -top-10 -right-10 size-28 rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 blur-2xl" />
@@ -154,7 +274,7 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: i * 0.05 }}
-              onClick={() => setStep({ level: "subjects", semester: step.semester, category })}
+              onClick={() => goTo({ level: "subjects", semester: step.semester, category })}
               className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
             >
               <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -182,7 +302,7 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
       <div>
         {breadcrumb}
         <button
-          onClick={() => setStep({ level: "category", semester: step.semester })}
+          onClick={() => goTo({ level: "category", semester: step.semester })}
           className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" /> {step.category.name}
@@ -202,7 +322,7 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: i * 0.04 }}
-                onClick={() => setStep({ level: "subject", semester: step.semester, category: step.category, subject })}
+                onClick={() => goTo({ level: "subject", semester: step.semester, category: step.category, subject })}
                 className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
               >
                 <div className="flex size-10 items-center justify-center rounded-lg bg-violet-500/10 text-violet-500">
@@ -232,7 +352,7 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
     <div>
       {breadcrumb}
       <button
-        onClick={() => setStep({ level: "subjects", semester: step.semester, category: step.category })}
+        onClick={() => goTo({ level: "subjects", semester: step.semester, category: step.category })}
         className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" /> {step.category.name}
@@ -250,11 +370,21 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
           <Loader2 className="size-7 animate-spin text-primary" />
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {subjectDocs.map((doc, i) => (
-            <DocumentCard key={doc.id} document={doc} index={i} />
-          ))}
-        </div>
+        <>
+          {selectionToolbar(subjectDocs)}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {subjectDocs.map((doc, i) => (
+              <DocumentCard
+                key={doc.id}
+                document={doc}
+                index={i}
+                selecting={selecting}
+                selected={selectedIds.has(doc.id)}
+                onToggleSelect={toggleSelect}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

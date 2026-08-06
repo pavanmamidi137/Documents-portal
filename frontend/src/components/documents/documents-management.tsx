@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Download, Eye, Plus, Send, Share2, Trash2 } from "lucide-react";
+import { Bell, Download, Eye, ListChecks, Plus, Send, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentExt, getDocumentTypeMeta } from "@/lib/document-types";
@@ -47,6 +47,8 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [bulkDeleteTargets, setBulkDeleteTargets] = useState<DocumentItem[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["documents", page, pageSize, q, filters],
@@ -98,6 +100,31 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
       toast.error(getErrorMessage(error));
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const confirmBulkDelete = async () => {
+    if (bulkDeleteTargets.length === 0) return;
+    setBulkDeleting(true);
+    let ok = 0;
+    const failed: string[] = [];
+    try {
+      for (const d of bulkDeleteTargets) {
+        try {
+          await http.delete(`/documents/${d.id}/`);
+          ok += 1;
+        } catch {
+          failed.push(d.title);
+        }
+      }
+      if (ok > 0)
+        toast.success(`${ok} document${ok === 1 ? "" : "s"} deleted.`);
+      if (failed.length > 0)
+        toast.error(`Couldn't delete ${failed.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`);
+      setBulkDeleteTargets([]);
+      invalidateDocuments();
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -317,6 +344,32 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         }}
         searchPlaceholder="Search title, subject, uploader…"
         rowKey={(d) => d.id}
+        selectable
+        selectionBar={(selected, clear) => (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-medium">
+              <span className="text-foreground">{selected.length}</span> selected — hold{" "}
+              <kbd className="rounded border bg-background px-1 text-[10px]">Ctrl</kbd> and click rows
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={clear}>
+                Clear
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  // Drop the visual selection now; the confirm dialog works
+                  // from the captured targets and the list refetches without them.
+                  clear();
+                  setBulkDeleteTargets(selected);
+                }}
+              >
+                <ListChecks className="size-4" /> Delete Selected
+              </Button>
+            </div>
+          </div>
+        )}
       />
 
       <UploadDocumentDialog
@@ -360,6 +413,17 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         destructive
         loading={deleting}
         onConfirm={confirmDelete}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteTargets.length > 0}
+        onOpenChange={(open) => !open && setBulkDeleteTargets([])}
+        title={`Delete ${bulkDeleteTargets.length} document${bulkDeleteTargets.length === 1 ? "" : "s"}?`}
+        description={`This removes ${bulkDeleteTargets.length === 1 ? "this document" : `these ${bulkDeleteTargets.length} documents`} from the portal. The file is only removed from Cloudinary when no other section still uses it.`}
+        confirmLabel="Delete"
+        destructive
+        loading={bulkDeleting}
+        onConfirm={confirmBulkDelete}
       />
     </div>
   );

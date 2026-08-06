@@ -8,6 +8,7 @@ import {
   Download,
   FileSpreadsheet,
   KeyRound,
+  ListChecks,
   Loader2,
   Pencil,
   Plus,
@@ -33,6 +34,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -74,8 +76,9 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   const [resetting, setResetting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [bulkDeleteTargets, setBulkDeleteTargets] = useState<User[]>([]);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkTargets, setBulkTargets] = useState<User[]>([]);
+  const [pendingBulk, setPendingBulk] = useState<BulkAction | null>(null);
+  const [bulkRunning, setBulkRunning] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["students", page, pageSize, q, filters],
@@ -127,27 +130,47 @@ export function StudentsPage({ meta, isCr = false }: Props) {
     });
   };
 
-  const confirmBulkDelete = async () => {
-    if (bulkDeleteTargets.length === 0) return;
-    setBulkDeleting(true);
+  const executeBulk = async (targets: User[], action: BulkAction) => {
+    if (targets.length === 0) return;
+    setBulkRunning(true);
     let ok = 0;
     const failed: string[] = [];
     try {
-      for (const s of bulkDeleteTargets) {
+      for (const s of targets) {
         try {
-          await http.delete(`/students/${s.id}/`);
+          switch (action.type) {
+            case "delete":
+              await http.delete(`/students/${s.id}/`);
+              break;
+            case "reset_password":
+              await http.post(`/students/${s.id}/reset_password/`, {
+                new_password: s.roll_number,
+              });
+              break;
+            case "activate":
+              await http.post(`/students/${s.id}/activate/`);
+              break;
+            case "deactivate":
+              await http.post(`/students/${s.id}/deactivate/`);
+              break;
+            case "promote":
+              await http.post(`/students/${s.id}/promote/`);
+              break;
+            case "demote":
+              await http.post(`/students/${s.id}/demote/`);
+              break;
+          }
           ok += 1;
         } catch {
           failed.push(s.roll_number);
         }
       }
-      if (ok > 0) toast.success(`${ok} student${ok === 1 ? "" : "s"} deleted.`);
+      toast.success(`${ok} student${ok === 1 ? "" : "s"} ${action.doneLabel}.`);
       if (failed.length > 0)
-        toast.error(`Could not delete ${failed.length}: ${failed.join(", ")}`);
-      setBulkDeleteTargets([]);
+        toast.error(`Couldn't ${FAILURE_LABELS[action.type]} ${failed.length}: ${failed.join(", ")}`);
       invalidate();
     } finally {
-      setBulkDeleting(false);
+      setBulkRunning(false);
     }
   };
 
@@ -415,26 +438,72 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         searchPlaceholder="Search roll number, name, email…"
         rowKey={(s) => s.id}
         selectable={isAdmin || isCr}
-        selectionBar={(selected, clear) => (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm font-medium">
-              <span className="text-foreground">{selected.length}</span> selected — hold{" "}
-              <kbd className="rounded border bg-background px-1 text-[10px]">Ctrl</kbd> and click rows
-            </p>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={clear}>
-                Clear
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setBulkDeleteTargets(selected)}
-              >
-                <Trash2 className="size-4" /> Delete Selected
-              </Button>
+        selectionBar={(selected, clear) => {
+          const requestBulk = (action: BulkAction) => {
+            setBulkTargets(selected);
+            if (action.type === "activate" || action.type === "deactivate") {
+              // Reversible actions run immediately, no confirmation needed.
+              void executeBulk(selected, action).then(clear);
+            } else {
+              // Drop the visual selection now; the confirm dialog works from
+              // the captured targets and the list refetches without them.
+              clear();
+              setPendingBulk(action);
+            }
+          };
+          return (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-medium">
+                <span className="text-foreground">{selected.length}</span> selected — hold{" "}
+                <kbd className="rounded border bg-background px-1 text-[10px]">Ctrl</kbd> and click rows
+              </p>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={clear}>
+                  Clear
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button variant="outline" size="sm">
+                        <ListChecks className="size-4" /> Bulk Actions
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent align="end" className="w-60">
+                    <DropdownMenuItem onClick={() => requestBulk({ type: "reset_password", doneLabel: "password reset" })}>
+                      <KeyRound className="size-4" /> Reset password to roll number
+                    </DropdownMenuItem>
+                    {isAdmin && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => requestBulk({ type: "activate", doneLabel: "activated" })}>
+                          <Power className="size-4 text-emerald-500" /> Activate
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => requestBulk({ type: "deactivate", doneLabel: "deactivated" })}>
+                          <Power className="size-4 text-orange-500" /> Deactivate
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => requestBulk({ type: "promote", doneLabel: "promoted to CR" })}>
+                          <ArrowUpCircle className="size-4 text-violet-500" /> Promote to CR
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => requestBulk({ type: "demote", doneLabel: "demoted to student" })}>
+                          <ArrowDownCircle className="size-4 text-orange-500" /> Demote to Student
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => requestBulk({ type: "delete", doneLabel: "deleted" })}
+                    >
+                      <Trash2 className="size-4" /> Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        }}
       />
 
       <StudentFormDialog
@@ -467,14 +536,18 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       />
 
       <ConfirmDialog
-        open={bulkDeleteTargets.length > 0}
-        onOpenChange={(open) => !open && setBulkDeleteTargets([])}
-        title={`Delete ${bulkDeleteTargets.length} student${bulkDeleteTargets.length === 1 ? "" : "s"}?`}
-        description={`This permanently removes ${bulkDeleteTargets.length === 1 ? "this student account" : `these ${bulkDeleteTargets.length} student accounts`}. This cannot be undone.`}
-        confirmLabel="Delete"
-        destructive
-        loading={bulkDeleting}
-        onConfirm={confirmBulkDelete}
+        open={!!pendingBulk}
+        onOpenChange={(open) => !open && setPendingBulk(null)}
+        title={bulkConfirmTitle(pendingBulk, bulkTargets.length)}
+        description={bulkConfirmDescription(pendingBulk)}
+        confirmLabel={pendingBulk?.type === "delete" ? "Delete" : "Continue"}
+        destructive={pendingBulk?.type === "delete"}
+        loading={bulkRunning}
+        onConfirm={async () => {
+          if (!pendingBulk) return;
+          await executeBulk(bulkTargets, pendingBulk);
+          setPendingBulk(null);
+        }}
       />
     </div>
   );
@@ -563,4 +636,48 @@ function DeleteStudentSheet({
       onConfirm={onConfirm}
     />
   );
+}
+
+type BulkAction = {
+  type: "delete" | "reset_password" | "activate" | "deactivate" | "promote" | "demote";
+  doneLabel: string;
+};
+
+const FAILURE_LABELS: Record<BulkAction["type"], string> = {
+  delete: "delete",
+  reset_password: "reset the password of",
+  activate: "activate",
+  deactivate: "deactivate",
+  promote: "promote",
+  demote: "demote",
+};
+
+function bulkConfirmTitle(action: BulkAction | null, count: number): string {
+  switch (action?.type) {
+    case "delete":
+      return `Delete ${count} student${count === 1 ? "" : "s"}?`;
+    case "reset_password":
+      return "Reset passwords to roll numbers?";
+    case "promote":
+      return `Promote ${count} student${count === 1 ? "" : "s"} to CR?`;
+    case "demote":
+      return `Demote ${count} student${count === 1 ? "" : "s"}?`;
+    default:
+      return "Continue?";
+  }
+}
+
+function bulkConfirmDescription(action: BulkAction | null): string {
+  switch (action?.type) {
+    case "delete":
+      return "This permanently removes these student accounts. This cannot be undone.";
+    case "reset_password":
+      return "Each student's password is reset to their Roll Number (in capitals). They can change it after logging in.";
+    case "promote":
+      return "Selected students become CRs and can manage their assigned section. They need a branch and section assigned.";
+    case "demote":
+      return "Selected CRs become regular students again.";
+    default:
+      return "";
+  }
 }
