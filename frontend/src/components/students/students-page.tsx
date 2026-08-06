@@ -309,29 +309,26 @@ export function StudentsPage({ meta, isCr = false }: Props) {
             : "Add, edit, activate and manage students across all sections."
         }
         actions={
-          isAdmin ? (
-            <>
+          <>
+            {(isAdmin || isCr) && (
               <Button variant="outline" onClick={() => setCsvOpen(true)}>
                 <FileSpreadsheet className="size-4" /> CSV Import
               </Button>
+            )}
+            {(isAdmin || isCr) && (
               <Button variant="outline" onClick={handleExport}>
                 <Download className="size-4" /> Export
               </Button>
-              <Button onClick={() => {
+            )}
+            <Button
+              onClick={() => {
                 setEditing(null);
                 setFormOpen(true);
-              }}>
-                <Plus className="size-4" /> Add Student
-              </Button>
-            </>
-          ) : (
-            <Button onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}>
+              }}
+            >
               <Plus className="size-4" /> Add Student
             </Button>
-          )
+          </>
         }
       />
 
@@ -401,7 +398,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         onSaved={invalidate}
       />
 
-      <CsvImportDialog open={csvOpen} onOpenChange={setCsvOpen} onImported={invalidate} />
+      <CsvImportDialog open={csvOpen} onOpenChange={setCsvOpen} onImported={invalidate} isCr={isCr} />
 
       {/* Reset password dialog */}
       <ResetPasswordDialog

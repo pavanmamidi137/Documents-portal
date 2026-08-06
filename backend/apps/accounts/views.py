@@ -156,7 +156,7 @@ class StudentViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     # -- bulk import / export -----------------------------------------------
-    @action(detail=False, methods=["post"], permission_classes=[IsSuperAdmin])
+    @action(detail=False, methods=["post"], permission_classes=[IsSuperAdminOrCR])
     def import_csv(self, request):
         file = request.FILES.get("file")
         if not file:

@@ -21,9 +21,10 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: () => void;
+  isCr?: boolean;
 }
 
-export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
+export function CsvImportDialog({ open, onOpenChange, onImported, isCr = false }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -77,8 +78,9 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
             <FileSpreadsheet className="size-5 text-primary" /> Bulk Import Students
           </DialogTitle>
           <DialogDescription>
-            CSV columns: Roll Number, Student Name, Email, Phone, Branch, Section, Password.
-            Existing roll numbers are updated.
+            {isCr
+              ? "CSV columns: Roll Number, Student Name, Email, Phone, Password. Students are added to your assigned section."
+              : "CSV columns: Roll Number, Student Name, Email, Phone, Branch, Section, Password. Existing roll numbers are updated."}
           </DialogDescription>
         </DialogHeader>
 

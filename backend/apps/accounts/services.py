@@ -102,6 +102,10 @@ def import_students_csv(file, actor: User, request=None) -> dict:
     Expected columns: roll_number, full_name, email, phone, branch, section, password
     (headers are matched case-insensitively; spaces/underscores tolerated).
     Existing roll numbers are updated in place.
+
+    CR imports are confined to the actor's own branch/section: Branch/Section
+    columns are ignored, and roll numbers belonging to a different section are
+    skipped rather than overwritten.
     """
     content = file.read().decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(content))
@@ -115,6 +119,16 @@ def import_students_csv(file, actor: User, request=None) -> dict:
     col = {key: header_map[key] for key in CSV_REQUIRED_COLUMNS if key in header_map}
     if len(col) < 2:
         raise ValueError("CSV must contain 'Roll Number' and 'Student Name' columns.")
+
+    # CRs may only import into their own assigned section.
+    scoped_section = None
+    if actor.is_cr:
+        if not (actor.branch_id and actor.section_id):
+            raise ValueError(
+                "Your account is not assigned a branch/section yet. "
+                "Ask a Super Admin to assign one before importing students."
+            )
+        scoped_section = actor.section
 
     created = updated = 0
     errors: list[dict] = []
@@ -134,13 +148,16 @@ def import_students_csv(file, actor: User, request=None) -> dict:
             branch_name = (row.get(header_map.get("branch")) or "").strip() if header_map.get("branch") else ""
             section_name = (row.get(header_map.get("section")) or "").strip() if header_map.get("section") else ""
 
-            branch = section = None
-            if branch_name:
-                try:
-                    branch, section = get_or_create_branch_section(branch_name, section_name or "A")
-                except Exception as exc:  # pragma: no cover
-                    errors.append({"row": seen, "roll_number": roll, "error": str(exc)})
-                    continue
+            if scoped_section is not None:
+                branch, section = scoped_section.branch, scoped_section
+            else:
+                branch = section = None
+                if branch_name:
+                    try:
+                        branch, section = get_or_create_branch_section(branch_name, section_name or "A")
+                    except Exception as exc:  # pragma: no cover
+                        errors.append({"row": seen, "roll_number": roll, "error": str(exc)})
+                        continue
 
             try:
                 student, was_created = User.objects.get_or_create(
@@ -151,6 +168,13 @@ def import_students_csv(file, actor: User, request=None) -> dict:
                     },
                 )
                 if not was_created:
+                    # A CR may only update students already in their own section.
+                    if scoped_section is not None and student.section_id != scoped_section.id:
+                        errors.append({
+                            "row": seen, "roll_number": roll,
+                            "error": "Roll number belongs to another section (or has no section assigned).",
+                        })
+                        continue
                     student.full_name = full_name
                     if email:
                         student.email = email
