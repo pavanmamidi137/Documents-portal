@@ -4,10 +4,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { BookOpen, FileUp, Loader2, Share2, UploadCloud } from "lucide-react";
+import {
+  BookOpen,
+  CheckCircle2,
+  FileUp,
+  Loader2,
+  Share2,
+  UploadCloud,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 
 import {
   ALLOWED_UPLOAD_EXTENSIONS,
@@ -74,6 +82,9 @@ export function UploadDocumentDialog({
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fileError, setFileError] = useState("");
+  // Admin only: "all" = entire branch, "specific" = ticked sections.
+  const [target, setTarget] = useState<"all" | "specific">("all");
+  // Ticked sections for the admin target grid + the CR share-request targets.
   const [sharedSections, setSharedSections] = useState<number[]>([]);
   const titleDirty = useRef(false);
   const fileMeta = file ? getDocumentTypeMeta(file.name) : null;
@@ -135,14 +146,17 @@ export function UploadDocumentDialog({
   const selectedSubject = watch("subject");
   const subjectName =
     meta.subjects.find((s) => s.id === Number(selectedSubject))?.name ?? "";
-  // Sections the admin can additionally share with (same branch, excluding the
-  // primary one). For CRs the primary is always their own assigned section.
+  const branchName =
+    meta.branches.find((b) => b.id === Number(selectedBranch))?.name ?? "";
+  const semesterName =
+    meta.semesters.find((s) => s.id === Number(selectedSemester))?.name ?? "";
+  // Other sections in the CR's branch they can request a share with.
   const shareableSections = useMemo(
     () => {
+      if (!isCr) return [];
       const branch = watch("branch");
-      const primary = isCr ? user?.section : Number(watch("section"));
       return meta.sections.filter(
-        (s) => s.branch === Number(branch) && s.id !== primary
+        (s) => s.branch === Number(branch) && s.id !== user?.section
       );
     },
     [meta.sections, watch, isCr, user?.section]
@@ -152,6 +166,10 @@ export function UploadDocumentDialog({
     setSharedSections((prev) =>
       checked ? [...prev, id] : prev.filter((x) => x !== id)
     );
+  };
+
+  const setAllSections = (checked: boolean) => {
+    setSharedSections(checked ? sections.map((s) => s.id) : []);
   };
 
   const resetSubjectChain = () => {
@@ -179,6 +197,7 @@ export function UploadDocumentDialog({
       setFile(null);
       setFileError("");
       setSharedSections([]);
+      setTarget("all");
     }
   }, [open, reset, lockBranchSection, user?.branch, user?.section]);
 
@@ -191,8 +210,8 @@ export function UploadDocumentDialog({
       toast.error("Unsupported file format.");
       return;
     }
-    if (!values.branch || !values.section) {
-      toast.error("Please select a branch and section.");
+    if (!values.branch) {
+      toast.error("Please select a branch.");
       return;
     }
     const form = new FormData();
@@ -200,16 +219,36 @@ export function UploadDocumentDialog({
     form.append("description", values.description ?? "");
     form.append("file", file);
     form.append("branch", values.branch);
-    form.append("section", values.section);
-    // Admin: one upload, shared to the primary section + any additional ones.
-    const extraSections = isAdmin
-      ? Array.from(new Set([Number(values.section), ...sharedSections])).filter(Boolean)
-      : [];
-    extraSections.forEach((id) => form.append("sections", String(id)));
-    // CR: request that other sections' CRs accept this document.
-    if (isCr) {
+
+    let uploadedSectionCount = 0;
+    if (isAdmin) {
+      // Admin: one upload to the whole branch (every section) or to the
+      // specific sections they ticked.
+      if (sections.length === 0) {
+        toast.error("This branch has no sections yet. Add sections in Admin → Sections.");
+        return;
+      }
+      const targetIds =
+        target === "all"
+          ? sections.map((s) => s.id)
+          : Array.from(new Set(sharedSections));
+      if (targetIds.length === 0) {
+        toast.error("Select at least one section.");
+        return;
+      }
+      targetIds.forEach((id) => form.append("sections", String(id)));
+      uploadedSectionCount = targetIds.length;
+    } else {
+      // CR: always uploads to their own assigned section.
+      if (!values.section) {
+        toast.error("Please select a section.");
+        return;
+      }
+      form.append("section", values.section);
+      // Request sharing with other sections' CRs (multi-select).
       sharedSections.forEach((id) => form.append("share_with_sections", String(id)));
     }
+
     form.append("semester", values.semester);
     form.append("category", values.category);
     form.append("subject", values.subject);
@@ -217,13 +256,19 @@ export function UploadDocumentDialog({
     setSubmitting(true);
     try {
       const doc = await http.upload<DocumentItem>("/documents/", form);
-      toast.success(
-        isCr && sharedSections.length > 0
-          ? `Document uploaded & share requests sent to ${sharedSections.length} section${sharedSections.length === 1 ? "" : "s"}.`
-          : extraSections.length > 1
-          ? `Document uploaded & shared with ${extraSections.length} sections.`
-          : "Document uploaded successfully."
-      );
+      if (isAdmin) {
+        toast.success(
+          target === "all"
+            ? `Document uploaded to all ${uploadedSectionCount} sections of ${branchName}.`
+            : `Document uploaded to ${uploadedSectionCount} section${uploadedSectionCount === 1 ? "" : "s"}.`
+        );
+      } else if (isCr && sharedSections.length > 0) {
+        toast.success(
+          `Document uploaded & share requests sent to ${sharedSections.length} section${sharedSections.length === 1 ? "" : "s"}.`
+        );
+      } else {
+        toast.success("Document uploaded successfully.");
+      }
       onUploaded(doc);
       onOpenChange(false);
     } catch (error) {
@@ -256,6 +301,7 @@ export function UploadDocumentDialog({
                   setValue("branch", v ?? "");
                   setValue("section", "");
                   setSharedSections([]);
+                  setTarget("all");
                   resetSubjectChain();
                 }}
                 disabled={lockBranchSection}
@@ -272,26 +318,113 @@ export function UploadDocumentDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Section</Label>
-              <Select
-                value={watch("section")}
-                onValueChange={(v) => setValue("section", v ?? "")}
-                disabled={lockBranchSection || sections.length === 0}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={lockBranchSection ? "Your section" : "Select section"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {sections.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      {s.branch_name} - {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {isCr ? (
+              <div className="space-y-2">
+                <Label>Section</Label>
+                <Select
+                  value={watch("section")}
+                  onValueChange={(v) => setValue("section", v ?? "")}
+                  disabled={lockBranchSection || sections.length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Your section" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sections.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.branch_name} - {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="flex items-end pb-1">
+                <div
+                  className="flex w-full items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2"
+                  title="Upload to every section of the selected branch"
+                >
+                  <Switch
+                    disabled={!selectedBranch}
+                    checked={target === "all"}
+                    onCheckedChange={(v) => {
+                      const next = v ? "all" : "specific";
+                      setTarget(next);
+                      // Switching to specific sections starts with all ticked,
+                      // so the admin just unchecks what they don't want.
+                      if (next === "specific" && sharedSections.length === 0) {
+                        setSharedSections(sections.map((s) => s.id));
+                      }
+                    }}
+                  />
+                  <span className="text-xs font-medium leading-tight">
+                    Entire branch
+                    <span className="block font-normal text-muted-foreground">
+                      all sections
+                    </span>
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
+
+          {isAdmin && selectedBranch && (
+            <div className="space-y-2 rounded-xl border bg-muted/20 p-3">
+              {target === "all" ? (
+                <p className="flex items-center gap-2 text-sm">
+                  <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
+                  This document will be uploaded to{" "}
+                  <span className="font-semibold">
+                    all {sections.length} section{sections.length === 1 ? "" : "s"}
+                  </span>{" "}
+                  of {branchName}.
+                </p>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-sm">Choose sections</Label>
+                    <div className="flex gap-3 text-xs">
+                      <button
+                        type="button"
+                        className="font-medium text-primary hover:underline"
+                        onClick={() => setAllSections(true)}
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        className="font-medium text-muted-foreground hover:underline"
+                        onClick={() => setAllSections(false)}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto">
+                    {sections.map((s) => (
+                      <label
+                        key={s.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
+                      >
+                        <Checkbox
+                          checked={sharedSections.includes(s.id)}
+                          onCheckedChange={(v) => toggleShared(s.id, v === true)}
+                        />
+                        <span className="truncate">
+                          {s.branch_name} - Sec {s.name}
+                        </span>
+                      </label>
+                    ))}
+                    {sections.length === 0 && (
+                      <p className="col-span-2 text-xs text-muted-foreground">
+                        No sections in this branch yet.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
@@ -346,9 +479,18 @@ export function UploadDocumentDialog({
                 titleDirty.current = false;
                 setValue("title", "");
               }}
+              disabled={!selectedSemester || subjects.length === 0}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select subject" />
+                <SelectValue
+                  placeholder={
+                    !selectedSemester
+                      ? "Select semester first"
+                      : subjects.length === 0
+                      ? "No subjects available"
+                      : "Select subject"
+                  }
+                />
               </SelectTrigger>
               <SelectContent>
                 {subjects.map((s) => (
@@ -359,11 +501,16 @@ export function UploadDocumentDialog({
                 ))}
               </SelectContent>
             </Select>
-            {subjects.length === 0 && selectedSemester && (
+            {!selectedSemester ? (
               <p className="text-xs text-muted-foreground">
-                No subjects for this semester{selectedBranch ? " and branch" : ""} yet.
+                Select a semester first to load its subjects.
               </p>
-            )}
+            ) : subjects.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No subjects for {semesterName}
+                {selectedBranch ? ` in ${branchName}` : ""} yet — ask the admin to add subjects.
+              </p>
+            ) : null}
             {errors.subject && <p className="text-xs text-destructive">{errors.subject.message}</p>}
           </div>
 
@@ -448,11 +595,11 @@ export function UploadDocumentDialog({
             />
           </div>
 
-          {selectedBranch && (isAdmin || isCr) && (
+          {isCr && selectedBranch && (
             <div className="space-y-2">
               <Label className="flex items-center gap-1.5">
-                <Share2 className="size-3.5 text-muted-foreground" />{" "}
-                {isCr ? "Request share with other sections" : "Share with additional sections"}
+                <Share2 className="size-3.5 text-muted-foreground" /> Request share with other
+                sections
                 <span className="text-xs font-normal text-muted-foreground">(optional)</span>
               </Label>
               <div className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border p-3">
@@ -472,14 +619,13 @@ export function UploadDocumentDialog({
                 ))}
                 {shareableSections.length === 0 && (
                   <p className="col-span-2 text-xs text-muted-foreground">
-                    No other sections in this branch.
+                    No other sections in {branchName} yet — ask the admin to add sections.
                   </p>
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                {isCr
-                  ? "Their CRs get a notification and accept the document into their section — no extra upload or storage. Tick multiple sections to send the request to all of them at once."
-                  : "Students in the selected sections will see this document. Tick multiple sections at once."}
+                Their CRs get a notification and accept the document into their section — no extra
+                upload or storage. Tick multiple sections to send the request to all of them at once.
               </p>
             </div>
           )}
