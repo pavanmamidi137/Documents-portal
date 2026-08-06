@@ -6,7 +6,8 @@ out of the view layer and reusable across the API and management commands.
 import csv
 import io
 
-from django.db import transaction
+from django.contrib.auth.hashers import make_password
+from django.db import IntegrityError, transaction
 
 from apps.core.utils import log_audit
 
@@ -145,58 +146,157 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
             if not section:
                 section = Section.objects.create(branch=branch, name="A")
 
-    created = updated = 0
-    errors: list[dict] = []
-    seen = 0
     scoped_section = section if actor.is_cr else None
+    errors: list[dict] = []
+    rows: list[dict] = []
+
+    # Parse the file first (cheap), then do ONE batch of database work.
+    for seen, row in enumerate(reader, start=1):
+        roll = (row.get(col["roll number"]) or "").strip().upper()
+        full_name = (row.get(col["student name"]) or "").strip()
+        if not roll or not full_name:
+            errors.append({"row": seen, "error": "Missing roll number or student name."})
+            continue
+        # Emails are normalized to lowercase for consistency with the
+        # profile-update path (avoids case-duplicate accounts).
+        email = ((row.get(header_map.get("email")) or "").strip().lower()
+                 if header_map.get("email") else "")
+        phone = (row.get(header_map.get("phone")) or "").strip() if header_map.get("phone") else ""
+        rows.append({"roll": roll, "full_name": full_name, "email": email, "phone": phone, "seen": seen})
+
+    if not rows:
+        return {"created": 0, "updated": 0, "skipped_errors": errors}
+
+    created = updated = 0
+    rolls = [r["roll"] for r in rows]
 
     with transaction.atomic():
-        for row in reader:
-            seen += 1
-            roll = (row.get(col["roll number"]) or "").strip().upper()
-            full_name = (row.get(col["student name"]) or "").strip()
-            if not roll or not full_name:
-                errors.append({"row": seen, "error": "Missing roll number or student name."})
-                continue
-            # Emails are normalized to lowercase for consistency with the
-            # profile-update path (avoids case-duplicate accounts).
-            email = ((row.get(header_map.get("email")) or "").strip().lower()
-                     if header_map.get("email") else "")
-            phone = (row.get(header_map.get("phone")) or "").strip() if header_map.get("phone") else ""
+        # Load every existing roll number with a single query instead of one
+        # get_or_create round-trip per row.
+        existing = {
+            u.roll_number: u
+            for u in User.objects.filter(roll_number__in=rolls)
+        }
+        # Emails already owned by accounts OUTSIDE this file (protects the bulk
+        # writes below from unique-constraint failures).
+        taken_emails = set(
+            User.objects.exclude(roll_number__in=rolls)
+            .filter(email__in=[r["email"] for r in rows if r["email"]])
+            .values_list("email", flat=True)
+        )
+        # Emails already held by students in this file (same roll can keep its
+        # own email; a different roll may not take it).
+        email_to_roll = {
+            u.email.lower(): u.roll_number
+            for u in existing.values() if u.email
+        }
 
-            try:
-                student, was_created = User.objects.get_or_create(
-                    roll_number=roll,
-                    defaults={
-                        "full_name": full_name, "email": email or None, "phone": phone,
-                        "role": User.Role.STUDENT, "branch": branch, "section": section,
-                    },
+        create_rows: list[dict] = []
+        update_pairs: list[tuple[dict, User]] = []
+        seen_rolls: set[str] = set()
+
+        def claim_email(r: dict) -> bool:
+            """Check and reserve a row's email; records an error when taken."""
+            if not r["email"]:
+                return True
+            lower_email = r["email"].lower()
+            owner = email_to_roll.get(lower_email)
+            if (owner is not None and owner != r["roll"]) or lower_email in taken_emails:
+                errors.append({
+                    "row": r["seen"], "roll_number": r["roll"],
+                    "error": "This email is already in use by another student.",
+                })
+                return False
+            email_to_roll[lower_email] = r["roll"]
+            return True
+
+        for r in rows:
+            if r["roll"] in seen_rolls:
+                errors.append({
+                    "row": r["seen"], "roll_number": r["roll"],
+                    "error": "Duplicate roll number in the CSV file.",
+                })
+                continue
+            seen_rolls.add(r["roll"])
+
+            student = existing.get(r["roll"])
+            if student is None:
+                if claim_email(r):
+                    create_rows.append(r)
+                continue
+
+            # A CR may only update students already in their own section.
+            if scoped_section is not None and student.section_id != scoped_section.id:
+                errors.append({
+                    "row": r["seen"], "roll_number": r["roll"],
+                    "error": "Roll number belongs to another section (or has no section assigned).",
+                })
+                continue
+            if not claim_email(r):
+                continue
+            # Placement (branch/section) is fixed at creation time - a re-import
+            # only refreshes name/email/phone.
+            student.full_name = r["full_name"]
+            if r["email"]:
+                student.email = r["email"]
+            student.phone = r["phone"]
+            update_pairs.append((r, student))
+
+        if create_rows:
+            # Default password is the roll number (in capitals), hashed with the
+            # lightweight ImportPBKDF2 hasher - Django upgrades it to full
+            # PBKDF2 on the student's first login.
+            created_users = [
+                User(
+                    roll_number=r["roll"], full_name=r["full_name"],
+                    email=r["email"] or None, phone=r["phone"],
+                    role=User.Role.STUDENT, branch=branch, section=section,
+                    password=make_password(r["roll"], hasher="pbkdf2_sha256_import"),
                 )
-                if not was_created:
-                    # A CR may only update students already in their own section.
-                    if scoped_section is not None and student.section_id != scoped_section.id:
+                for r in create_rows
+            ]
+            try:
+                User.objects.bulk_create(created_users, batch_size=500)
+                created = len(create_rows)
+            except IntegrityError:
+                # A racing insert (e.g. an email created between the check and
+                # the write) - fall back to one-by-one so only the conflicting
+                # row is reported and skipped.
+                created = 0
+                for r, u in zip(create_rows, created_users):
+                    try:
+                        User.objects.create(
+                            roll_number=u.roll_number, full_name=u.full_name,
+                            email=u.email, phone=u.phone, role=u.role,
+                            branch=branch, section=section, password=u.password,
+                        )
+                        created += 1
+                    except IntegrityError:
                         errors.append({
-                            "row": seen, "roll_number": roll,
-                            "error": "Roll number belongs to another section (or has no section assigned).",
+                            "row": r["seen"], "roll_number": r["roll"],
+                            "error": "Could not create this student (duplicate email or roll number).",
                         })
-                        continue
-                    # Placement (branch/section) is fixed at creation time - a
-                    # re-import only refreshes name/email/phone.
-                    student.full_name = full_name
-                    if email:
-                        student.email = email
-                    student.phone = phone
-                    student.save()
-                else:
-                    # Default password is the roll number (in capitals).
-                    student.set_password(roll)
-                    student.save(update_fields=["password"])
-                if was_created:
-                    created += 1
-                else:
-                    updated += 1
-            except Exception as exc:
-                errors.append({"row": seen, "roll_number": roll, "error": str(exc)})
+
+        if update_pairs:
+            update_rows = [s for _, s in update_pairs]
+            try:
+                User.objects.bulk_update(update_rows, ["full_name", "email", "phone"], batch_size=500)
+                updated = len(update_pairs)
+            except IntegrityError:
+                # Racing insert between the email check and the write - fall back
+                # to one-by-one so only the conflicting row is reported.
+                updated = 0
+                for r, student in update_pairs:
+                    try:
+                        student.save(update_fields=["full_name", "email", "phone"])
+                        updated += 1
+                    except IntegrityError:
+                        errors.append({
+                            "row": r["seen"], "roll_number": r["roll"],
+                            "error": "Could not update this student (email already in use).",
+                        })
+        else:
+            updated = 0
 
     log_audit(actor, "CSV_IMPORT", "Student", "",
               {"created": created, "updated": updated, "errors": len(errors)}, request)

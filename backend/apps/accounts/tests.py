@@ -74,8 +74,12 @@ class CsvImportTests(TestCase):
         student = User.objects.get(roll_number="21CSE01")
         self.assertEqual(student.branch, self.branch)
         self.assertEqual(student.section, self.section)
-        # Default password is the uppercase roll number.
+        # Default password is the uppercase roll number, stored with the fast
+        # import hasher so large imports stay fast.
+        self.assertTrue(student.password.startswith("pbkdf2_sha256_import$"))
+        # First password check verifies AND upgrades to the strong default hasher.
         self.assertTrue(student.check_password("21CSE01"))
+        self.assertTrue(student.password.startswith("pbkdf2_sha256$"))
 
     def test_admin_import_requires_branch(self):
         csv_content = "Roll Number,Student Name\n21CSE01,Aarav\n"
@@ -114,6 +118,16 @@ class CsvImportTests(TestCase):
         bad = self._csv_file("Name,Email\nAarav,a@x.com\n")
         with self.assertRaises(ValueError):
             services.import_students_csv(bad, self.admin)
+
+    def test_import_reports_duplicate_roll_numbers(self):
+        csv_content = "Roll Number,Student Name\n21CSE01,Aarav\n21CSE01,Aarav Again\n"
+        result = services.import_students_csv(
+            self._csv_file(csv_content), self.admin,
+            branch_id=self.branch.id, section_id=self.section.id,
+        )
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(len(result["skipped_errors"]), 1)
+        self.assertIn("Duplicate", result["skipped_errors"][0]["error"])
 
 
 class CsvImportForCrTests(TestCase):

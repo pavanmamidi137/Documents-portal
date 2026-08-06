@@ -95,7 +95,9 @@ export function CsvImportDialog({ open, onOpenChange, onImported, meta, isCr = f
         form.append("branch", branch);
         form.append("section", section);
       }
-      const res = await http.upload<ImportResult>("/students/import_csv/", form);
+      // Large files take a while to import on the server - give the request
+      // room so it doesn't time out while hundreds of students are saved.
+      const res = await http.upload<ImportResult>("/students/import_csv/", form, 300_000);
       setResult(res);
       toast.success(`Import complete: ${res.created} created, ${res.updated} updated.`);
       onImported();
@@ -259,6 +261,11 @@ export function CsvImportDialog({ open, onOpenChange, onImported, meta, isCr = f
               {loading && <Loader2 className="size-4 animate-spin" />}
               {loading ? "Importing…" : "Start Import"}
             </Button>
+            {loading && (
+              <p className="text-center text-xs text-muted-foreground">
+                Please wait — large files can take a minute or two. Don&apos;t close this window.
+              </p>
+            )}
           </div>
         )}
       </DialogContent>

@@ -87,11 +87,11 @@ export const http = {
   put: <T>(url: string, data?: unknown) =>
     api.put<T>(url, data).then((r) => r.data),
   delete: <T>(url: string) => api.delete<T>(url).then((r) => r.data),
-  upload: <T>(url: string, form: FormData) =>
+  upload: <T>(url: string, form: FormData, timeout = 120_000) =>
     api
       .post<T>(url, form, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120_000,
+        timeout,
       })
       .then((r) => r.data),
   /** Fetch a file as a blob and trigger a browser download. */
