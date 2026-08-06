@@ -12,6 +12,9 @@ export const ALLOWED_UPLOAD_EXTENSIONS = ["pdf", "ppt", "pptx", "doc", "docx", "
 
 export const MAX_DOCUMENT_SIZE_MB = 20;
 
+/** Unit choices shown in the upload dialog; the chosen unit fills the title. */
+export const UPLOAD_UNITS = ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"] as const;
+
 export function getDocumentExt(fileName: string): string {
   const match = /\.([a-zA-Z0-9]+)$/.exec(fileName ?? "");
   return match ? match[1].toLowerCase() : "";

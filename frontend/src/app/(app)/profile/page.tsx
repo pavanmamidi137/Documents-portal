@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
-import { KeyRound, Loader2, Mail, Phone, ShieldCheck } from "lucide-react";
+import { KeyRound, Loader2, Mail, Pencil, Phone, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,102 @@ const schema = z
   });
 
 type FormValues = z.infer<typeof schema>;
+
+const editSchema = z.object({
+  full_name: z.string().min(2, "Name must be at least 2 characters"),
+  email: z.string().email("Invalid email").optional().or(z.literal("")),
+  phone: z.string().optional(),
+});
+
+type EditFormValues = z.infer<typeof editSchema>;
+
+function EditDetailsCard() {
+  const { user, refreshUser } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const wasPrefilled = useRef(false);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isDirty },
+  } = useForm<EditFormValues>({
+    resolver: zodResolver(editSchema),
+    defaultValues: { full_name: "", email: "", phone: "" },
+  });
+
+  // Prefill once the profile loads (or after refreshUser() post-save).
+  useEffect(() => {
+    if (user && !wasPrefilled.current) {
+      wasPrefilled.current = true;
+      reset({
+        full_name: user.full_name,
+        email: user.email ?? "",
+        phone: user.phone ?? "",
+      });
+    }
+  }, [user, reset]);
+
+  const onSubmit = async (values: EditFormValues) => {
+    setSaving(true);
+    try {
+      await http.patch("/auth/me/", {
+        full_name: values.full_name.trim(),
+        email: values.email?.trim() || null,
+        phone: values.phone?.trim() ?? "",
+      });
+      toast.success("Profile updated.");
+      await refreshUser();
+      reset({
+        full_name: values.full_name.trim(),
+        email: values.email?.trim() ?? "",
+        phone: values.phone?.trim() ?? "",
+      });
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!user) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Pencil className="size-5 text-primary" /> Edit Details
+        </CardTitle>
+        <CardDescription>
+          Update your name and contact details. Your roll number, branch and section stay fixed.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="edit-name">Full Name</Label>
+            <Input id="edit-name" {...register("full_name")} />
+            {errors.full_name && (
+              <p className="text-xs text-destructive">{errors.full_name.message}</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-email">Email</Label>
+            <Input id="edit-email" type="email" placeholder="you@college.edu" {...register("email")} />
+            {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-phone">Phone</Label>
+            <Input id="edit-phone" placeholder="10-digit mobile" {...register("phone")} />
+          </div>
+          <Button type="submit" disabled={saving || !isDirty} className="w-full">
+            {saving && <Loader2 className="size-4 animate-spin" />}
+            Save Changes
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
 
 function ThemePickerCard() {
   const { theme, themes, setTheme } = useSiteTheme();
@@ -148,6 +244,7 @@ export default function ProfilePage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <div className="space-y-6">
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
           <Card>
             <CardHeader>
@@ -203,6 +300,15 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
         </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, delay: 0.05 }}
+        >
+          <EditDetailsCard />
+        </motion.div>
+        </div>
 
         <motion.div
           initial={{ opacity: 0, y: 14 }}

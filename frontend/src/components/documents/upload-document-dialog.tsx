@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { FileUp, Loader2, Share2, UploadCloud } from "lucide-react";
+import { BookOpen, FileUp, Loader2, Share2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,6 +14,7 @@ import {
   getDocumentTypeMeta,
   isAllowedDocument,
   MAX_DOCUMENT_SIZE_MB,
+  UPLOAD_UNITS,
 } from "@/lib/document-types";
 
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,7 @@ const schema = z.object({
   semester: z.string().min(1, "Select a semester"),
   category: z.string().min(1, "Select a category"),
   subject: z.string().min(1, "Select a subject"),
+  unit: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -73,6 +75,7 @@ export function UploadDocumentDialog({
   const [submitting, setSubmitting] = useState(false);
   const [fileError, setFileError] = useState("");
   const [sharedSections, setSharedSections] = useState<number[]>([]);
+  const titleDirty = useRef(false);
   const fileMeta = file ? getDocumentTypeMeta(file.name) : null;
 
   const handleFileChange = (f: File | null) => {
@@ -119,6 +122,8 @@ export function UploadDocumentDialog({
     () => {
       const semester = watch("semester");
       const branch = watch("branch");
+      // Subjects allotted by the admin branch-wise (a subject with no branch is
+      // college-wide and available to every branch of that semester).
       return meta.subjects.filter(
         (s) =>
           s.semester === Number(semester) &&
@@ -127,6 +132,9 @@ export function UploadDocumentDialog({
     },
     [meta.subjects, watch]
   );
+  const selectedSubject = watch("subject");
+  const subjectName =
+    meta.subjects.find((s) => s.id === Number(selectedSubject))?.name ?? "";
   // Sections the admin can additionally share with (same branch, excluding the
   // primary one). For CRs the primary is always their own assigned section.
   const shareableSections = useMemo(
@@ -146,6 +154,13 @@ export function UploadDocumentDialog({
     );
   };
 
+  const resetSubjectChain = () => {
+    setValue("subject", "");
+    setValue("unit", "");
+    titleDirty.current = false;
+    setValue("title", "");
+  };
+
   useEffect(() => {
     if (open) {
       // CRs are locked to their own branch/section - default the values so
@@ -158,7 +173,9 @@ export function UploadDocumentDialog({
         semester: "",
         category: "",
         subject: "",
+        unit: "",
       });
+      titleDirty.current = false;
       setFile(null);
       setFileError("");
       setSharedSections([]);
@@ -224,60 +241,12 @@ export function UploadDocumentDialog({
             <UploadCloud className="size-5 text-primary" /> Upload Document
           </DialogTitle>
           <DialogDescription>
-            PDF, PPT, DOCX or TXT files are stored securely in Cloudinary — only the link is saved
-            in the database.
+            Pick the subject, then choose the unit — the title fills in by itself. PDF, PPT, DOCX
+            or TXT files are stored securely in Cloudinary.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="doc-title">Title</Label>
-            <Input id="doc-title" placeholder="e.g. Unit 1 Notes - DBMS" {...register("title")} />
-            {errors.title && <p className="text-xs text-destructive">{errors.title.message}</p>}
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="doc-desc">Description (optional)</Label>
-            <Textarea
-              id="doc-desc"
-              rows={2}
-              placeholder="Short description…"
-              {...register("description")}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Document File</Label>
-            <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-colors hover:border-primary/50 hover:bg-muted/40">
-              {file && fileMeta ? (
-                <>
-                  <div className={`flex size-10 items-center justify-center rounded-lg ring-1 ${fileMeta.classes}`}>
-                    <fileMeta.Icon className="size-5" />
-                  </div>
-                  <p className="text-sm font-medium text-foreground">{file.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB · {fileMeta.label}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <FileUp className="size-6 text-muted-foreground" />
-                  <p className="text-sm font-medium">Click to choose a document</p>
-                  <p className="text-xs text-muted-foreground">
-                    PDF, PPT, PPTX, DOC, DOCX or TXT · max {MAX_DOCUMENT_SIZE_MB} MB
-                  </p>
-                </>
-              )}
-              <input
-                type="file"
-                accept=".pdf,.ppt,.pptx,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain"
-                className="hidden"
-                onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
-              />
-            </label>
-            {fileError && <p className="text-xs text-destructive">{fileError}</p>}
-          </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>Branch</Label>
@@ -286,8 +255,8 @@ export function UploadDocumentDialog({
                 onValueChange={(v) => {
                   setValue("branch", v ?? "");
                   setValue("section", "");
-                  setValue("subject", "");
                   setSharedSections([]);
+                  resetSubjectChain();
                 }}
                 disabled={lockBranchSection}
               >
@@ -324,42 +293,6 @@ export function UploadDocumentDialog({
             </div>
           </div>
 
-          {selectedBranch && (isAdmin || isCr) && (
-            <div className="space-y-2">
-              <Label className="flex items-center gap-1.5">
-                <Share2 className="size-3.5 text-muted-foreground" />{" "}
-                {isCr ? "Request share with other sections" : "Share with additional sections"}
-                <span className="text-xs font-normal text-muted-foreground">(optional)</span>
-              </Label>
-              <div className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border p-3">
-                {shareableSections.map((s) => (
-                  <label
-                    key={s.id}
-                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
-                  >
-                    <Checkbox
-                      checked={sharedSections.includes(s.id)}
-                      onCheckedChange={(v) => toggleShared(s.id, v === true)}
-                    />
-                    <span className="truncate">
-                      {s.branch_name} - Sec {s.name}
-                    </span>
-                  </label>
-                ))}
-                {shareableSections.length === 0 && (
-                  <p className="col-span-2 text-xs text-muted-foreground">
-                    No other sections in this branch.
-                  </p>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {isCr
-                  ? "Their CRs get a notification and accept the document into their section — no extra upload or storage."
-                  : "Students in the selected sections will see this document."}
-              </p>
-            </div>
-          )}
-
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>Semester</Label>
@@ -367,7 +300,7 @@ export function UploadDocumentDialog({
                 value={selectedSemester}
                 onValueChange={(v) => {
                   setValue("semester", v ?? "");
-                  setValue("subject", "");
+                  resetSubjectChain();
                 }}
               >
                 <SelectTrigger>
@@ -402,8 +335,18 @@ export function UploadDocumentDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>Subject</Label>
-            <Select value={watch("subject")} onValueChange={(v) => setValue("subject", v ?? "")}>
+            <Label className="flex items-center gap-1.5">
+              <BookOpen className="size-3.5 text-muted-foreground" /> Subject
+            </Label>
+            <Select
+              value={watch("subject")}
+              onValueChange={(v) => {
+                setValue("subject", v ?? "");
+                setValue("unit", "");
+                titleDirty.current = false;
+                setValue("title", "");
+              }}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select subject" />
               </SelectTrigger>
@@ -416,8 +359,130 @@ export function UploadDocumentDialog({
                 ))}
               </SelectContent>
             </Select>
+            {subjects.length === 0 && selectedSemester && (
+              <p className="text-xs text-muted-foreground">
+                No subjects for this semester{selectedBranch ? " and branch" : ""} yet.
+              </p>
+            )}
             {errors.subject && <p className="text-xs text-destructive">{errors.subject.message}</p>}
           </div>
+
+          <div className="space-y-2">
+            <Label>Unit</Label>
+            <Select
+              value={watch("unit")}
+              onValueChange={(v) => {
+                const unit = v ?? "";
+                setValue("unit", unit);
+                if (unit && subjectName && !titleDirty.current) {
+                  setValue("title", `${subjectName} - ${unit}`);
+                }
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select unit (fills the title)" />
+              </SelectTrigger>
+              <SelectContent>
+                {UPLOAD_UNITS.map((u) => (
+                  <SelectItem key={u} value={u}>
+                    {u}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="doc-title">Title</Label>
+            <Input
+              id="doc-title"
+              placeholder="e.g. DBMS - Unit 1"
+              value={watch("title")}
+              onChange={(e) => {
+                titleDirty.current = true;
+                setValue("title", e.target.value);
+              }}
+            />
+            {errors.title && <p className="text-xs text-destructive">{errors.title.message}</p>}
+          </div>
+
+          <div className="space-y-2">
+            <Label>Document File</Label>
+            <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-colors hover:border-primary/50 hover:bg-muted/40">
+              {file && fileMeta ? (
+                <>
+                  <div className={`flex size-10 items-center justify-center rounded-lg ring-1 ${fileMeta.classes}`}>
+                    <fileMeta.Icon className="size-5" />
+                  </div>
+                  <p className="text-sm font-medium text-foreground">{file.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {(file.size / 1024 / 1024).toFixed(2)} MB · {fileMeta.label}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <FileUp className="size-6 text-muted-foreground" />
+                  <p className="text-sm font-medium">Click to choose a document</p>
+                  <p className="text-xs text-muted-foreground">
+                    PDF, PPT, PPTX, DOC, DOCX or TXT · max {MAX_DOCUMENT_SIZE_MB} MB
+                  </p>
+                </>
+              )}
+              <input
+                type="file"
+                accept=".pdf,.ppt,.pptx,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain"
+                className="hidden"
+                onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            {fileError && <p className="text-xs text-destructive">{fileError}</p>}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="doc-desc">Description (optional)</Label>
+            <Textarea
+              id="doc-desc"
+              rows={2}
+              placeholder="Short description…"
+              {...register("description")}
+            />
+          </div>
+
+          {selectedBranch && (isAdmin || isCr) && (
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1.5">
+                <Share2 className="size-3.5 text-muted-foreground" />{" "}
+                {isCr ? "Request share with other sections" : "Share with additional sections"}
+                <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <div className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border p-3">
+                {shareableSections.map((s) => (
+                  <label
+                    key={s.id}
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
+                  >
+                    <Checkbox
+                      checked={sharedSections.includes(s.id)}
+                      onCheckedChange={(v) => toggleShared(s.id, v === true)}
+                    />
+                    <span className="truncate">
+                      {s.branch_name} - Sec {s.name}
+                    </span>
+                  </label>
+                ))}
+                {shareableSections.length === 0 && (
+                  <p className="col-span-2 text-xs text-muted-foreground">
+                    No other sections in this branch.
+                  </p>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {isCr
+                  ? "Their CRs get a notification and accept the document into their section — no extra upload or storage. Tick multiple sections to send the request to all of them at once."
+                  : "Students in the selected sections will see this document. Tick multiple sections at once."}
+              </p>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>

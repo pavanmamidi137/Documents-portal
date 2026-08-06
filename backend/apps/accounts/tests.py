@@ -51,39 +51,64 @@ class UserModelTests(TestCase):
 class CsvImportTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser(roll_number="admin", password="x", full_name="Admin")
+        self.branch = Branch.objects.create(name="CSE")
+        self.section = Section.objects.create(branch=self.branch, name="A")
 
     def _csv_file(self, content: str):
         from django.core.files.uploadedfile import SimpleUploadedFile
 
         return SimpleUploadedFile("students.csv", content.encode("utf-8"))
 
-    def test_import_creates_students_and_sections(self):
+    def test_admin_import_places_all_rows_in_selected_section(self):
         csv_content = (
-            "Roll Number,Student Name,Email,Phone,Branch,Section,Password\n"
-            "21CSE01,Aarav,aarav@test.com,9999999999,CSE,A,pass123\n"
-            "21CSE02,Bhavya,bhavya@test.com,8888888888,CSE,A,pass456\n"
+            "Roll Number,Student Name,Email,Phone\n"
+            "21CSE01,Aarav,aarav@test.com,9999999999\n"
+            "21CSE02,Bhavya,bhavya@test.com,8888888888\n"
         )
-        result = services.import_students_csv(self._csv_file(csv_content), self.admin)
+        result = services.import_students_csv(
+            self._csv_file(csv_content), self.admin,
+            branch_id=self.branch.id, section_id=self.section.id,
+        )
         self.assertEqual(result["created"], 2)
         self.assertEqual(result["updated"], 0)
-        self.assertEqual(Branch.objects.filter(name="CSE").count(), 1)
-        self.assertEqual(Section.objects.filter(name="A").count(), 1)
         student = User.objects.get(roll_number="21CSE01")
-        self.assertTrue(student.check_password("pass123"))
-        self.assertEqual(student.branch.name, "CSE")
+        self.assertEqual(student.branch, self.branch)
+        self.assertEqual(student.section, self.section)
+        # Default password is the uppercase roll number.
+        self.assertTrue(student.check_password("21CSE01"))
+
+    def test_admin_import_requires_branch(self):
+        csv_content = "Roll Number,Student Name\n21CSE01,Aarav\n"
+        with self.assertRaises(ValueError):
+            services.import_students_csv(self._csv_file(csv_content), self.admin)
+
+    def test_admin_import_defaults_to_first_section(self):
+        csv_content = "Roll Number,Student Name\n21CSE01,Aarav\n"
+        result = services.import_students_csv(
+            self._csv_file(csv_content), self.admin, branch_id=self.branch.id
+        )
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(
+            User.objects.get(roll_number="21CSE01").section, self.section
+        )
 
     def test_import_updates_existing(self):
-        csv_content = (
-            "Roll Number,Student Name,Branch,Section\n"
-            "21CSE01,Aarav,CSE,A\n"
+        csv_content = "Roll Number,Student Name,Email,Phone\n21CSE01,Aarav,aarav@test.com,9999999999\n"
+        result = services.import_students_csv(
+            self._csv_file(csv_content), self.admin,
+            branch_id=self.branch.id, section_id=self.section.id,
         )
-        result = services.import_students_csv(self._csv_file(csv_content), self.admin)
         self.assertEqual(result["created"], 1)
-        # re-import with a changed name
-        csv_content2 = "Roll Number,Student Name,Branch,Section\n21CSE01,Aarav R,CSE,A\n"
-        result2 = services.import_students_csv(self._csv_file(csv_content2), self.admin)
+        # Re-import with a changed name/phone refreshes in place.
+        csv_content2 = "Roll Number,Student Name,Phone\n21CSE01,Aarav R,7777777777\n"
+        result2 = services.import_students_csv(
+            self._csv_file(csv_content2), self.admin,
+            branch_id=self.branch.id, section_id=self.section.id,
+        )
         self.assertEqual(result2["updated"], 1)
-        self.assertEqual(User.objects.get(roll_number="21CSE01").full_name, "Aarav R")
+        student = User.objects.get(roll_number="21CSE01")
+        self.assertEqual(student.full_name, "Aarav R")
+        self.assertEqual(student.phone, "7777777777")
 
     def test_import_rejects_missing_columns(self):
         bad = self._csv_file("Name,Email\nAarav,a@x.com\n")
@@ -109,9 +134,9 @@ class CsvImportForCrTests(TestCase):
     def test_cr_import_places_students_in_own_section(self):
         """Branch/Section columns in the CSV are ignored for CRs."""
         csv_content = (
-            "Roll Number,Student Name,Email,Phone,Branch,Section,Password\n"
-            "21CSE01,Aarav,aarav@test.com,9999999999,IT,B,pass123\n"
-            "21CSE02,Bhavya,bhavya@test.com,8888888888,IT,B,pass456\n"
+            "Roll Number,Student Name,Email,Phone\n"
+            "21CSE01,Aarav,aarav@test.com,9999999999\n"
+            "21CSE02,Bhavya,bhavya@test.com,8888888888\n"
         )
         result = services.import_students_csv(self._csv_file(csv_content), self.cr)
         self.assertEqual(result["created"], 2)
@@ -119,7 +144,8 @@ class CsvImportForCrTests(TestCase):
         a = User.objects.get(roll_number="21CSE01")
         self.assertEqual(a.branch, self.branch)
         self.assertEqual(a.section, self.section_a)
-        self.assertTrue(a.check_password("pass123"))
+        # Default password is the uppercase roll number.
+        self.assertTrue(a.check_password("21CSE01"))
 
     def test_cr_import_skips_roll_numbers_from_other_sections(self):
         existing = User.objects.create_user(
@@ -184,6 +210,113 @@ class CsvImportForCrTests(TestCase):
         response = client.post("/api/students/import_csv/", {"file": f}, format="multipart")
         self.assertEqual(response.status_code, 403)
         self.assertFalse(User.objects.filter(roll_number="21CSE01").exists())
+
+
+class AdminApiCsvImportTests(TestCase):
+    def setUp(self):
+        self.branch = Branch.objects.create(name="IT")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+
+    def _login(self) -> APIClient:
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": "admin", "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        return client
+
+    def test_admin_imports_into_selected_branch_and_section(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        client = self._login()
+        f = SimpleUploadedFile(
+            "students.csv",
+            "Roll Number,Student Name\n21IT01,Diya\n21IT02,Arjun\n".encode("utf-8"),
+        )
+        response = client.post(
+            "/api/students/import_csv/",
+            {"file": f, "branch": str(self.branch.id), "section": str(self.section_b.id)},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created"], 2)
+        self.assertEqual(
+            User.objects.get(roll_number="21IT01").section, self.section_b
+        )
+
+    def test_admin_import_without_branch_is_rejected(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        client = self._login()
+        f = SimpleUploadedFile(
+            "students.csv", "Roll Number,Student Name\n21IT01,Diya\n".encode("utf-8")
+        )
+        response = client.post(
+            "/api/students/import_csv/", {"file": f}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+class ProfileUpdateTests(TestCase):
+    def setUp(self):
+        self.branch = Branch.objects.create(name="IT")
+        self.section = Section.objects.create(branch=self.branch, name="A")
+        self.student = User.objects.create_user(
+            roll_number="21IT01", password="secret123", full_name="Diya",
+            email="diya@test.com", branch=self.branch, section=self.section,
+        )
+
+    def _client(self) -> APIClient:
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": "21IT01", "password": "secret123"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        return client
+
+    def test_student_updates_own_details(self):
+        client = self._client()
+        response = client.patch(
+            "/api/auth/me/",
+            {"full_name": "Diya Sharma", "phone": "9876543210", "email": ""},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.full_name, "Diya Sharma")
+        self.assertEqual(self.student.phone, "9876543210")
+        self.assertIsNone(self.student.email)
+
+    def test_email_must_be_unique(self):
+        User.objects.create_user(
+            roll_number="21IT02", password="x", full_name="Arjun",
+            email="taken@test.com", branch=self.branch, section=self.section,
+        )
+        client = self._client()
+        response = client.patch(
+            "/api/auth/me/", {"email": "taken@test.com"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_identity_fields_cannot_be_changed_via_me(self):
+        client = self._client()
+        response = client.patch(
+            "/api/auth/me/",
+            {"roll_number": "HACKED", "branch": 999, "role": "SUPER_ADMIN"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.roll_number, "21IT01")
+        self.assertEqual(self.student.role, "STUDENT")
 
 
 class LoginTests(TestCase):

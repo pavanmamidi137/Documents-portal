@@ -17,6 +17,7 @@ from .models import User
 from .serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
+    ProfileUpdateSerializer,
     ResetPasswordSerializer,
     StudentCreateSerializer,
     StudentUpdateSerializer,
@@ -50,6 +51,23 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+    def patch(self, request):
+        """Let users update their own name / email / phone.
+
+        Identity fields (roll number, branch, section, role) can only be
+        changed by a Super Admin through the student management endpoints.
+        """
+        serializer = ProfileUpdateSerializer(
+            request.user, data=request.data, partial=True, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+        for field, value in serializer.validated_data.items():
+            setattr(request.user, field, value)
+        request.user.save()
+        log_audit(request.user, "PROFILE_UPDATE", "User", request.user.id,
+                  {"roll_number": request.user.roll_number, "fields": list(serializer.validated_data)}, request)
         return Response(UserSerializer(request.user).data)
 
 
@@ -168,7 +186,13 @@ class StudentViewSet(viewsets.ModelViewSet):
         if file.size > max_bytes:
             raise ValidationError({"file": "CSV file exceeds the 10MB size limit."})
         try:
-            result = services.import_students_csv(file, request.user, request)
+            result = services.import_students_csv(
+                file,
+                request.user,
+                request,
+                branch_id=request.data.get("branch"),
+                section_id=request.data.get("section"),
+            )
         except ValueError as exc:
             raise ValidationError({"file": str(exc)})
         return Response(result)

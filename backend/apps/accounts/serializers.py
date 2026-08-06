@@ -63,6 +63,31 @@ class ResetPasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField(min_length=6, trim_whitespace=False)
 
 
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    """Users editing their own contact details (roll/branch/section stay fixed)."""
+
+    class Meta:
+        model = User
+        fields = ["full_name", "email", "phone"]
+
+    def validate_full_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Name cannot be empty.")
+        return value
+
+    def validate_email(self, value):
+        value = (value or "").strip().lower()
+        if not value:
+            return None
+        qs = User.objects.filter(email=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("This email is already in use.")
+        return value
+
+
 class StudentCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6, required=False, allow_blank=True)
 

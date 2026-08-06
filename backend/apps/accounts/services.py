@@ -7,22 +7,12 @@ import csv
 import io
 
 from django.db import transaction
-from django.utils.text import capfirst
 
 from apps.core.utils import log_audit
 
 from .models import User
 
 CSV_REQUIRED_COLUMNS = {"roll number", "student name"}
-
-
-def get_or_create_branch_section(branch_name: str, section_name: str):
-    """Resolve (or create when missing) a branch and section by name."""
-    from apps.college.models import Branch, Section
-
-    branch, _ = Branch.objects.get_or_create(name=capfirst(branch_name.strip()))
-    section, _ = Section.objects.get_or_create(branch=branch, name=capfirst(section_name.strip()))
-    return branch, section
 
 
 @transaction.atomic
@@ -101,19 +91,20 @@ def reset_password(student: User, new_password: str, actor: User, request=None) 
               {"roll_number": student.roll_number}, request)
 
 
-def import_students_csv(file, actor: User, request=None) -> dict:
+def import_students_csv(file, actor: User, request=None, branch_id=None, section_id=None) -> dict:
     """Import students from an uploaded CSV.
 
-    Expected columns: roll_number, full_name, email, phone, branch, section, password
-    (headers are matched case-insensitively; spaces/underscores tolerated).
-    Existing roll numbers are updated in place.
+    Expected columns: Roll Number, Student Name, Phone, Email (only the roll
+    number and name are required; headers are matched case-insensitively and
+    spaces/underscores tolerated). Existing roll numbers are updated in place.
 
-    Roll numbers are normalized to UPPERCASE. When no password is supplied the
-    default password is the student's roll number (in capitals).
+    Roll numbers are normalized to UPPERCASE and every new account's default
+    password is its own roll number (in capitals).
 
-    CR imports are confined to the actor's own branch/section: Branch/Section
-    columns are ignored, and roll numbers belonging to a different section are
-    skipped rather than overwritten.
+    Placement is decided up front, not per row:
+      * CRs import only into their own assigned branch/section.
+      * Super Admins pass a target ``branch_id``/``section_id`` for the whole
+        file, so the CSV itself carries no branch/section/password columns.
     """
     content = file.read().decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(content))
@@ -128,19 +119,36 @@ def import_students_csv(file, actor: User, request=None) -> dict:
     if len(col) < 2:
         raise ValueError("CSV must contain 'Roll Number' and 'Student Name' columns.")
 
-    # CRs may only import into their own assigned section.
-    scoped_section = None
+    # Resolve the single target branch/section for the whole file.
     if actor.is_cr:
         if not (actor.branch_id and actor.section_id):
             raise ValueError(
                 "Your account is not assigned a branch/section yet. "
                 "Ask a Super Admin to assign one before importing students."
             )
-        scoped_section = actor.section
+        branch, section = actor.branch, actor.section
+    else:
+        from apps.college.models import Branch, Section
+
+        if not branch_id:
+            raise ValueError("Select a branch and section for the import.")
+        branch = Branch.objects.filter(pk=branch_id).first()
+        if not branch:
+            raise ValueError("Selected branch does not exist.")
+        if section_id:
+            section = Section.objects.filter(pk=section_id, branch=branch).first()
+            if not section:
+                raise ValueError("Selected section does not exist.")
+        else:
+            # Fall back to the branch's first section (or create one).
+            section = branch.sections.order_by("name").first()
+            if not section:
+                section = Section.objects.create(branch=branch, name="A")
 
     created = updated = 0
     errors: list[dict] = []
     seen = 0
+    scoped_section = section if actor.is_cr else None
 
     with transaction.atomic():
         for row in reader:
@@ -150,24 +158,11 @@ def import_students_csv(file, actor: User, request=None) -> dict:
             if not roll or not full_name:
                 errors.append({"row": seen, "error": "Missing roll number or student name."})
                 continue
-            email = (row.get(header_map.get("email")) or "").strip() if header_map.get("email") else ""
+            # Emails are normalized to lowercase for consistency with the
+            # profile-update path (avoids case-duplicate accounts).
+            email = ((row.get(header_map.get("email")) or "").strip().lower()
+                     if header_map.get("email") else "")
             phone = (row.get(header_map.get("phone")) or "").strip() if header_map.get("phone") else ""
-            # Optional password column; defaults to the roll number (uppercase).
-            raw_password = (row.get(header_map.get("password")) or "").strip() if header_map.get("password") else ""
-            password = raw_password or roll
-            branch_name = (row.get(header_map.get("branch")) or "").strip() if header_map.get("branch") else ""
-            section_name = (row.get(header_map.get("section")) or "").strip() if header_map.get("section") else ""
-
-            if scoped_section is not None:
-                branch, section = scoped_section.branch, scoped_section
-            else:
-                branch = section = None
-                if branch_name:
-                    try:
-                        branch, section = get_or_create_branch_section(branch_name, section_name or "A")
-                    except Exception as exc:  # pragma: no cover
-                        errors.append({"row": seen, "roll_number": roll, "error": str(exc)})
-                        continue
 
             try:
                 student, was_created = User.objects.get_or_create(
@@ -185,18 +180,16 @@ def import_students_csv(file, actor: User, request=None) -> dict:
                             "error": "Roll number belongs to another section (or has no section assigned).",
                         })
                         continue
+                    # Placement (branch/section) is fixed at creation time - a
+                    # re-import only refreshes name/email/phone.
                     student.full_name = full_name
                     if email:
                         student.email = email
                     student.phone = phone
-                    if branch:
-                        student.branch = branch
-                        student.section = section
                     student.save()
-                # Apply the CSV password only for new accounts (or when the
-                # CSV row explicitly carries a custom password).
-                if was_created or raw_password:
-                    student.set_password(password)
+                else:
+                    # Default password is the roll number (in capitals).
+                    student.set_password(roll)
                     student.save(update_fields=["password"])
                 if was_created:
                     created += 1

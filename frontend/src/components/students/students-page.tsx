@@ -515,7 +515,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         onSaved={invalidate}
       />
 
-      <CsvImportDialog open={csvOpen} onOpenChange={setCsvOpen} onImported={invalidate} isCr={isCr} />
+      <CsvImportDialog open={csvOpen} onOpenChange={setCsvOpen} onImported={invalidate} meta={meta} isCr={isCr} />
 
       {/* Reset password dialog */}
       <ResetPasswordDialog

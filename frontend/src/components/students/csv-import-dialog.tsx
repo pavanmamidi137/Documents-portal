@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle2, FileSpreadsheet, Loader2, UploadCloud, XCircle } from "lucide-react";
+import { CheckCircle2, Download, FileSpreadsheet, Loader2, UploadCloud, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -13,29 +13,67 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { http } from "@/lib/api";
-import type { ImportResult } from "@/lib/types";
+import type { ImportResult, MetaData } from "@/lib/types";
 import { getErrorMessage } from "@/lib/utils";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: () => void;
+  meta: MetaData;
   isCr?: boolean;
 }
 
-export function CsvImportDialog({ open, onOpenChange, onImported, isCr = false }: Props) {
+const SAMPLE_CSV = [
+  "Roll Number,Student Name,Phone,Email",
+  "21CSE01,Aarav Sharma,9876543210,aarav@example.com",
+  "21CSE02,Bhavya Reddy,9876543211,bhavya@example.com",
+].join("\n");
+
+function downloadSample() {
+  const blob = new Blob([SAMPLE_CSV], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "students-import-template.csv";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function CsvImportDialog({ open, onOpenChange, onImported, meta, isCr = false }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [branch, setBranch] = useState("");
+  const [section, setSection] = useState("");
 
   const reset = () => {
     setFile(null);
     setResult(null);
+    setBranch("");
+    setSection("");
     if (inputRef.current) inputRef.current.value = "";
   };
+
+  const sections = useMemo(
+    () => meta.sections.filter((s) => !branch || s.branch === Number(branch)),
+    [meta.sections, branch]
+  );
+
+  const ready = Boolean(file) && (isCr || Boolean(branch && section));
 
   const handleFile = (f: File | null) => {
     if (!f) return;
@@ -48,11 +86,15 @@ export function CsvImportDialog({ open, onOpenChange, onImported, isCr = false }
   };
 
   const handleImport = async () => {
-    if (!file) return;
+    if (!file || !ready) return;
     setLoading(true);
     try {
       const form = new FormData();
       form.append("file", file);
+      if (!isCr) {
+        form.append("branch", branch);
+        form.append("section", section);
+      }
       const res = await http.upload<ImportResult>("/students/import_csv/", form);
       setResult(res);
       toast.success(`Import complete: ${res.created} created, ${res.updated} updated.`);
@@ -79,8 +121,8 @@ export function CsvImportDialog({ open, onOpenChange, onImported, isCr = false }
           </DialogTitle>
           <DialogDescription>
             {isCr
-              ? "CSV columns: Roll Number, Student Name, Email, Phone. Roll numbers are saved in capitals and the default password is the Roll Number. Students are added to your assigned section."
-              : "CSV columns: Roll Number, Student Name, Email, Phone, Branch, Section (Password optional). Roll numbers are saved in capitals and the default password is the Roll Number. Existing roll numbers are updated."}
+              ? "Your CSV needs these columns: Roll Number, Student Name, Phone, Email (optional). Roll numbers are saved in capitals and the default password is the Roll Number. Every student is added to your assigned section."
+              : "Your CSV needs these columns: Roll Number, Student Name, Phone, Email (optional). Roll numbers are saved in capitals and the default password is the Roll Number. Choose the branch and section below — every row is added there."}
           </DialogDescription>
         </DialogHeader>
 
@@ -126,6 +168,47 @@ export function CsvImportDialog({ open, onOpenChange, onImported, isCr = false }
           </motion.div>
         ) : (
           <div className="space-y-4">
+            {!isCr && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Branch</Label>
+                  <Select
+                    value={branch}
+                    onValueChange={(v) => {
+                      setBranch(v ?? "");
+                      setSection("");
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select branch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {meta.branches.map((b) => (
+                        <SelectItem key={b.id} value={String(b.id)}>
+                          {b.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Section</Label>
+                  <Select value={section} onValueChange={(v) => setSection(v ?? "")} disabled={!branch}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={branch ? "Select section" : "Pick a branch first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sections.map((s) => (
+                        <SelectItem key={s.id} value={String(s.id)}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
             <label
               onDragOver={(e) => {
                 e.preventDefault();
@@ -158,7 +241,21 @@ export function CsvImportDialog({ open, onOpenChange, onImported, isCr = false }
                 onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
               />
             </label>
-            <Button className="w-full" disabled={!file || loading} onClick={handleImport}>
+
+            <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-mono">Roll Number, Student Name, Phone, Email</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                onClick={downloadSample}
+              >
+                <Download className="size-3.5" /> Sample CSV
+              </Button>
+            </div>
+
+            <Button className="w-full" disabled={!ready || loading} onClick={handleImport}>
               {loading && <Loader2 className="size-4 animate-spin" />}
               {loading ? "Importing…" : "Start Import"}
             </Button>

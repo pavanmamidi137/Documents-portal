@@ -148,9 +148,11 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ),
     "DEFAULT_THROTTLE_RATES": {
-        "login": "10/min",
-        "user": "300/min",
-        "anon": "30/min",
+        # Rates are env-tunable (e.g. tests raise them to avoid cross-test
+        # throttling from the shared LocMem cache).
+        "login": os.getenv("THROTTLE_LOGIN_RATE", "10/min"),
+        "user": os.getenv("THROTTLE_USER_RATE", "300/min"),
+        "anon": os.getenv("THROTTLE_ANON_RATE", "30/min"),
     },
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%S%z",
 }
