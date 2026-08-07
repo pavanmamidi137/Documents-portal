@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Download, Eye, ListChecks, Plus, Send, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -27,6 +27,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { UploadDocumentDialog } from "./upload-document-dialog";
 import { http } from "@/lib/api";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type { DocumentItem, MetaData, Paginated } from "@/lib/types";
 import { formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 
@@ -40,6 +41,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(15);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [uploadOpen, setUploadOpen] = useState(false);
   const [shareTarget, setShareTarget] = useState<DocumentItem | null>(null);
@@ -51,14 +53,16 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["documents", page, pageSize, q, filters],
+    queryKey: ["documents", page, pageSize, debouncedQ, filters],
     queryFn: () =>
       http.get<Paginated<DocumentItem>>("/documents/", {
         page,
         page_size: pageSize,
-        q: q || undefined,
+        q: debouncedQ || undefined,
         ...filters,
       }),
+    // Keep the current rows visible while paging/filtering loads the next one.
+    placeholderData: keepPreviousData,
   });
 
   const { data: pendingData } = usePendingShareRequests(isCr);
@@ -68,6 +72,20 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const invalidateDocuments = () => {
     queryClient.invalidateQueries({ queryKey: ["documents"] });
     queryClient.invalidateQueries({ queryKey: ["share-requests", "incoming"] });
+  };
+
+  const prefetchNextPage = (next: number) => {
+    void queryClient.prefetchQuery({
+      queryKey: ["documents", next, pageSize, debouncedQ, filters],
+      queryFn: () =>
+        http.get<Paginated<DocumentItem>>("/documents/", {
+          page: next,
+          page_size: pageSize,
+          q: debouncedQ || undefined,
+          ...filters,
+        }),
+      staleTime: 30_000,
+    });
   };
 
   const setFilter = (key: string, value: string) => {
@@ -88,15 +106,30 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
     }
   };
 
+  const currentQueryKey = ["documents", page, pageSize, debouncedQ, filters] as const;
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    const previous = queryClient.getQueryData<Paginated<DocumentItem>>(currentQueryKey);
+    // Optimistic removal: the row disappears instantly, no refetch needed.
+    queryClient.setQueryData<Paginated<DocumentItem>>(currentQueryKey, (old) =>
+      old
+        ? {
+            ...old,
+            count: Math.max(0, old.count - 1),
+            results: old.results.filter((d) => d.id !== deleteTarget.id),
+          }
+        : old
+    );
     try {
       await http.delete(`/documents/${deleteTarget.id}/`);
       toast.success("Document deleted.");
       setDeleteTarget(null);
+      // Background refetch keeps every page/filter consistent with the server.
       invalidateDocuments();
     } catch (error) {
+      queryClient.setQueryData(currentQueryKey, previous);
       toast.error(getErrorMessage(error));
     } finally {
       setDeleting(false);
@@ -106,6 +139,18 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const confirmBulkDelete = async () => {
     if (bulkDeleteTargets.length === 0) return;
     setBulkDeleting(true);
+    const targetIds = new Set(bulkDeleteTargets.map((d) => d.id));
+    const previous = queryClient.getQueryData<Paginated<DocumentItem>>(currentQueryKey);
+    // Optimistic removal of every selected row, then fire the deletes.
+    queryClient.setQueryData<Paginated<DocumentItem>>(currentQueryKey, (old) =>
+      old
+        ? {
+            ...old,
+            count: Math.max(0, old.count - targetIds.size),
+            results: old.results.filter((d) => !targetIds.has(d.id)),
+          }
+        : old
+    );
     let ok = 0;
     const failed: string[] = [];
     try {
@@ -122,7 +167,11 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
       if (failed.length > 0)
         toast.error(`Couldn't delete ${failed.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`);
       setBulkDeleteTargets([]);
+      // Background refetch reconciles the optimistic removal with the server.
       invalidateDocuments();
+    } catch (error) {
+      queryClient.setQueryData(currentQueryKey, previous);
+      toast.error(getErrorMessage(error));
     } finally {
       setBulkDeleting(false);
     }
@@ -344,6 +393,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         }}
         searchPlaceholder="Search title, subject, uploader…"
         rowKey={(d) => d.id}
+        prefetchNextPage={prefetchNextPage}
         selectable
         selectionBar={(selected, clear) => (
           <div className="flex flex-wrap items-center justify-between gap-3">

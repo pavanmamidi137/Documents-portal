@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ReferenceFormDialog, type FieldConfig } from "./reference-form-dialog";
 import { http } from "@/lib/api";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type { Paginated } from "@/lib/types";
 import { getErrorMessage } from "@/lib/utils";
 
@@ -40,6 +41,7 @@ export function ReferenceCrud<T extends { id: number }>({
   const [page, setPage] = useState(1);
   const [pageSize] = useState(15);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<T | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<T | null>(null);
@@ -47,10 +49,18 @@ export function ReferenceCrud<T extends { id: number }>({
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<T[]>([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
+  const currentQueryKey = [apiPath, page, pageSize, debouncedQ] as const;
+
   const { data, isLoading } = useQuery({
-    queryKey: [apiPath, page, pageSize, q],
+    queryKey: currentQueryKey,
     queryFn: () =>
-      http.get<Paginated<T>>(`/${apiPath}/`, { page, page_size: pageSize, search: q || undefined }),
+      http.get<Paginated<T>>(`/${apiPath}/`, {
+        page,
+        page_size: pageSize,
+        search: debouncedQ || undefined,
+      }),
+    // Keep the current rows visible while paging/searching loads the next one.
+    placeholderData: keepPreviousData,
   });
 
   // Also refresh shared dropdown data (meta) so new branches/sections appear everywhere.
@@ -59,15 +69,40 @@ export function ReferenceCrud<T extends { id: number }>({
     queryClient.invalidateQueries({ queryKey: ["meta"] });
   };
 
+  const prefetchNextPage = (next: number) => {
+    void queryClient.prefetchQuery({
+      queryKey: [apiPath, next, pageSize, debouncedQ],
+      queryFn: () =>
+        http.get<Paginated<T>>(`/${apiPath}/`, {
+          page: next,
+          page_size: pageSize,
+          search: debouncedQ || undefined,
+        }),
+      staleTime: 30_000,
+    });
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    const previous = queryClient.getQueryData<Paginated<T>>(currentQueryKey);
+    // Optimistic removal: the row disappears instantly, no refetch needed.
+    queryClient.setQueryData<Paginated<T>>(currentQueryKey, (old) =>
+      old
+        ? {
+            ...old,
+            count: Math.max(0, old.count - 1),
+            results: old.results.filter((r) => r.id !== deleteTarget.id),
+          }
+        : old
+    );
     try {
       await http.delete(`/${apiPath}/${deleteTarget.id}/`);
       toast.success(`${singular} deleted.`);
       setDeleteTarget(null);
       invalidate();
     } catch (error) {
+      queryClient.setQueryData(currentQueryKey, previous);
       toast.error(getErrorMessage(error));
     } finally {
       setDeleting(false);
@@ -77,6 +112,18 @@ export function ReferenceCrud<T extends { id: number }>({
   const confirmBulkDelete = async () => {
     if (bulkDeleteTargets.length === 0) return;
     setBulkDeleting(true);
+    const targetIds = new Set(bulkDeleteTargets.map((r) => r.id));
+    const previous = queryClient.getQueryData<Paginated<T>>(currentQueryKey);
+    // Optimistic removal of every selected row, then fire the deletes.
+    queryClient.setQueryData<Paginated<T>>(currentQueryKey, (old) =>
+      old
+        ? {
+            ...old,
+            count: Math.max(0, old.count - targetIds.size),
+            results: old.results.filter((r) => !targetIds.has(r.id)),
+          }
+        : old
+    );
     let ok = 0;
     const failed: string[] = [];
     try {
@@ -95,7 +142,11 @@ export function ReferenceCrud<T extends { id: number }>({
           `${failed.length} in use or protected (${failed.join(", ")}) — delete them individually.`
         );
       setBulkDeleteTargets([]);
+      // Background refetch reconciles the optimistic removal with the server.
       invalidate();
+    } catch (error) {
+      queryClient.setQueryData(currentQueryKey, previous);
+      toast.error(getErrorMessage(error));
     } finally {
       setBulkDeleting(false);
     }
@@ -161,6 +212,7 @@ export function ReferenceCrud<T extends { id: number }>({
         }}
         searchPlaceholder={`Search ${title.toLowerCase()}…`}
         rowKey={(row) => row.id}
+        prefetchNextPage={prefetchNextPage}
         selectable
         selectionBar={(selected, clear) => (
           <div className="flex flex-wrap items-center justify-between gap-3">

@@ -1,3 +1,4 @@
+from django.db.models import Count
 from django.db.models.deletion import ProtectedError
 from rest_framework import viewsets
 from rest_framework.exceptions import ValidationError
@@ -7,6 +8,38 @@ from apps.core.permissions import IsSuperAdminForWrite
 from apps.core.utils import log_audit
 
 from .models import Branch, Category, Section, Semester, Subject
+
+
+def _branch_counts(queryset):
+    """Attach the *_count fields BranchSerializer exposes in a single query.
+
+    Previously the serializers used ``source="x.count"`` which fired one
+    COUNT query per row (N+1) - on the MetaView that meant 150+ extra queries
+    on every page load. Annotating the counts avoids that entirely.
+    """
+    return queryset.annotate(
+        sections_count=Count("sections", distinct=True),
+        students_count=Count("students", distinct=True),
+    )
+
+
+def _section_counts(queryset):
+    return queryset.annotate(students_count=Count("students", distinct=True))
+
+
+def _semester_counts(queryset):
+    return queryset.annotate(
+        subjects_count=Count("subjects", distinct=True),
+        documents_count=Count("documents", distinct=True),
+    )
+
+
+def _category_counts(queryset):
+    return queryset.annotate(documents_count=Count("documents", distinct=True))
+
+
+def _subject_counts(queryset):
+    return queryset.annotate(documents_count=Count("documents", distinct=True))
 from .serializers import (
     BranchSerializer,
     CategorySerializer,
@@ -17,7 +50,7 @@ from .serializers import (
 
 
 class BranchViewSet(viewsets.ModelViewSet):
-    queryset = Branch.objects.prefetch_related("sections").all()
+    queryset = _branch_counts(Branch.objects.all())
     serializer_class = BranchSerializer
     permission_classes = [IsSuperAdminForWrite]
     search_fields = ["name", "code"]
@@ -46,7 +79,7 @@ class BranchViewSet(viewsets.ModelViewSet):
 
 
 class SectionViewSet(viewsets.ModelViewSet):
-    queryset = Section.objects.select_related("branch").all()
+    queryset = _section_counts(Section.objects.select_related("branch").all())
     serializer_class = SectionSerializer
     permission_classes = [IsSuperAdminForWrite]
     search_fields = ["name", "branch__name"]
@@ -82,7 +115,7 @@ class SectionViewSet(viewsets.ModelViewSet):
 
 
 class SemesterViewSet(viewsets.ModelViewSet):
-    queryset = Semester.objects.all()
+    queryset = _semester_counts(Semester.objects.all())
     serializer_class = SemesterSerializer
     permission_classes = [IsSuperAdminForWrite]
     search_fields = ["name"]
@@ -111,7 +144,7 @@ class SemesterViewSet(viewsets.ModelViewSet):
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all()
+    queryset = _category_counts(Category.objects.all())
     serializer_class = CategorySerializer
     permission_classes = [IsSuperAdminForWrite]
     search_fields = ["name"]
@@ -140,7 +173,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
-    queryset = Subject.objects.select_related("semester", "branch").all()
+    queryset = _subject_counts(Subject.objects.select_related("semester", "branch").all())
     serializer_class = SubjectSerializer
     permission_classes = [IsSuperAdminForWrite]
     search_fields = ["name", "code", "semester__name", "branch__name"]
@@ -183,14 +216,22 @@ class MetaView(viewsets.ViewSet):
     def list(self, request):
         return Response(
             {
-                "branches": BranchSerializer(Branch.objects.all(), many=True).data,
-                "sections": SectionSerializer(
-                    Section.objects.select_related("branch").all(), many=True
+                "branches": BranchSerializer(
+                    _branch_counts(Branch.objects.all()), many=True
                 ).data,
-                "semesters": SemesterSerializer(Semester.objects.all(), many=True).data,
-                "categories": CategorySerializer(Category.objects.all(), many=True).data,
+                "sections": SectionSerializer(
+                    _section_counts(Section.objects.select_related("branch").all()),
+                    many=True,
+                ).data,
+                "semesters": SemesterSerializer(
+                    _semester_counts(Semester.objects.all()), many=True
+                ).data,
+                "categories": CategorySerializer(
+                    _category_counts(Category.objects.all()), many=True
+                ).data,
                 "subjects": SubjectSerializer(
-                    Subject.objects.select_related("semester", "branch").all(), many=True
+                    _subject_counts(Subject.objects.select_related("semester", "branch").all()),
+                    many=True,
                 ).data,
             }
         )

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eraser, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { http } from "@/lib/api";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type { AuditLog, Paginated } from "@/lib/types";
 import { formatDateTime, getErrorMessage } from "@/lib/utils";
 
@@ -34,17 +35,20 @@ export default function AuditLogsPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [clearing, setClearing] = useState<"selected" | "all" | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["audit-logs", page, pageSize, q],
+    queryKey: ["audit-logs", page, pageSize, debouncedQ],
     queryFn: () =>
       http.get<Paginated<AuditLog>>("/audit-logs/", {
         page,
         page_size: pageSize,
-        search: q || undefined,
+        search: debouncedQ || undefined,
       }),
+    // Keep the current rows visible while paging/searching loads the next one.
+    placeholderData: keepPreviousData,
   });
 
   const rows = data?.results ?? [];
@@ -71,6 +75,19 @@ export default function AuditLogsPage() {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["audit-logs"] });
     setSelected(new Set());
+  };
+
+  const prefetchNextPage = (next: number) => {
+    void queryClient.prefetchQuery({
+      queryKey: ["audit-logs", next, pageSize, debouncedQ],
+      queryFn: () =>
+        http.get<Paginated<AuditLog>>("/audit-logs/", {
+          page: next,
+          page_size: pageSize,
+          search: debouncedQ || undefined,
+        }),
+      staleTime: 30_000,
+    });
   };
 
   const runClear = async () => {
@@ -213,6 +230,7 @@ export default function AuditLogsPage() {
         }}
         searchPlaceholder="Search actor, target…"
         rowKey={(log) => log.id}
+        prefetchNextPage={prefetchNextPage}
         emptyTitle="No audit events"
         emptyDescription="Actions you take will be recorded here."
       />

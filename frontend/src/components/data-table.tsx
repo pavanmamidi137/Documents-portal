@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Inbox, Search } from "lucide-react";
 import type { ReactNode } from "react";
@@ -47,6 +47,11 @@ interface DataTableProps<T> {
   onSelectionChange?: (keys: Array<string | number>) => void;
   /** Rendered above the table while rows are selected (bulk actions). */
   selectionBar?: (selected: T[], clearSelection: () => void) => ReactNode;
+  /**
+   * Called with `page + 1` when a next page exists, so the consumer can
+   * prefetch it (e.g. via queryClient.prefetchQuery) and make paging instant.
+   */
+  prefetchNextPage?: (page: number) => void;
 }
 
 export function DataTable<T>({
@@ -67,10 +72,24 @@ export function DataTable<T>({
   selectable = false,
   onSelectionChange,
   selectionBar,
+  prefetchNextPage,
 }: DataTableProps<T>) {
   const [selected, setSelected] = useState<Set<string | number>>(new Set());
 
   const totalPages = Math.max(1, Math.ceil(count / pageSize));
+
+  // Warm the next page into the cache as soon as the current page is visible,
+  // so clicking Next renders instantly instead of waiting for a fetch.
+  // The callback is held in a ref so the effect only depends on [page, totalPages]
+  // and doesn't re-run on every render (selection toggles, etc.).
+  const prefetchRef = useRef(prefetchNextPage);
+  useEffect(() => {
+    prefetchRef.current = prefetchNextPage;
+  });
+  useEffect(() => {
+    if (!prefetchRef.current || page >= totalPages) return;
+    prefetchRef.current(page + 1);
+  }, [page, totalPages]);
 
   const clearSelection = () => {
     setSelected(new Set());

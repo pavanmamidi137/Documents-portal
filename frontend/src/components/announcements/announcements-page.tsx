@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Megaphone, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -39,6 +39,8 @@ export function AnnouncementsPage({ meta }: { meta: MetaData }) {
   const { data, isLoading } = useQuery({
     queryKey: ["announcements"],
     queryFn: () => http.get<Paginated<Announcement>>("/announcements/", { page_size: 50 }),
+    // Keep the current list visible while a background refetch runs.
+    placeholderData: keepPreviousData,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["announcements"] });
@@ -46,12 +48,24 @@ export function AnnouncementsPage({ meta }: { meta: MetaData }) {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    const previous = queryClient.getQueryData<Paginated<Announcement>>(["announcements"]);
+    // Optimistic removal: the card disappears instantly, no refetch needed.
+    queryClient.setQueryData<Paginated<Announcement>>(["announcements"], (old) =>
+      old
+        ? {
+            ...old,
+            count: Math.max(0, old.count - 1),
+            results: old.results.filter((a) => a.id !== deleteTarget.id),
+          }
+        : old
+    );
     try {
       await http.delete(`/announcements/${deleteTarget.id}/`);
       toast.success("Announcement deleted.");
       setDeleteTarget(null);
       invalidate();
     } catch (error) {
+      queryClient.setQueryData(["announcements"], previous);
       toast.error(getErrorMessage(error));
     } finally {
       setDeleting(false);

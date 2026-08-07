@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpCircle,
   ArrowDownCircle,
@@ -51,6 +51,7 @@ import { StudentFormDialog } from "./student-form-dialog";
 import { CsvImportDialog } from "./csv-import-dialog";
 import { http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type { MetaData, Paginated, User } from "@/lib/types";
 import { formatDate, getErrorMessage, roleColor } from "@/lib/utils";
 
@@ -67,6 +68,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(15);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
@@ -80,18 +82,36 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   const [pendingBulk, setPendingBulk] = useState<BulkAction | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
 
+  const currentQueryKey = ["students", page, pageSize, debouncedQ, filters] as const;
+
   const { data, isLoading } = useQuery({
-    queryKey: ["students", page, pageSize, q, filters],
+    queryKey: currentQueryKey,
     queryFn: () =>
       http.get<Paginated<User>>("/students/", {
         page,
         page_size: pageSize,
-        search: q || undefined,
+        search: debouncedQ || undefined,
         ...filters,
       }),
+    // Keep the current rows visible while paging/filtering loads the next one.
+    placeholderData: keepPreviousData,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["students"] });
+
+  const prefetchNextPage = (next: number) => {
+    void queryClient.prefetchQuery({
+      queryKey: ["students", next, pageSize, debouncedQ, filters],
+      queryFn: () =>
+        http.get<Paginated<User>>("/students/", {
+          page: next,
+          page_size: pageSize,
+          search: debouncedQ || undefined,
+          ...filters,
+        }),
+      staleTime: 30_000,
+    });
+  };
 
   const setFilter = (key: string, value: string) => {
     setPage(1);
@@ -121,18 +141,52 @@ export function StudentsPage({ meta, isCr = false }: Props) {
     }
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    runAction(() => http.delete(`/students/${deleteTarget.id}/`), "Student deleted.").finally(() => {
+    const previous = queryClient.getQueryData<Paginated<User>>(currentQueryKey);
+    // Optimistic removal: the row disappears instantly, no refetch needed.
+    queryClient.setQueryData<Paginated<User>>(currentQueryKey, (old) =>
+      old
+        ? {
+            ...old,
+            count: Math.max(0, old.count - 1),
+            results: old.results.filter((s) => s.id !== deleteTarget.id),
+          }
+        : old
+    );
+    try {
+      await http.delete(`/students/${deleteTarget.id}/`);
+      toast.success("Student deleted.");
+      invalidate();
+    } catch (error) {
+      // runAction swallows errors, so the delete must be handled here directly
+      // or the optimistic removal would never be rolled back on failure.
+      queryClient.setQueryData(currentQueryKey, previous);
+      toast.error(getErrorMessage(error));
+    } finally {
       setDeleting(false);
       setDeleteTarget(null);
-    });
+    }
   };
 
   const executeBulk = async (targets: User[], action: BulkAction) => {
     if (targets.length === 0) return;
     setBulkRunning(true);
+    const targetIds = new Set(targets.map((s) => s.id));
+    const previous = queryClient.getQueryData<Paginated<User>>(currentQueryKey);
+    if (action.type === "delete") {
+      // Optimistic removal of every selected row before the requests fire.
+      queryClient.setQueryData<Paginated<User>>(currentQueryKey, (old) =>
+        old
+          ? {
+              ...old,
+              count: Math.max(0, old.count - targetIds.size),
+              results: old.results.filter((s) => !targetIds.has(s.id)),
+            }
+          : old
+      );
+    }
     let ok = 0;
     const failed: string[] = [];
     try {
@@ -168,7 +222,11 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       toast.success(`${ok} student${ok === 1 ? "" : "s"} ${action.doneLabel}.`);
       if (failed.length > 0)
         toast.error(`Couldn't ${FAILURE_LABELS[action.type]} ${failed.length}: ${failed.join(", ")}`);
+      // Background refetch reconciles the optimistic removal with the server.
       invalidate();
+    } catch (error) {
+      queryClient.setQueryData(currentQueryKey, previous);
+      toast.error(getErrorMessage(error));
     } finally {
       setBulkRunning(false);
     }
@@ -437,6 +495,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         }}
         searchPlaceholder="Search roll number, name, email…"
         rowKey={(s) => s.id}
+        prefetchNextPage={prefetchNextPage}
         selectable={isAdmin || isCr}
         selectionBar={(selected, clear) => {
           const requestBulk = (action: BulkAction) => {

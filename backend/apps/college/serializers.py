@@ -4,8 +4,10 @@ from .models import Branch, Category, Section, Semester, Subject
 
 
 class BranchSerializer(serializers.ModelSerializer):
-    sections_count = serializers.IntegerField(source="sections.count", read_only=True)
-    students_count = serializers.IntegerField(source="students.count", read_only=True)
+    # Counts are annotated on the queryset (``sections_count`` / ``students_count``)
+    # so listing branches runs a single query instead of one COUNT per row.
+    sections_count = serializers.IntegerField(read_only=True, default=0)
+    students_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Branch
@@ -21,7 +23,7 @@ class BranchSerializer(serializers.ModelSerializer):
 
 class SectionSerializer(serializers.ModelSerializer):
     branch_name = serializers.CharField(source="branch.name", read_only=True)
-    students_count = serializers.IntegerField(source="students.count", read_only=True)
+    students_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Section
@@ -36,8 +38,8 @@ class SectionSerializer(serializers.ModelSerializer):
 
 
 class SemesterSerializer(serializers.ModelSerializer):
-    subjects_count = serializers.IntegerField(source="subjects.count", read_only=True)
-    documents_count = serializers.IntegerField(source="documents.count", read_only=True)
+    subjects_count = serializers.IntegerField(read_only=True, default=0)
+    documents_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Semester
@@ -52,7 +54,7 @@ class SemesterSerializer(serializers.ModelSerializer):
 
 
 class CategorySerializer(serializers.ModelSerializer):
-    documents_count = serializers.IntegerField(source="documents.count", read_only=True)
+    documents_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Category
@@ -69,7 +71,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class SubjectSerializer(serializers.ModelSerializer):
     semester_name = serializers.CharField(source="semester.name", read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
-    documents_count = serializers.IntegerField(source="documents.count", read_only=True)
+    documents_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Subject

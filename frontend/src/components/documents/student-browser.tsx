@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -32,6 +32,7 @@ type Step =
   | { level: "subject"; semester: Semester; category: Category; subject: Subject };
 
 export function StudentBrowser({ meta }: { meta: MetaData }) {
+  const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>({ level: "semester" });
   const [search, setSearch] = useState("");
   const [selecting, setSelecting] = useState(false);
@@ -153,7 +154,26 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
       if ("subject" in step) params.subject = step.subject.id;
       return http.get<{ results: DocumentItem[] }>("/documents/", { ...params, page_size: 100 });
     },
+    // Browsing semester → category → subject keeps the previous grid visible
+    // while the next level loads, so navigation feels instant.
+    placeholderData: keepPreviousData,
   });
+
+  // Warm the cache for a deeper level before the user clicks through to it.
+  // Uses the exact same query key + params as the useQuery above, so hovering
+  // a card makes the next screen render instantly.
+  const prefetchLevel = (semester?: number, category?: number, subject?: number) => {
+    const params: Record<string, unknown> = {};
+    if (semester) params.semester = semester;
+    if (category) params.category = category;
+    if (subject) params.subject = subject;
+    void queryClient.prefetchQuery({
+      queryKey: ["student-documents", semester, category, subject],
+      queryFn: () =>
+        http.get<{ results: DocumentItem[] }>("/documents/", { ...params, page_size: 100 }),
+      staleTime: 30_000,
+    });
+  };
 
   const documents = useMemo(() => data?.results ?? [], [data]);
 
@@ -228,6 +248,8 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.35, delay: i * 0.06 }}
+              onMouseEnter={() => prefetchLevel(semester.id)}
+              onFocus={() => prefetchLevel(semester.id)}
               onClick={() => goTo({ level: "category", semester })}
               className="group relative overflow-hidden rounded-2xl border bg-card p-5 text-left shadow-sm transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
             >
@@ -274,6 +296,8 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: i * 0.05 }}
+              onMouseEnter={() => prefetchLevel(step.semester.id, category.id)}
+              onFocus={() => prefetchLevel(step.semester.id, category.id)}
               onClick={() => goTo({ level: "subjects", semester: step.semester, category })}
               className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
             >
@@ -322,6 +346,12 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: i * 0.04 }}
+                onMouseEnter={() =>
+                  prefetchLevel(step.semester.id, step.category.id, subject.id)
+                }
+                onFocus={() =>
+                  prefetchLevel(step.semester.id, step.category.id, subject.id)
+                }
                 onClick={() => goTo({ level: "subject", semester: step.semester, category: step.category, subject })}
                 className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
               >
