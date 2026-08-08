@@ -1,6 +1,8 @@
 import csv
 import io
 import re
+import threading
+import time
 from datetime import timedelta
 from math import ceil
 
@@ -19,7 +21,7 @@ from apps.core.permissions import IsSuperAdmin
 from apps.core.throttles import AiRateThrottle
 from apps.core.utils import log_audit, notify
 
-from .ai import AiError, ai_json, ai_plain_text
+from .ai import AiError, REASONING_BUDGETS, ai_json, ai_plain_text
 from .models import AiUsageLog, Drive
 from .resume_ai import maybe_refresh_drive_matches
 from .serializers import DriveSerializer
@@ -32,6 +34,10 @@ _WRITE_ROLES = {User.Role.SUPER_ADMIN, User.Role.FACULTY, User.Role.CR}
 # Monthly AI credit budget (in tokens) the super admin sets on the AI Usage page.
 _AI_BUDGET_KEY = "ai_monthly_budget_tokens"
 
+# Reasonable input caps so one pasted block can't burn the whole AI quota.
+_MAX_PASTE_CHARS = 10_000
+_MAX_QUESTION_CHARS = 1_000
+
 # Roll-number-ish tokens: optional leading digits (year) + 2-6 letters + digits
 # (21CSE01, 21CSE1A05, 211FA04001…). The leading year digits are optional.
 _ROLL_TOKEN_RE = re.compile(r"\b\d{0,4}[A-Za-z]{2,6}\d{1,6}[A-Za-z0-9]{0,6}\b")
@@ -40,31 +46,224 @@ _ELIG_HEADER_RE = re.compile(r"eligib|criteria|branch(?:es)?\s*allowed|passout|c
 
 _EXTRACT_PROMPT = """\
 You extract placement drive details from forwarded WhatsApp/college messages into a JSON object.
-Return ONLY valid JSON (no markdown, no comments) with exactly these keys - use an empty string
-"" when a detail is missing:
+Return ONLY valid JSON (no markdown, no code fences, no comments) with exactly these keys - use
+null for missing values and empty arrays for lists that are not mentioned:
 - company_name (string)
-- role (string)
+- job_role (string)
+- job_type (string, e.g. "Full-time", "Internship", "Contract")
 - location (string)
-- package (string, e.g. "6 LPA" or "12k/month")
-- drive_link (string, the apply/registration URL if mentioned)
-- last_date_to_apply (string in YYYY-MM-DD; if the message says something like "last date: 15th Aug"
-  or "apply before 12/08/2026", convert it to YYYY-MM-DD; empty if not mentioned)
-- description (string, a short 1-2 sentence summary of the drive)
-- eligibility (string, the eligibility criteria - branches, CGPA, year, passout year)
+- work_mode (string, e.g. "On-site", "Remote", "Hybrid")
+- package (string, e.g. "6 LPA" or "12k/month" or "6-8 LPA")
+- minimum_package (string, the lower bound when the message gives a range like "6-8 LPA")
+- maximum_package (string, the upper bound when the message gives a range)
+- eligibility (string, free-text eligibility criteria)
+- eligible_branches (array of branch names, e.g. ["CSE", "IT"])
+- minimum_cgpa (string, e.g. "6.5" - null if not mentioned)
+- maximum_backlogs (string, e.g. "0" - null if not mentioned)
+- passing_year (array of pass-out years, e.g. ["2025", "2026"])
 - eligible_roll_numbers (string, comma-separated roll numbers if the message lists them)
-Do not invent details that are not in the message.
+- selection_process (string, e.g. "Aptitude -> Technical -> HR")
+- application_start_date (string in YYYY-MM-DD if mentioned, else null)
+- application_deadline (string in YYYY-MM-DD; convert phrases like "last date: 15th Aug" or
+  "apply before 12/08/2026"; null if not mentioned)
+- apply_link (string, the apply/registration URL if mentioned)
+- job_description (string, a short 1-2 sentence summary of the drive)
+- required_skills (array of skills, e.g. ["Python", "SQL"])
+- important_instructions (string, any special notes students must know)
+- company_description (string, what the company does - only if the message says)
+Never invent information that is not in the message.
 """
 
-_CHAT_PROMPT = """\
+# RAG-grounded chat prompt: the drive details arrive as grounding documents
+# (via the RAG service or prompt injection), so the model answers using ONLY
+# the real drive data - never invented facts.
+_RAG_CHAT_PROMPT = """\
 You are the placement assistant for a college. Students ask about placement drives.
-Use ONLY the drive(s) and student info in the context below. Answer in clear, friendly, concise
+Answer using ONLY the drive details in the documents. Answer in clear, friendly, concise
 English (2-4 sentences). If a drive is not listed or a detail is missing, say so honestly and
 suggest contacting the placement cell. For eligibility questions, compare the student's branch,
-section and roll number with each drive's eligibility and eligible roll numbers, and say whether
-they qualify.
-
-{context}
+section, pass-out year and roll number with each drive's eligibility and eligible roll numbers,
+and say whether they qualify. If the question needs current outside information (news, the
+company's website, new openings) that is not in the documents, say clearly that you don't
+have live web access and suggest contacting the placement cell - never invent it.
 """
+
+
+def _normalize_extraction(extracted: dict) -> dict:
+    """Map the structured Nemotron fields onto the drive form's field names.
+
+    The extraction returns the rich 22-field structure; this builds the legacy
+    form keys (company_name, role, package, drive_link, last_date_to_apply,
+    description, eligibility, eligible_roll_numbers) so the existing frontend
+    auto-fill keeps working, folding the extra structured details into the
+    description/eligibility text so nothing is lost.
+    """
+
+    def pick(*keys) -> str:
+        for key in keys:
+            value = extracted.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, list) and value:
+                return ", ".join(str(item) for item in value)
+        return ""
+
+    package = pick("package")
+    if not package and pick("minimum_package") and pick("maximum_package"):
+        package = f"{pick('minimum_package')}-{pick('maximum_package')}"
+
+    normalized = {
+        "company_name": pick("company_name"),
+        "role": pick("job_role", "role"),
+        "location": pick("location"),
+        "package": package,
+        "drive_link": pick("apply_link", "drive_link"),
+        "last_date_to_apply": pick("application_deadline", "last_date_to_apply"),
+    }
+
+    detail_parts = [pick("job_description")]
+    extra_parts = []
+    if pick("job_type"):
+        extra_parts.append(f"Job type: {pick('job_type')}")
+    if pick("work_mode"):
+        extra_parts.append(f"Work mode: {pick('work_mode')}")
+    if pick("selection_process"):
+        extra_parts.append(f"Selection process: {pick('selection_process')}")
+    if pick("required_skills"):
+        extra_parts.append(f"Skills required: {pick('required_skills')}")
+    if pick("important_instructions"):
+        extra_parts.append(pick("important_instructions"))
+    if pick("company_description"):
+        extra_parts.append(pick("company_description"))
+    if extra_parts:
+        detail_parts.append(" ".join(extra_parts))
+    normalized["description"] = " | ".join(p for p in detail_parts if p)
+
+    elig_parts = [pick("eligibility")]
+    if pick("eligible_branches"):
+        elig_parts.append(f"Eligible branches: {pick('eligible_branches')}")
+    if pick("minimum_cgpa"):
+        elig_parts.append(f"Minimum CGPA: {pick('minimum_cgpa')}")
+    if pick("maximum_backlogs"):
+        elig_parts.append(f"Maximum backlogs: {pick('maximum_backlogs')}")
+    if pick("passing_year"):
+        elig_parts.append(f"Passing year: {pick('passing_year')}")
+    normalized["eligibility"] = "; ".join(p for p in elig_parts if p)
+    normalized["eligible_roll_numbers"] = pick("eligible_roll_numbers")
+    return normalized
+
+
+# ---------------------------------------------------------------------------
+# Fast DB answers & caching for the AI chat (no LLM for simple questions)
+# ---------------------------------------------------------------------------
+_QA_CACHE_TTL_SECONDS = 300  # 5 minutes
+_qa_cache: dict = {}
+_qa_lock = threading.Lock()
+
+# Questions whose answer depends on the asking student are never cached.
+_STUDENT_SPECIFIC_RE = re.compile(
+    r"eligib|can i|can a|am i|for me|qualif|my roll|apply to|i have", re.I
+)
+
+_QUICK_PACKAGE_RE = re.compile(r"package|salary|ctc|lpa|stipend|\bpay\b", re.I)
+_QUICK_DEADLINE_RE = re.compile(
+    r"last date|deadline|apply by|apply before|clos(?:e|ing)|due date|when.*apply", re.I
+)
+_QUICK_LINK_RE = re.compile(
+    r"apply link|application link|how.*apply|where.*apply|register", re.I
+)
+_QUICK_ELIGIBLE_RE = re.compile(r"eligib|can a|can i|am i", re.I)
+
+
+def _normalize_question(question: str) -> str:
+    return re.sub(r"\s+", " ", question.strip().lower())
+
+
+def _cached_answer(cache_key: tuple, question: str, provider):
+    """Serve repeated identical questions from a short in-memory cache.
+
+    Student-specific questions (eligibility, "can I apply") always go to the
+    provider - caching a personal answer would be wrong. Everything else is
+    cached for 5 minutes so ~1000 students asking the same thing don't all
+    burn an LLM call.
+    """
+    if _STUDENT_SPECIFIC_RE.search(question):
+        return provider()
+    now = time.monotonic()
+    with _qa_lock:
+        hit = _qa_cache.get(cache_key)
+        if hit and now - hit[0] < _QA_CACHE_TTL_SECONDS:
+            return hit[1]
+    answer = provider()
+    with _qa_lock:
+        _qa_cache[cache_key] = (time.monotonic(), answer)
+        if len(_qa_cache) > 2000:
+            for key in [
+                k for k, (ts, _) in _qa_cache.items()
+                if now - ts > _QA_CACHE_TTL_SECONDS
+            ]:
+                _qa_cache.pop(key, None)
+    return answer
+
+
+def _quick_drive_answer(drive, user, question):
+    """Answer simple fact questions straight from the drive row - no LLM."""
+    q = question.lower()
+    if _QUICK_DEADLINE_RE.search(q):
+        return (
+            f"The last date to apply for {drive.company_name} is "
+            f"{drive.last_date_to_apply}."
+        )
+    if _QUICK_LINK_RE.search(q):
+        if drive.drive_link:
+            return (
+                f"You can apply for {drive.company_name} here: {drive.drive_link}"
+            )
+        return (
+            f"No apply link was shared for {drive.company_name} yet - "
+            "contact the placement cell."
+        )
+    if _QUICK_PACKAGE_RE.search(q):
+        return (
+            f"{drive.company_name} offers {drive.package}."
+            if drive.package
+            else f"The package for {drive.company_name} wasn't mentioned."
+        )
+    if _QUICK_ELIGIBLE_RE.search(q):
+        if (
+            user.is_student
+            and user.roll_number
+            and user.roll_number.strip().upper() in drive.eligible_rolls()
+        ):
+            return (
+                f"Yes! Your roll number ({user.roll_number}) is in the "
+                f"pre-approved eligible list for {drive.company_name}. Good luck!"
+            )
+        text = (
+            f"Eligibility for {drive.company_name}: "
+            f"{drive.eligibility or 'not mentioned yet'}."
+        )
+        if drive.eligible_roll_numbers:
+            text += " The company also sent a pre-approved roll-number list."
+        return text
+    return None
+
+
+def _mentioned_drive(drives, question):
+    """Return the first open drive whose company name appears in the question."""
+    q = question.lower()
+    for d in drives:
+        if d.company_name and d.company_name.lower() in q:
+            return d
+    return None
+
+
+def _student_line(user) -> str:
+    """Compact student profile used as AI chat context."""
+    branch = user.branch.name if user.branch_id else "branch not set"
+    section = f"/ Sec {user.section.name}" if user.section_id else ""
+    batch = f", passout {user.passout_year}" if getattr(user, "passout_year", None) else ""
+    return f"{user.full_name} (roll {user.roll_number}, {branch}{section}{batch})"
 
 
 def _drive_recipients():
@@ -260,9 +459,15 @@ class DriveViewSet(ModelViewSet):
                 {"detail": "Paste at least a few lines of the drive message first."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if len(text) > _MAX_PASTE_CHARS:
+            return Response(
+                {"detail": f"That paste is too long (max {_MAX_PASTE_CHARS} characters)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             extracted = ai_json(
-                _EXTRACT_PROMPT, text, max_tokens=1200,
+                _EXTRACT_PROMPT, text, max_tokens=2048,
+                reasoning_budget=REASONING_BUDGETS["extract"],
                 usage_callback=_log_ai_usage(request.user, AiUsageLog.Action.EXTRACT),
             )
         except AiError as exc:
@@ -272,7 +477,10 @@ class DriveViewSet(ModelViewSet):
                 {"detail": "The AI could not understand this message. Try a longer paste."},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
-        return Response(extracted)
+        # The rich structured fields are returned alongside the legacy form
+        # keys so the frontend auto-fill keeps working unchanged.
+        payload = {**extracted, **_normalize_extraction(extracted)}
+        return Response(payload)
 
     @action(detail=False, methods=["post"])
     def parse_eligibility(self, request):
@@ -298,29 +506,52 @@ class DriveViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def ai_ask(self, request, pk=None):
-        """Answer a question about one specific drive (the 'Ask AI' button)."""
+        """Answer a question about one specific drive (the 'Ask AI' button).
+
+        Simple factual questions (package, last date, apply link, eligibility)
+        are answered straight from the drive row - no LLM call, so they stay
+        instant and free. Complex questions go to Nemotron with the drive +
+        student profile as context, and identical questions are served from a
+        short-lived cache.
+        """
         question = (request.data.get("question") or "").strip()
         if len(question) < 3:
             return Response({"detail": "Ask a question about this drive."}, status=400)
+        if len(question) > _MAX_QUESTION_CHARS:
+            return Response({"detail": "That question is too long."}, status=400)
 
         drive = self.get_object()
         user = request.user
-        branch = user.branch.name if user.branch_id else "branch not set"
-        section = f"/ Sec {user.section.name}" if user.section_id else ""
-        context = (
-            f"Student: {user.full_name} (roll {user.roll_number}, {branch}{section}).\n\n"
+
+        quick = _quick_drive_answer(drive, user, question)
+        if quick is not None:
+            return Response({"answer": quick})
+
+        # The drive's real details are the RAG grounding documents - the model
+        # may only answer from these (eligibility questions also see the
+        # student's own profile in the system prompt).
+        documents = [
             f"Drive: {drive.company_name} ({drive.role or 'role not mentioned'}, "
             f"{drive.package or 'package not mentioned'}, {drive.location or 'location not mentioned'}).\n"
-            f"Details: {drive.description or 'not mentioned'}\n"
-            f"Eligibility: {drive.eligibility or 'not mentioned'}\n"
+            f"Details: {(drive.description or 'not mentioned')[:300]}\n"
+            f"Eligibility: {(drive.eligibility or 'not mentioned')[:300]}\n"
             f"Eligible rolls: {drive.eligible_roll_numbers or 'not listed'}\n"
             f"Last date to apply: {drive.last_date_to_apply}\n"
             f"Apply link: {drive.drive_link or 'not provided'}"
-        )
-        try:
-            answer = ai_plain_text(
-                _CHAT_PROMPT.format(context=context), question, max_tokens=600,
+        ]
+        system = _RAG_CHAT_PROMPT + f"\nAsking student: {_student_line(user)}."
+
+        def ask():
+            return ai_plain_text(
+                system, question, max_tokens=800,
+                reasoning_budget=REASONING_BUDGETS["chat"],
                 usage_callback=_log_ai_usage(request.user, AiUsageLog.Action.ASK),
+                documents=documents,
+            )
+
+        try:
+            answer = _cached_answer(
+                ("ai_ask", drive.id, _normalize_question(question)), question, ask
             )
         except AiError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
@@ -328,38 +559,64 @@ class DriveViewSet(ModelViewSet):
 
     @action(detail=False, methods=["post"])
     def ai_chat(self, request):
-        """Answer a student's placement/eligibility question with AI context."""
+        """Answer a student's placement/eligibility question with AI context.
+
+        When the question names a drive and asks a simple fact (deadline,
+        package, apply link, eligibility) it is answered straight from the
+        database - no LLM call. Complex questions go to Nemotron with the open
+        drives + student profile as context, and repeated identical questions
+        are served from a short-lived cache.
+        """
         question = (request.data.get("question") or "").strip()
         if len(question) < 3:
             return Response(
                 {"detail": "Ask a question about the drives."}, status=400
             )
+        if len(question) > _MAX_QUESTION_CHARS:
+            return Response({"detail": "That question is too long."}, status=400)
 
-        drives = (
+        drives = list(
             Drive.objects.filter(last_date_to_apply__gte=timezone.localdate())
             .select_related("posted_by")
-            .order_by("-created_at")
+            .order_by("-created_at")[:12]
         )
         user = request.user
-        lines = []
-        for d in drives[:12]:
-            lines.append(
-                f"- {d.company_name} ({d.role or 'role not mentioned'}, {d.package or 'package not mentioned'}): "
-                f"eligibility: {d.eligibility or 'not mentioned'}; last date: {d.last_date_to_apply}; "
-                f"rolls eligible: {d.eligible_roll_numbers or 'not listed'}"
+
+        # Quick DB answer when the question names a drive and asks a fact.
+        mentioned = _mentioned_drive(drives, question)
+        if mentioned is not None:
+            quick = _quick_drive_answer(mentioned, user, question)
+            if quick is not None:
+                return Response({"answer": quick})
+
+        # Every open drive becomes a grounding document for RAG - the model may
+        # only answer from these (plus the student's own profile).
+        documents = []
+        for d in drives:
+            documents.append(
+                f"Drive: {d.company_name} ({d.role or 'role not mentioned'}, "
+                f"{d.package or 'package not mentioned'}, {d.location or 'location not mentioned'}).\n"
+                f"Details: {(d.description or 'not mentioned')[:300]}\n"
+                f"Eligibility: {(d.eligibility or 'not mentioned')[:300]}\n"
+                f"Eligible rolls: {d.eligible_roll_numbers or 'not listed'}\n"
+                f"Last date to apply: {d.last_date_to_apply}\n"
+                f"Apply link: {d.drive_link or 'not provided'}"
             )
-        if not lines:
-            lines.append("- No open drives right now.")
-        branch = user.branch.name if user.branch_id else "branch not set"
-        section = f"/ Sec {user.section.name}" if user.section_id else ""
-        context = (
-            f"Student: {user.full_name} (roll {user.roll_number}, {branch}{section}).\n\n"
-            f"Open drives:\n" + "\n".join(lines)
-        )
-        try:
-            answer = ai_plain_text(
-                _CHAT_PROMPT.format(context=context), question, max_tokens=600,
+        if not documents:
+            documents.append("There are no open drives right now.")
+        system = _RAG_CHAT_PROMPT + f"\nAsking student: {_student_line(user)}."
+
+        def chat():
+            return ai_plain_text(
+                system, question, max_tokens=800,
+                reasoning_budget=REASONING_BUDGETS["chat"],
                 usage_callback=_log_ai_usage(request.user, AiUsageLog.Action.CHAT),
+                documents=documents,
+            )
+
+        try:
+            answer = _cached_answer(
+                ("ai_chat", _normalize_question(question)), question, chat
             )
         except AiError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)

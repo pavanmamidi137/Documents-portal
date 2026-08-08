@@ -1,10 +1,11 @@
 import io
-import json
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
+from openai import RateLimitError
 from rest_framework.test import APIClient, APITestCase
 
 from apps.accounts.models import User
@@ -235,7 +236,7 @@ class DriveApiTests(APITestCase):
             posted_by=self.admin,
         )
 
-        def fake_match(prompt, text, max_tokens=1024, usage_callback=None):
+        def fake_match(prompt, text, max_tokens=1024, usage_callback=None, **kwargs):
             if usage_callback:
                 usage_callback(30, 10)
             return {"matches": [{"drive_id": drive.id, "score": 88, "reason": "Python fits"}]}
@@ -282,6 +283,12 @@ class DriveApiTests(APITestCase):
     def test_ai_extract_rejects_short_text(self):
         response = self._client(self.faculty).post(
             "/api/drives/ai_extract/", {"text": "hi"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_ai_extract_rejects_oversized_paste(self):
+        response = self._client(self.faculty).post(
+            "/api/drives/ai_extract/", {"text": "x" * 10_001}, format="json"
         )
         self.assertEqual(response.status_code, 400)
 
@@ -361,21 +368,99 @@ class DriveApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    @patch("apps.placements.views.ai_plain_text", return_value="The last date is 15 August.")
-    def test_ai_ask_about_a_specific_drive(self, mock_ai):
+    def test_ai_chat_rejects_oversized_question(self):
+        response = self._client(self.student).post(
+            "/api/drives/ai_chat/", {"question": "x" * 1_001}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @patch("apps.placements.views.ai_plain_text", return_value="It is a 2-round process.")
+    def test_ai_ask_uses_llm_for_complex_questions(self, mock_ai):
         drive = Drive.objects.create(
             company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
             posted_by=self.admin,
         )
         response = self._client(self.student).post(
             f"/api/drives/{drive.id}/ai_ask/",
-            {"question": "When is the last date?"},
+            {"question": "What is the selection process?"},
             format="json",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["answer"], "The last date is 15 August.")
-        # The drive is the only context given to the AI.
-        self.assertIn("TCS", mock_ai.call_args.args[0])
+        self.assertEqual(response.data["answer"], "It is a 2-round process.")
+        # The drive's real details travel as RAG grounding documents - the
+        # model may only answer from them.
+        self.assertIn("TCS", mock_ai.call_args.kwargs["documents"][0])
+        self.assertIn("21CSE01", mock_ai.call_args.args[0])  # student profile
+
+    def test_ai_ask_answers_fact_questions_from_database(self):
+        drive = Drive.objects.create(
+            company_name="TCS", package="6 LPA",
+            last_date_to_apply=self.today + timedelta(days=5),
+            eligible_roll_numbers="21CSE01", posted_by=self.admin,
+        )
+        with patch("apps.placements.views.ai_plain_text") as mock_ai:
+            package = self._client(self.student).post(
+                f"/api/drives/{drive.id}/ai_ask/",
+                {"question": "What is the package?"}, format="json",
+            )
+            deadline = self._client(self.student).post(
+                f"/api/drives/{drive.id}/ai_ask/",
+                {"question": "When is the last date?"}, format="json",
+            )
+            link = self._client(self.student).post(
+                f"/api/drives/{drive.id}/ai_ask/",
+                {"question": "Where do I apply?"}, format="json",
+            )
+            eligibility = self._client(self.student).post(
+                f"/api/drives/{drive.id}/ai_ask/",
+                {"question": "Am I eligible for this drive?"}, format="json",
+            )
+        self.assertEqual(package.status_code, 200)
+        self.assertIn("6 LPA", package.data["answer"])
+        self.assertIn(str(drive.last_date_to_apply), deadline.data["answer"])
+        self.assertIn("apply", link.data["answer"].lower())
+        self.assertIn("21CSE01", eligibility.data["answer"])
+        # Every answer came straight from the database - no LLM call at all.
+        mock_ai.assert_not_called()
+
+    def test_ai_ask_caches_repeated_questions(self):
+        drive = Drive.objects.create(
+            company_name="TCS", package="6 LPA",
+            last_date_to_apply=self.today + timedelta(days=5), posted_by=self.admin,
+        )
+
+        def fake_ai(prompt, text, max_tokens=800, usage_callback=None, **kwargs):
+            if usage_callback:
+                usage_callback(10, 5)
+            return "Nemotron reply"
+
+        with patch("apps.placements.views.ai_plain_text", side_effect=fake_ai) as mock_ai:
+            first = self._client(self.student).post(
+                f"/api/drives/{drive.id}/ai_ask/",
+                {"question": "Summarise this drive."}, format="json",
+            )
+            second = self._client(self.student).post(
+                f"/api/drives/{drive.id}/ai_ask/",
+                {"question": "Summarise this drive."}, format="json",
+            )
+        self.assertEqual(first.data["answer"], "Nemotron reply")
+        self.assertEqual(second.data["answer"], "Nemotron reply")
+        # The identical second question hit the 5-minute cache.
+        self.assertEqual(mock_ai.call_count, 1)
+
+    def test_ai_chat_quick_answers_when_a_drive_is_named(self):
+        Drive.objects.create(
+            company_name="TCS", package="7 LPA",
+            last_date_to_apply=self.today + timedelta(days=5), posted_by=self.admin,
+        )
+        with patch("apps.placements.views.ai_plain_text") as mock_ai:
+            response = self._client(self.student).post(
+                "/api/drives/ai_chat/",
+                {"question": "What is the TCS package?"}, format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("7 LPA", response.data["answer"])
+        mock_ai.assert_not_called()
 
     def test_ai_ask_rejects_empty_question(self):
         drive = Drive.objects.create(
@@ -390,7 +475,7 @@ class DriveApiTests(APITestCase):
     # ---- AI credits / usage tracking ----
 
     def test_ai_usage_is_logged_per_call(self):
-        def fake_ai(prompt, text, max_tokens=1024, usage_callback=None):
+        def fake_ai(prompt, text, max_tokens=1024, usage_callback=None, **kwargs):
             if usage_callback:
                 usage_callback(120, 40)
             return {"company_name": "TCS"}
@@ -505,45 +590,159 @@ class DriveApiTests(APITestCase):
         self.assertEqual(len(mine.data["recent"]), 1)
         self.assertEqual(mine.data["recent"][0]["action_label"], "AI Chat")
 
-    def test_ai_429_is_retried_then_succeeds(self):
-        import urllib.error
+    def test_ai_uses_rag_model_and_documents_when_rag_key_set(self):
+        import os
 
-        def fake_urlopen(req, timeout=60):
-            # First call: transient 429. Second call: success with usage.
-            if not fake_urlopen.called:
-                fake_urlopen.called = True
-                raise urllib.error.HTTPError(
-                    req.full_url, 429, "quota", {}, io.BytesIO(b"{}")
+        from apps.placements.ai import ai_json, RAG_MODEL
+
+        fake = _FakeOpenAI(content='{"ok": true}')
+        old_key = os.environ.get("NVIDIA_RAG_API_KEY")
+        os.environ["NVIDIA_RAG_API_KEY"] = "nvapi-rag-test"
+        try:
+            with (
+                patch("apps.placements.ai.OpenAI", side_effect=lambda **kw: fake),
+                patch("apps.placements.ai.get_api_key", return_value="gen-key"),
+            ):
+                result = ai_json(
+                    "system", "user text", documents=["Drive: TCS, 6 LPA"]
                 )
-            payload = {
-                "choices": [{"message": {"role": "assistant", "content": '{"ok": true}'}}],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-            }
-            return _FakeResponse(json.dumps(payload))
+        finally:
+            if old_key is None:
+                os.environ.pop("NVIDIA_RAG_API_KEY", None)
+            else:
+                os.environ["NVIDIA_RAG_API_KEY"] = old_key
+        self.assertEqual(result, {"ok": True})
+        # The RAG NIM is used with the documents as grounding, and the RAG key
+        # is what authenticates the client.
+        self.assertEqual(fake.calls[0]["model"], RAG_MODEL)
+        self.assertEqual(
+            fake.calls[0]["extra_body"]["documents"],
+            [{"content": "Drive: TCS, 6 LPA"}],
+        )
 
-        fake_urlopen.called = False
-        with patch("apps.placements.ai.urllib.request.urlopen", side_effect=fake_urlopen):
-            from apps.placements.ai import ai_json
+    def test_ai_rag_falls_back_to_context_injection_when_rag_fails(self):
+        import os
 
+        from openai import BadRequestError
+
+        from apps.placements.ai import DEFAULT_MODEL, RAG_MODEL, ai_json
+
+        fake = _FakeOpenAI(content='{"ok": true}')
+        # First call (the RAG NIM) rejects the documents parameter - the
+        # client must fall back to prompt injection with the 30B model.
+        fake._errors = [
+            BadRequestError(
+                "documents not supported",
+                response=SimpleNamespace(status_code=400, headers={}, request=object()),
+                body=None,
+            )
+        ]
+        old_key = os.environ.get("NVIDIA_RAG_API_KEY")
+        os.environ["NVIDIA_RAG_API_KEY"] = "nvapi-rag-test"
+        try:
+            with (
+                patch("apps.placements.ai.OpenAI", side_effect=lambda **kw: fake),
+                patch("apps.placements.ai.get_api_key", return_value="gen-key"),
+            ):
+                result = ai_json(
+                    "system", "user text", documents=["Drive: TCS, 6 LPA"]
+                )
+        finally:
+            if old_key is None:
+                os.environ.pop("NVIDIA_RAG_API_KEY", None)
+            else:
+                os.environ["NVIDIA_RAG_API_KEY"] = old_key
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(fake.calls[0]["model"], RAG_MODEL)  # RAG attempt first
+        self.assertEqual(fake.calls[1]["model"], DEFAULT_MODEL)  # fallback
+        # The fallback embeds the document into the system prompt.
+        self.assertIn("Drive: TCS, 6 LPA", fake.calls[1]["messages"][0]["content"])
+        # And no grounding documents leak into the fallback body.
+        self.assertNotIn("documents", fake.calls[1].get("extra_body", {}))
+
+    def test_ai_uses_nemotron_30b_a3b_by_default(self):
+        from apps.placements.ai import ai_json
+
+        fake = _FakeOpenAI(content='{"ok": true}')
+        with (
+            patch("apps.placements.ai.OpenAI", side_effect=lambda **kw: fake),
+            patch("apps.placements.ai.get_api_key", return_value="test-key"),
+        ):
+            result = ai_json("system", "user text")
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(fake.calls[0]["model"], "nvidia/nemotron-3-nano-30b-a3b")
+
+    def test_ai_429_is_retried_then_succeeds(self):
+        from apps.placements.ai import ai_json
+
+        fake = _FakeOpenAI(content='{"ok": true}', errors=[_FakeRateLimit()])
+        with (
+            patch("apps.placements.ai.OpenAI", side_effect=lambda **kw: fake),
+            patch("apps.placements.ai.get_api_key", return_value="test-key"),
+            patch("apps.placements.ai._429_BACKOFF_SECONDS", 0.01),
+        ):
             result = ai_json("system", "user text", usage_callback=lambda p, c: None)
         self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(fake.calls), 2)  # one retry after the 429
 
-    def test_ai_json_strips_markdown_fences_from_nvidia_output(self):
-        import urllib.error
+    def test_ai_json_strips_markdown_fences_from_model_output(self):
+        from apps.placements.ai import ai_json
 
-        def fake_urlopen(req, timeout=60):
-            payload = {
-                "choices": [{
-                    "message": {"role": "assistant", "content": "```json\n{\"company\": \"TCS\"}\n```"}
-                }],
-                "usage": {"prompt_tokens": 4, "completion_tokens": 2},
-            }
-            return _FakeResponse(json.dumps(payload))
-
-        with patch("apps.placements.ai.urllib.request.urlopen", side_effect=fake_urlopen):
-            from apps.placements.ai import ai_json
-
+        fake = _FakeOpenAI(content='```json\n{"company": "TCS"}\n```')
+        with (
+            patch("apps.placements.ai.OpenAI", side_effect=lambda **kw: fake),
+            patch("apps.placements.ai.get_api_key", return_value="test-key"),
+        ):
             self.assertEqual(ai_json("s", "u"), {"company": "TCS"})
+
+    def test_missing_api_key_raises_friendly_error(self):
+        import os
+
+        from apps.placements.ai import AiError, get_api_key
+
+        old = os.environ.pop("NVIDIA_API_KEY", None)
+        try:
+            with self.assertRaises(AiError) as ctx:
+                get_api_key()
+            self.assertIn("NVIDIA_API_KEY", str(ctx.exception))
+        finally:
+            if old is not None:
+                os.environ["NVIDIA_API_KEY"] = old
+
+    def test_ai_extract_returns_structured_and_legacy_fields(self):
+        structured = {
+            "company_name": "TCS", "job_role": "Software Engineer",
+            "job_type": "Full-time", "work_mode": "Hybrid",
+            "location": "Hyderabad", "package": "6 LPA",
+            "eligible_branches": ["CSE", "IT"], "minimum_cgpa": "6.5",
+            "maximum_backlogs": "0", "passing_year": ["2025", "2026"],
+            "eligible_roll_numbers": "21CSE01, 21CSE02",
+            "selection_process": "Aptitude -> Technical -> HR",
+            "application_deadline": "2026-08-15",
+            "apply_link": "https://apply.example.com/tcs",
+            "job_description": "Hiring freshers for core engineering.",
+            "required_skills": ["Python", "SQL"],
+            "important_instructions": "Carry two printouts.",
+            "company_description": "A global IT services firm.",
+        }
+        with patch("apps.placements.views.ai_json", return_value=structured):
+            response = self._client(self.admin).post(
+                "/api/drives/ai_extract/",
+                {"text": "TCS hiring! Software Engineer, Hyderabad, 6 LPA. Last date 15 Aug."},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.data
+        # The rich structured keys are preserved...
+        self.assertEqual(data["job_role"], "Software Engineer")
+        self.assertEqual(data["selection_process"], "Aptitude -> Technical -> HR")
+        # ...and mapped onto the form's legacy keys for auto-fill.
+        self.assertEqual(data["role"], "Software Engineer")
+        self.assertEqual(data["last_date_to_apply"], "2026-08-15")
+        self.assertEqual(data["drive_link"], "https://apply.example.com/tcs")
+        self.assertIn("Aptitude", data["description"])
+        self.assertIn("Eligible branches: CSE, IT", data["eligibility"])
+        self.assertIn("Minimum CGPA: 6.5", data["eligibility"])
 
     def test_drive_my_match_comes_from_analyzed_resume(self):
         from apps.accounts.models import Resume
@@ -583,17 +782,42 @@ class DriveApiTests(APITestCase):
         self.assertEqual(response.data["answer"], "It closed last week.")
 
 
-class _FakeResponse:
-    """Minimal file-like stand-in for urlopen's response object."""
+class _FakeRateLimit(RateLimitError):
+    """A RateLimitError instance without the SDK's constructor requirements."""
 
-    def __init__(self, body: str):
-        self._body = body.encode("utf-8")
+    def __init__(self):
+        pass
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, *args):
-        return False
+class _FakeOpenAI:
+    """Minimal stand-in for openai.OpenAI so ai.py never touches the network.
 
-    def read(self):
-        return self._body
+    ``client.chat.completions.create(...)`` maps to ``.create(...)`` here and
+    every call (model, extra_body, etc.) is recorded on ``calls``.
+    """
+
+    def __init__(self, content="", errors=(), usage=(10, 5)):
+        self.responses = [
+            SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+                usage=SimpleNamespace(
+                    prompt_tokens=usage[0], completion_tokens=usage[1]
+                ),
+            )
+        ]
+        self._errors = list(errors)
+        self.calls: list[dict] = []
+        self.chat = _FakeChat(self)
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._errors:
+            raise self._errors.pop(0)
+        return self.responses.pop(0)
+
+
+class _FakeChat:
+    """The ``chat`` attribute exposing ``.completions`` (an object with create)."""
+
+    def __init__(self, parent):
+        self.completions = parent

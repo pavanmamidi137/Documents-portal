@@ -93,7 +93,7 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
     );
   }, [open, editing, reset]);
 
-  /** Paste the WhatsApp forward and let Gemini fill the form. */
+  /** Paste the WhatsApp forward and let the AI fill the form. */
   const extractWithAi = async () => {
     if (pasteText.trim().length < 10) {
       toast.error("Paste the drive message first (at least a few lines).");

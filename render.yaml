@@ -32,6 +32,12 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: NVIDIA_API_KEY
+        sync: false # paste the NVIDIA 30B model key (nvapi-...)
+      - key: NVIDIA_RAG_API_KEY
+        sync: false # paste the NVIDIA RAG key (optional - falls back to NVIDIA_API_KEY)
+      - key: NVIDIA_RAG_MODEL
+        value: "nvidia/nim-rag"
       - key: MAX_PDF_SIZE_MB
         value: "20"
       - key: ADMIN_ROLL_NUMBER

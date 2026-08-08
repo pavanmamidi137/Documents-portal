@@ -42,13 +42,10 @@ Return ONLY valid JSON (no markdown, no comments) with a single key "matches": a
 - score: integer 0-100 match strength
 - reason: one short sentence explaining the fit (skills / role / eligibility / package)
 Base the match on the resume's skills and each drive's role, eligibility and eligible roll numbers.
-Only include drives from the list provided. Do not invent drives or ids.
+Only include drives from the documents provided. Do not invent drives or ids.
 
 Resume summary & skills:
-{resume_brief}
-
-Open drives:
-{drives}"""
+{resume_brief}"""
 
 
 def _usage_callback(actor):
@@ -157,13 +154,13 @@ def refresh_matches_for_drive(drive, actor=None, limit=None) -> int:
     updated = 0
     for resume in resumes:
         try:
+            # The drive's eligibility details are the RAG grounding document,
+            # so the score is based on the real criteria, not guessed.
             match = ai_json(
-                _MATCH_PROMPT.format(
-                    resume_brief=_resume_brief(resume)[:4000],
-                    drives=_drive_brief(drive),
-                ),
+                _MATCH_PROMPT.format(resume_brief=_resume_brief(resume)[:4000]),
                 "Score this resume against this drive.", max_tokens=400,
                 usage_callback=usage,
+                documents=[_drive_brief(drive)],
             )
         except AiError:
             continue  # best-effort - one failure doesn't stop the refresh
@@ -271,11 +268,10 @@ def refresh_all_matches(actor=None, limit=None) -> int:
     for resume in resumes:
         try:
             match = ai_json(
-                _MATCH_PROMPT.format(
-                    resume_brief=_resume_brief(resume)[:4000], drives=drives_brief
-                ),
+                _MATCH_PROMPT.format(resume_brief=_resume_brief(resume)[:4000]),
                 "Score this resume against each drive.", max_tokens=1600,
                 usage_callback=usage,
+                documents=[drives_brief],
             )
         except AiError:
             continue
@@ -398,9 +394,10 @@ def analyze_resume(resume, actor) -> dict:
             )
             try:
                 match = ai_json(
-                    _MATCH_PROMPT.format(resume_brief=brief[:4000], drives=drives_brief),
+                    _MATCH_PROMPT.format(resume_brief=brief[:4000]),
                     "Score this resume against each drive.", max_tokens=1600,
                     usage_callback=usage,
+                    documents=[drives_brief],
                 )
             except AiError:
                 raise
