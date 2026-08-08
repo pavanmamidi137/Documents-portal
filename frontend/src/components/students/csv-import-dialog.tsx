@@ -34,9 +34,9 @@ interface Props {
 }
 
 const SAMPLE_CSV = [
-  "Roll Number,Student Name,Phone,Email",
-  "21CSE01,Aarav Sharma,9876543210,aarav@example.com",
-  "21CSE02,Bhavya Reddy,9876543211,bhavya@example.com",
+  "Roll Number,Student Name,Phone,Email,Passout Year",
+  "21CSE01,Aarav Sharma,9876543210,aarav@example.com,2025",
+  "21CSE02,Bhavya Reddy,9876543211,bhavya@example.com,2025",
 ].join("\n");
 
 function downloadSample() {
@@ -123,8 +123,8 @@ export function CsvImportDialog({ open, onOpenChange, onImported, meta, isCr = f
           </DialogTitle>
           <DialogDescription>
             {isCr
-              ? "Your CSV needs these columns: Roll Number, Student Name, Phone, Email (optional). Roll numbers are saved in capitals and the default password is the Roll Number. Every student is added to your assigned section."
-              : "Your CSV needs these columns: Roll Number, Student Name, Phone, Email (optional). Roll numbers are saved in capitals and the default password is the Roll Number. Choose the branch and section below — every row is added there."}
+              ? "Your CSV needs these columns: Roll Number, Student Name, Phone, Email (optional), Passout Year (optional — guessed from the roll number when blank). Roll numbers are saved in capitals and the default password is the Roll Number. Every student is added to your assigned section."
+              : "Your CSV needs these columns: Roll Number, Student Name, Phone, Email (optional), Passout Year (optional — guessed from the roll number when blank). Roll numbers are saved in capitals and the default password is the Roll Number. Choose the branch and section below — every row is added there."}
           </DialogDescription>
         </DialogHeader>
 
@@ -245,7 +245,7 @@ export function CsvImportDialog({ open, onOpenChange, onImported, meta, isCr = f
             </label>
 
             <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-              <span className="font-mono">Roll Number, Student Name, Phone, Email</span>
+              <span className="font-mono">Roll Number, Student Name, Phone, Email, Passout Year</span>
               <Button
                 type="button"
                 variant="ghost"

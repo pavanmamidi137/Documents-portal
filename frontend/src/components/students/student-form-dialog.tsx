@@ -34,6 +34,7 @@ const schema = z.object({
   full_name: z.string().min(2, "Student name is required"),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   phone: z.string().optional(),
+  passout_year: z.string().optional(),
   branch: z.string().optional(),
   section: z.string().optional(),
   is_active: z.boolean(),
@@ -57,6 +58,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
     register,
     handleSubmit,
     watch,
+    getValues,
     setValue,
     reset,
     formState: { errors, isSubmitting },
@@ -66,6 +68,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
   });
 
   const selectedBranch = watch("branch");
+  const roll = watch("roll_number");
 
   // watch() inside useMemo keeps the derived list in sync without unstable deps.
   const sections = useMemo(
@@ -83,6 +86,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
         full_name: student?.full_name ?? "",
         email: student?.email ?? "",
         phone: student?.phone ?? "",
+        passout_year: student?.passout_year ? String(student.passout_year) : "",
         branch: student?.branch ? String(student.branch) : "",
         section: student?.section ? String(student.section) : "",
         is_active: student?.is_active ?? true,
@@ -90,15 +94,31 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
     }
   }, [open, student, reset]);
 
+  // When creating a student, guess the pass-out year from the roll number's
+  // leading two digits (21CSE01 -> 2025) and prefill it - the admin can still
+  // override it.
+  useEffect(() => {
+    if (editing || !open) return;
+    const m = roll.trim().match(/^(\d{2})/);
+    if (m) {
+      const year = 2000 + Number(m[1]) + 4;
+      if (year >= 1990 && year <= 2100 && !getValues("passout_year")) {
+        setValue("passout_year", String(year));
+      }
+    }
+  }, [roll, editing, open, setValue, getValues]);
+
 
 
   const onSubmit = async (values: FormValues) => {
     try {
+      const passoutYear = values.passout_year ? Number(values.passout_year) : null;
       if (editing) {
         await http.patch(`/students/${student!.id}/`, {
           full_name: values.full_name,
           email: values.email || null,
           phone: values.phone ?? "",
+          passout_year: passoutYear,
           branch: values.branch ? Number(values.branch) : null,
           section: values.section ? Number(values.section) : null,
           is_active: values.is_active,
@@ -110,6 +130,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
           full_name: values.full_name.trim(),
           email: values.email || null,
           phone: values.phone ?? "",
+          passout_year: passoutYear,
           branch: values.branch ? Number(values.branch) : null,
           section: values.section ? Number(values.section) : null,
         });
@@ -167,6 +188,20 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
               <Label>Phone</Label>
               <Input placeholder="10-digit mobile" {...register("phone")} />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Passout Year (Batch)</Label>
+            <Input
+              type="number"
+              min={1990}
+              max={2100}
+              placeholder={editing ? "e.g. 2025" : "Auto-filled from roll number"}
+              {...register("passout_year")}
+            />
+            <p className="text-xs text-muted-foreground">
+              Which batch this student passes out in. Leave blank to auto-guess from the roll number.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

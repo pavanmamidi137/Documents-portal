@@ -292,6 +292,18 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       ),
     },
     {
+      key: "batch",
+      header: "Batch",
+      cell: (s) =>
+        s.passout_year ? (
+          <Badge variant="outline" className="tabular-nums">
+            Class of {s.passout_year}
+          </Badge>
+        ) : (
+          <span className="text-sm text-muted-foreground">—</span>
+        ),
+    },
+    {
       key: "role",
       header: "Role",
       cell: (s) => (

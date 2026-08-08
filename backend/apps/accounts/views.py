@@ -229,14 +229,14 @@ class StudentViewSet(viewsets.ModelViewSet):
         rows = [
             [s.roll_number, s.full_name, s.email or "", s.phone or "",
              s.branch.name if s.branch else "", s.section.name if s.section else "",
-             s.role, "Active" if s.is_active else "Inactive"]
+             s.passout_year or "", s.role, "Active" if s.is_active else "Inactive"]
             for s in qs.iterator()
         ]
         log_audit(request.user, "CSV_EXPORT", "Student", "",
                   {"count": len(rows)}, request)
         return csv_response(
             "students.csv",
-            ["Roll Number", "Student Name", "Email", "Phone", "Branch", "Section", "Role", "Status"],
+            ["Roll Number", "Student Name", "Email", "Phone", "Branch", "Section", "Passout Year", "Role", "Status"],
             rows,
         )
 

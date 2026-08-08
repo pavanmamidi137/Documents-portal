@@ -193,6 +193,53 @@ class FacultyDashboardTests(TestCase):
         self.assertEqual(response.data["role"], "FACULTY")
 
 
+class AdminDashboardTests(TestCase):
+    """Super admin dashboard: totals plus the chart datasets for the visuals."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE")
+        self.section = Section.objects.create(branch=self.branch, name="A")
+        User.objects.create_user(
+            roll_number="21CSE01", password="x", full_name="Diya",
+            branch=self.branch, section=self.section, passout_year=2025,
+        )
+        User.objects.create_user(
+            roll_number="22CSE02", password="x", full_name="Arjun",
+            branch=self.branch, section=self.section, passout_year=2026,
+        )
+
+    def _client(self):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(self.admin)}")
+        return client
+
+    def test_dashboard_returns_chart_datasets(self):
+        response = self._client().get("/api/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        charts = response.data["charts"]
+        self.assertIn("by_category", charts)
+        self.assertIn("students_by_branch", charts)
+        self.assertIn("by_passout_year", charts)
+        self.assertIn("over_time", charts)
+        # Students-by-branch pie: both students are in CSE.
+        branch_rows = {
+            r["branch__name"]: r["count"] for r in charts["students_by_branch"]
+        }
+        self.assertEqual(branch_rows.get("CSE"), 2)
+        # Pass-out batch bar: 2025 and 2026, one student each.
+        batch_rows = {r["passout_year"]: r["count"] for r in charts["by_passout_year"]}
+        self.assertEqual(batch_rows, {2025: 1, 2026: 1})
+        # Uploads over time: exactly 14 zero-filled days.
+        self.assertEqual(len(charts["over_time"]), 14)
+        self.assertTrue(all(r["count"] == 0 for r in charts["over_time"]))
+        self.assertEqual(response.data["totals"]["students"], 2)
+
+
 class NotificationApiTests(TestCase):
     """The notifications bell: scoped list, unread count, read actions."""
 

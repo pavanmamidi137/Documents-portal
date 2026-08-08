@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, GitMerge, Inbox, Loader2, Send, Share2, X } from "lucide-react";
+import { Check, Inbox, Loader2, Repeat, Send, Share2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -314,7 +314,7 @@ export function ShareRequestsDialog({ open, onOpenChange, onResponded }: ShareRe
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <GitMerge className="size-5 text-primary" /> Share Requests
+            <Repeat className="size-5 text-primary" /> Share Requests
           </DialogTitle>
           <DialogDescription>
             Accept documents other CRs sent you, or track the status of the requests you sent.

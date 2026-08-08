@@ -33,7 +33,11 @@ class DashboardView(APIView):
 
     @staticmethod
     def _super_admin_stats():
+        from datetime import timedelta
+
         from django.db.models import Count
+        from django.db.models.functions import TruncDate
+        from django.utils import timezone
 
         from apps.accounts.models import User
 
@@ -50,6 +54,38 @@ class DashboardView(APIView):
             .annotate(count=Count("id"))
             .order_by("-count")[:6]
         )
+        # Students per pass-out batch (bar chart on the dashboard).
+        students_by_batch = (
+            User.objects.filter(role=User.Role.STUDENT)
+            .exclude(passout_year__isnull=True)
+            .values("passout_year")
+            .annotate(count=Count("id"))
+            .order_by("passout_year")
+        )
+        # Students per branch (pie chart on the dashboard).
+        students_by_branch = (
+            User.objects.filter(role=User.Role.STUDENT)
+            .exclude(branch__isnull=True)
+            .values("branch__name")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:8]
+        )
+        # Documents uploaded per day for the last 14 days (area chart). Days
+        # without uploads are zero-filled so the line never jumps around.
+        since = timezone.now() - timedelta(days=13)
+        day_counts = {
+            row["day"]: row["count"]
+            for row in (
+                Document.objects.filter(created_at__gte=since)
+                .annotate(day=TruncDate("created_at"))
+                .values("day")
+                .annotate(count=Count("id"))
+            )
+        }
+        over_time = []
+        for offset in range(13, -1, -1):
+            day = (timezone.now() - timedelta(days=offset)).date()
+            over_time.append({"date": day.isoformat(), "count": day_counts.get(day, 0)})
         return {
             "role": "SUPER_ADMIN",
             "totals": {
@@ -63,6 +99,9 @@ class DashboardView(APIView):
             "charts": {
                 "by_category": list(docs_by_category),
                 "by_branch": list(docs_by_branch),
+                "students_by_branch": list(students_by_branch),
+                "by_passout_year": list(students_by_batch),
+                "over_time": over_time,
             },
             "recent_uploads": DocumentListSerializer(recent_docs, many=True).data,
         }

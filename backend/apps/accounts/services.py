@@ -12,9 +12,13 @@ from rest_framework.exceptions import ValidationError
 
 from apps.core.utils import log_audit
 
-from .models import Resume, User
+from .models import Resume, User, derive_passout_year
 
 CSV_REQUIRED_COLUMNS = {"roll number", "student name"}
+# Optional header aliases for the batch pass-out year column.
+PASSOUT_ALIASES = {
+    "passout year", "passout", "passoutyear", "batch", "year of passout",
+}
 
 
 @transaction.atomic
@@ -27,7 +31,11 @@ def create_student(data: dict, actor: User, request=None) -> User:
     data.setdefault("role", User.Role.STUDENT)
     roll_number = data.pop("roll_number").strip().upper()
     password = data.pop("password", None) or roll_number
-    student = User.objects.create_user(roll_number, password, **data)
+    # Default pass-out year comes from the roll number when not provided.
+    passout_year = data.pop("passout_year", None) or derive_passout_year(roll_number)
+    student = User.objects.create_user(
+        roll_number, password, passout_year=passout_year, **data
+    )
     log_audit(
         actor, "CREATE", "Student", student.id,
         {"roll_number": student.roll_number, "branch": student.branch_id, "section": student.section_id},
@@ -126,6 +134,10 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
     col = {key: header_map[key] for key in CSV_REQUIRED_COLUMNS if key in header_map}
     if len(col) < 2:
         raise ValueError("CSV must contain 'Roll Number' and 'Student Name' columns.")
+    # Optional "Passout Year" / "Batch" column (any alias).
+    passout_col = next(
+        (header_map[k] for k in PASSOUT_ALIASES if k in header_map), None
+    )
 
     # Resolve the single target branch/section for the whole file.
     if actor.is_cr:
@@ -169,7 +181,17 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
         email = ((row.get(header_map.get("email")) or "").strip().lower()
                  if header_map.get("email") else "")
         phone = (row.get(header_map.get("phone")) or "").strip() if header_map.get("phone") else ""
-        rows.append({"roll": roll, "full_name": full_name, "email": email, "phone": phone, "seen": seen})
+        passout_year = None
+        if passout_col:
+            raw = (row.get(passout_col) or "").strip()
+            if raw.isdigit() and 1990 <= int(raw) <= 2100:
+                passout_year = int(raw)
+        if passout_year is None:
+            passout_year = derive_passout_year(roll)
+        rows.append({
+            "roll": roll, "full_name": full_name, "email": email,
+            "phone": phone, "passout_year": passout_year, "seen": seen,
+        })
 
     if not rows:
         return {"created": 0, "updated": 0, "skipped_errors": errors}
@@ -242,11 +264,13 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
             if not claim_email(r):
                 continue
             # Placement (branch/section) is fixed at creation time - a re-import
-            # only refreshes name/email/phone.
+            # only refreshes name/email/phone (and batch when the column exists).
             student.full_name = r["full_name"]
             if r["email"]:
                 student.email = r["email"]
             student.phone = r["phone"]
+            if passout_col:
+                student.passout_year = r["passout_year"]
             update_pairs.append((r, student))
 
         if create_rows:
@@ -258,6 +282,7 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
                     roll_number=r["roll"], full_name=r["full_name"],
                     email=r["email"] or None, phone=r["phone"],
                     role=User.Role.STUDENT, branch=branch, section=section,
+                    passout_year=r["passout_year"],
                     password=make_password(r["roll"], hasher="pbkdf2_sha256_import"),
                 )
                 for r in create_rows
@@ -275,7 +300,8 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
                         User.objects.create(
                             roll_number=u.roll_number, full_name=u.full_name,
                             email=u.email, phone=u.phone, role=u.role,
-                            branch=branch, section=section, password=u.password,
+                            branch=branch, section=section,
+                            passout_year=u.passout_year, password=u.password,
                         )
                         created += 1
                     except IntegrityError:
@@ -285,9 +311,12 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
                         })
 
         if update_pairs:
+            update_fields = ["full_name", "email", "phone"]
+            if passout_col:
+                update_fields.append("passout_year")
             update_rows = [s for _, s in update_pairs]
             try:
-                User.objects.bulk_update(update_rows, ["full_name", "email", "phone"], batch_size=500)
+                User.objects.bulk_update(update_rows, update_fields, batch_size=500)
                 updated = len(update_pairs)
             except IntegrityError:
                 # Racing insert between the email check and the write - fall back
@@ -295,7 +324,7 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
                 updated = 0
                 for r, student in update_pairs:
                     try:
-                        student.save(update_fields=["full_name", "email", "phone"])
+                        student.save(update_fields=update_fields)
                         updated += 1
                     except IntegrityError:
                         errors.append({

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import Resume, User
+from .models import Resume, User, derive_passout_year
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -12,7 +12,8 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", "roll_number", "full_name", "email", "phone", "role", "role_label",
+            "id", "roll_number", "full_name", "email", "phone", "passout_year",
+            "role", "role_label",
             "branch", "branch_name", "section", "section_name",
             "is_active", "is_staff", "is_super_admin", "is_cr", "is_faculty",
             "is_student", "date_joined",
@@ -95,7 +96,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", "roll_number", "full_name", "email", "phone",
+            "id", "roll_number", "full_name", "email", "phone", "passout_year",
             "branch", "section", "password", "is_active",
         ]
         read_only_fields = ["id"]
@@ -110,6 +111,11 @@ class StudentCreateSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         if value and User.objects.filter(email=value).exists():
             raise serializers.ValidationError("A student with this email already exists.")
+        return value
+
+    def validate_passout_year(self, value):
+        if value is not None and not (1990 <= int(value) <= 2100):
+            raise serializers.ValidationError("Enter a valid pass-out year.")
         return value
 
     def validate(self, attrs):
@@ -131,16 +137,28 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         roll_number = validated_data.pop("roll_number")
         # Default password is the student's roll number (in capitals).
         password = validated_data.pop("password", None) or roll_number
+        # Batch/pass-out year defaults from the roll number when not provided.
+        passout_year = (
+            validated_data.pop("passout_year", None) or derive_passout_year(roll_number)
+        )
         return User.objects.create_user(
-            roll_number, password, **validated_data
+            roll_number, password, passout_year=passout_year, **validated_data
         )
 
 
 class StudentUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "full_name", "email", "phone", "branch", "section", "is_active"]
+        fields = [
+            "id", "full_name", "email", "phone", "passout_year",
+            "branch", "section", "is_active",
+        ]
         read_only_fields = ["id", "role"]
+
+    def validate_passout_year(self, value):
+        if value is not None and not (1990 <= int(value) <= 2100):
+            raise serializers.ValidationError("Enter a valid pass-out year.")
+        return value
 
     def validate(self, attrs):
         user = self.context["request"].user

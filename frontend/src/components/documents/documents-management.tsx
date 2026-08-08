@@ -4,11 +4,11 @@ import { useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
-  Bell,
   Download,
   Eye,
   ListChecks,
   Plus,
+  Repeat,
   RotateCcw,
   Send,
   Share2,
@@ -378,7 +378,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
           <>
             {isCr && (
               <Button variant="outline" onClick={() => setRequestsOpen(true)} className="relative">
-                <Bell className="size-4" /> Requests
+                <Repeat className="size-4" /> Requests
                 {pendingCount > 0 && (
                   <span className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
                     {pendingCount}

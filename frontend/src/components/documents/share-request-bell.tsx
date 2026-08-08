@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell } from "lucide-react";
+import { Repeat } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
@@ -32,10 +32,10 @@ export function ShareRequestBell() {
         size="icon"
         onClick={() => setOpen(true)}
         aria-label={`Document share requests${pendingCount > 0 ? ` (${pendingCount} pending)` : ""}`}
-        title="Document share requests"
+        title="Share requests (send & receive)"
         className="relative text-muted-foreground"
       >
-        <Bell className="size-5" />
+        <Repeat className="size-5" />
         {pendingCount > 0 && (
           <span className="absolute top-1 right-1 flex size-4 min-w-4 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-bold text-primary-foreground">
             {pendingCount > 9 ? "9+" : pendingCount}

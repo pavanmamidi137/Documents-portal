@@ -50,6 +50,14 @@ class UserModelTests(TestCase):
         self.assertTrue(cr.can_manage_section(self.section))
         self.assertFalse(cr.can_manage_section(other_section))
 
+    def test_derive_passout_year_from_roll_number(self):
+        from .models import derive_passout_year
+
+        self.assertEqual(derive_passout_year("21CSE01"), 2025)
+        self.assertEqual(derive_passout_year("20A"), 2024)
+        self.assertIsNone(derive_passout_year("CSE01"))
+        self.assertIsNone(derive_passout_year(""))
+
 
 class CsvImportTests(TestCase):
     def setUp(self):
@@ -131,6 +139,100 @@ class CsvImportTests(TestCase):
         self.assertEqual(result["created"], 1)
         self.assertEqual(len(result["skipped_errors"]), 1)
         self.assertIn("Duplicate", result["skipped_errors"][0]["error"])
+
+    def test_import_honors_passout_year_column(self):
+        """An explicit Passout Year column wins; blank rows are guessed."""
+        csv_content = (
+            "Roll Number,Student Name,Email,Phone,Passout Year\n"
+            "21CSE01,Aarav,aarav@test.com,9999999999,2026\n"
+            "21CSE02,Bhavya,bhavya@test.com,8888888888\n"
+        )
+        result = services.import_students_csv(
+            self._csv_file(csv_content), self.admin,
+            branch_id=self.branch.id, section_id=self.section.id,
+        )
+        self.assertEqual(result["created"], 2)
+        self.assertEqual(User.objects.get(roll_number="21CSE01").passout_year, 2026)
+        self.assertEqual(User.objects.get(roll_number="21CSE02").passout_year, 2025)
+
+    def test_reimport_updates_passout_year(self):
+        csv_content = "Roll Number,Student Name,Passout Year\n21CSE01,Aarav,2026\n"
+        services.import_students_csv(
+            self._csv_file(csv_content), self.admin,
+            branch_id=self.branch.id, section_id=self.section.id,
+        )
+        csv_content2 = "Roll Number,Student Name,Passout Year\n21CSE01,Aarav R,2027\n"
+        result = services.import_students_csv(
+            self._csv_file(csv_content2), self.admin,
+            branch_id=self.branch.id, section_id=self.section.id,
+        )
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(User.objects.get(roll_number="21CSE01").passout_year, 2027)
+
+
+class StudentApiTests(TestCase):
+    """Manual student creation stores (or derives) the pass-out year."""
+
+    def setUp(self):
+        self.branch = Branch.objects.create(name="CSE")
+        self.section = Section.objects.create(branch=self.branch, name="A")
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+
+    def _client(self) -> APIClient:
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": "admin", "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        return client
+
+    def test_create_derives_passout_year_from_roll_number(self):
+        response = self._client().post(
+            "/api/students/",
+            {
+                "roll_number": "21CSE01",
+                "full_name": "Aarav",
+                "branch": self.branch.id,
+                "section": self.section.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["passout_year"], 2025)
+        self.assertEqual(User.objects.get(roll_number="21CSE01").passout_year, 2025)
+
+    def test_create_honors_explicit_passout_year(self):
+        response = self._client().post(
+            "/api/students/",
+            {
+                "roll_number": "21CSE02",
+                "full_name": "Bhavya",
+                "passout_year": 2027,
+                "branch": self.branch.id,
+                "section": self.section.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(User.objects.get(roll_number="21CSE02").passout_year, 2027)
+
+    def test_update_changes_passout_year(self):
+        student = User.objects.create_user(
+            roll_number="21CSE03", password="x", full_name="Charan",
+            branch=self.branch, section=self.section,
+        )
+        response = self._client().patch(
+            f"/api/students/{student.id}/",
+            {"passout_year": 2028},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        student.refresh_from_db()
+        self.assertEqual(student.passout_year, 2028)
 
 
 class CsvImportForCrTests(TestCase):

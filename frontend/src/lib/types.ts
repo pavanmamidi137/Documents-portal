@@ -6,6 +6,7 @@ export interface User {
   full_name: string;
   email: string | null;
   phone: string;
+  passout_year: number | null;
   role: Role;
   role_label: string;
   branch: number | null;
@@ -133,6 +134,9 @@ export interface DashboardData {
   charts?: {
     by_category: { category__name: string; count: number }[];
     by_branch: { branch__name: string; count: number }[];
+    students_by_branch: { branch__name: string; count: number }[];
+    by_passout_year: { passout_year: number; count: number }[];
+    over_time: { date: string; count: number }[];
   };
   recent_uploads: DocumentItem[];
   recent_announcements?: { id: number; title: string; created_at: string }[];

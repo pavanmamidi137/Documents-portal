@@ -1,6 +1,21 @@
+import re
+
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
+
+
+def derive_passout_year(roll: str):
+    """Guess a student's pass-out year from a roll number's leading 2 digits.
+
+    ``21CSE01`` -> admitted 2021 -> passes out 2025 (4-year degree). Returns
+    None when the roll number carries no usable year prefix.
+    """
+    match = re.match(r"^(\d{2})", roll or "")
+    if not match:
+        return None
+    year = 2000 + int(match.group(1)) + 4
+    return year if 1990 <= year <= 2100 else None
 
 
 class UserManager(BaseUserManager):
@@ -46,6 +61,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     full_name = models.CharField(max_length=150)
     email = models.EmailField(unique=True, null=True, blank=True)
     phone = models.CharField(max_length=20, blank=True, default="")
+    passout_year = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text="Batch pass-out year (e.g. 2025) - shown next to every student.",
+    )
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.STUDENT)
     branch = models.ForeignKey(
         "college.Branch", null=True, blank=True, on_delete=models.SET_NULL, related_name="students"

@@ -16,10 +16,14 @@ import {
   Users,
 } from "lucide-react";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -130,6 +134,24 @@ export default function DashboardPage() {
     count: item.count,
   }));
 
+  // Admin charts: uploads over the last 14 days, students by branch (pie)
+  // and students by pass-out batch (bars).
+  const areaData = (data?.charts?.over_time ?? []).map((p) => ({
+    label: new Date(`${p.date}T00:00:00`).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    }),
+    count: p.count,
+  }));
+  const pieData = (data?.charts?.students_by_branch ?? []).map((p) => ({
+    name: p.branch__name ?? "Unknown",
+    count: p.count,
+  }));
+  const batchData = (data?.charts?.by_passout_year ?? []).map((p) => ({
+    name: String(p.passout_year),
+    count: p.count,
+  }));
+
   return (
     <div>
       <PageHeader
@@ -192,14 +214,114 @@ export default function DashboardPage() {
             })}
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        {/* Chart (admin only) */}
-        {isAdmin && data?.charts && (
+      {/* Admin charts: area, pie and bar visualisations */}
+      {isAdmin && data?.charts && (
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.2 }}
+            className="rounded-2xl border bg-card p-5 lg:col-span-2"
+          >
+            <h3 className="mb-4 font-semibold">Documents Uploaded — Last 14 Days</h3>
+            {areaData.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                No uploads in the last 14 days.
+              </p>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={areaData} margin={{ left: -14, right: 8 }}>
+                  <defs>
+                    <linearGradient id="docAreaGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.45} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.04} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={30} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    cursor={{ stroke: "var(--border)" }}
+                    contentStyle={{
+                      background: "var(--popover)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      fontSize: 13,
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="count"
+                    name="Uploads"
+                    stroke="var(--chart-1)"
+                    strokeWidth={2.5}
+                    fill="url(#docAreaGradient)"
+                    activeDot={{ r: 4 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </motion.div>
+
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.25 }}
-            className="rounded-2xl border bg-card p-5 lg:col-span-1"
+            className="rounded-2xl border bg-card p-5"
+          >
+            <h3 className="mb-4 font-semibold">Students by Branch</h3>
+            {pieData.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">No students yet.</p>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      dataKey="count"
+                      nameKey="name"
+                      innerRadius={52}
+                      outerRadius={80}
+                      paddingAngle={3}
+                      strokeWidth={0}
+                    >
+                      {pieData.map((_, i) => (
+                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        background: "var(--popover)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        fontSize: 13,
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1.5">
+                  {pieData.map((item, i) => (
+                    <span
+                      key={item.name}
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                    >
+                      <span
+                        className="size-2.5 shrink-0 rounded-full"
+                        style={{ background: CHART_COLORS[i % CHART_COLORS.length] }}
+                      />
+                      {item.name} ({item.count})
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.3 }}
+            className="rounded-2xl border bg-card p-5"
           >
             <h3 className="mb-4 font-semibold">Documents by Category</h3>
             {chartData.length === 0 ? (
@@ -207,16 +329,11 @@ export default function DashboardPage() {
                 Upload documents to see distribution.
               </p>
             ) : (
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 12 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.2} />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    width={92}
-                    tick={{ fontSize: 11 }}
-                  />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 11 }} />
                   <Tooltip
                     cursor={{ fill: "rgba(0,0,0,0.05)" }}
                     contentStyle={{
@@ -226,7 +343,7 @@ export default function DashboardPage() {
                       fontSize: 13,
                     }}
                   />
-                  <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={18}>
+                  <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={16}>
                     {chartData.map((_, i) => (
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                     ))}
@@ -235,14 +352,50 @@ export default function DashboardPage() {
               </ResponsiveContainer>
             )}
           </motion.div>
-        )}
 
-        {/* Recent uploads (faculty see recent resumes instead) */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.35 }}
+            className="rounded-2xl border bg-card p-5 lg:col-span-2"
+          >
+            <h3 className="mb-4 font-semibold">Students by Pass-Out Batch</h3>
+            {batchData.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">No student batches yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={batchData} margin={{ left: -14, right: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={30} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    cursor={{ fill: "rgba(0,0,0,0.05)" }}
+                    contentStyle={{
+                      background: "var(--popover)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 12,
+                      fontSize: 13,
+                    }}
+                  />
+                  <Bar dataKey="count" radius={[6, 6, 0, 0]} barSize={34}>
+                    {batchData.map((_, i) => (
+                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </motion.div>
+        </div>
+      )}
+
+      {/* Recent uploads (faculty see recent resumes instead) */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.3 }}
-          className="rounded-2xl border bg-card p-5 lg:col-span-2"
+          className="rounded-2xl border bg-card p-5 lg:col-span-3"
         >
           <div className="mb-4 flex items-center justify-between">
             <h3 className="font-semibold">{isFaculty ? "Recently Updated Resumes" : "Recent Uploads"}</h3>
