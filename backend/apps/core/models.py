@@ -73,6 +73,7 @@ class Notification(models.Model):
         CONTACT_ADMIN = "CONTACT_ADMIN", "Contact Admin"
         ANNOUNCEMENT = "ANNOUNCEMENT", "Announcement"
         DRIVE = "DRIVE", "Placement Drive"
+        AI_RESUME = "AI_RESUME", "AI Resume Review"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -366,6 +366,14 @@ def upload_resume(student: User, resume_file, request=None) -> Resume:
         resume.is_reviewed = False
         resume.reviewed_by = None
         resume.reviewed_at = None
+        # The old file's AI analysis (quality + drive matches) no longer
+        # applies to the new version - reset it so it gets re-run on demand.
+        resume.ai_status = Resume.AiStatus.PENDING
+        resume.ai_score = None
+        resume.ai_analysis = None
+        resume.ai_match = None
+        resume.ai_error = ""
+        resume.ai_analyzed_at = None
     resume.is_missing = False
     resume.file_checked_at = None
     # A fresh submission is not a "restored" file - clear any previous badge.

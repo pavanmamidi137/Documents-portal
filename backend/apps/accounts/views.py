@@ -20,7 +20,7 @@ from apps.core.permissions import (
     IsSuperAdminOrCR,
     IsSuperAdminOrFaculty,
 )
-from apps.core.throttles import LoginRateThrottle
+from apps.core.throttles import AiRateThrottle, LoginRateThrottle
 from apps.core.utils import build_zip_response, csv_response, log_audit
 
 from .models import Resume, User
@@ -462,6 +462,13 @@ class ResumeViewSet(viewsets.ModelViewSet):
         # destroy/preview: ownership is checked in the body (owner student or admin).
         return [IsAuthenticated()]
 
+    def get_throttles(self):
+        # AI analysis costs real LLM quota - throttle it per user like the
+        # other AI actions so one account can't drain the monthly budget.
+        if self.action == "analyze":
+            return [AiRateThrottle()]
+        return super().get_throttles()
+
     def get_queryset(self):
         user = self.request.user
         # Resumes whose Cloudinary file was deleted are hidden from faculty
@@ -706,6 +713,42 @@ class ResumeViewSet(viewsets.ModelViewSet):
             request,
         )
         return Response({"updated": count})
+
+    @action(detail=True, methods=["post"])
+    def analyze(self, request, pk=None):
+        """Run the AI resume review (quality + drive matches) and cache it.
+
+        Students analyze their own resume; faculty/admins may analyze any
+        resume in their scope. The result is stored on the Resume row so
+        repeated views are instant - re-run after uploading a new version or
+        when new drives open.
+        """
+        from apps.placements.ai import AiError
+        from apps.placements.resume_ai import analyze_resume
+
+        resume = Resume.objects.select_related(
+            "student", "student__branch"
+        ).filter(pk=pk).first()
+        if not resume:
+            raise NotFound("Resume not found.")
+        user = request.user
+        # Only students (own resume), branch-scoped faculty and admins may run
+        # the analysis - a CR has no resume access anywhere else in the portal.
+        if not (user.is_super_admin or user.is_faculty or user.is_student):
+            raise PermissionDenied("Only students, faculty and admins can analyze resumes.")
+        if user.is_student and resume.student_id != user.id:
+            raise PermissionDenied("You can only analyze your own resume.")
+        if user.is_faculty and user.branch_id and resume.student.branch_id != user.branch_id:
+            raise NotFound("Resume not found.")
+        if resume.is_missing:
+            raise ValidationError(
+                {"detail": "This resume's file was deleted from storage. Re-upload it first."}
+            )
+        try:
+            analyze_resume(resume, user)
+        except AiError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response(ResumeSerializer(resume).data)
 
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, pk=None):

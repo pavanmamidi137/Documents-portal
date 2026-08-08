@@ -132,6 +132,24 @@ class Resume(models.Model):
     # When a previously-deleted resume comes back in Cloudinary this marks
     # when, so the UI can show a "Restored" badge for a while.
     restored_at = models.DateTimeField(null=True, blank=True)
+    # AI review: the student (or faculty) runs an analysis once, and the
+    # results are cached here so repeated views are free. Re-running happens
+    # after uploading a new version or when new drives open.
+    class AiStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        COMPLETE = "COMPLETE", "Complete"
+        FAILED = "FAILED", "Failed"
+
+    ai_status = models.CharField(
+        max_length=10, choices=AiStatus.choices, default=AiStatus.PENDING
+    )
+    ai_score = models.PositiveSmallIntegerField(null=True, blank=True)  # 0-100
+    # {summary, strengths[], improvements[], skills[], ats_keywords[]}
+    ai_analysis = models.JSONField(null=True, blank=True)
+    # drive_id -> {score, reason, company_name} snapshot at analysis time
+    ai_match = models.JSONField(null=True, blank=True)
+    ai_error = models.CharField(max_length=500, blank=True, default="")
+    ai_analyzed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

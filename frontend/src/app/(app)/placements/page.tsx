@@ -15,6 +15,7 @@ import {
   Plus,
   Sparkles,
   Trash2,
+  TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -40,6 +41,14 @@ const ROLE_LABELS: Record<string, string> = {
   FACULTY: "Faculty",
   CR: "CR",
 };
+
+function matchClasses(score: number) {
+  if (score >= 70)
+    return "border-violet-500/40 bg-violet-500/15 text-violet-700 dark:text-violet-300";
+  if (score >= 45)
+    return "border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300";
+  return "border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-300";
+}
 
 export default function PlacementsPage() {
   const { user } = useAuth();
@@ -187,6 +196,15 @@ export default function PlacementsPage() {
                         <CheckCircle2 className="size-3" /> Eligible for you
                       </Badge>
                     )}
+                    {d.my_match && (
+                      <Badge
+                        variant="outline"
+                        className={`gap-1 ${matchClasses(d.my_match.score)}`}
+                        title={d.my_match.reason || "AI match estimate from your resume"}
+                      >
+                        <TrendingUp className="size-3" /> {d.my_match.score}% match
+                      </Badge>
+                    )}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                     {d.role && (
@@ -251,6 +269,12 @@ export default function PlacementsPage() {
                     Eligibility
                   </p>
                   <p className="mt-1 text-sm">{d.eligibility}</p>
+                  {d.my_match?.reason && (
+                    <p className="mt-1.5 flex items-start gap-1.5 text-xs text-violet-600 dark:text-violet-400">
+                      <TrendingUp className="mt-0.5 size-3.5 shrink-0" />
+                      <span>{d.my_match.reason}</span>
+                    </p>
+                  )}
                 </div>
               )}
 

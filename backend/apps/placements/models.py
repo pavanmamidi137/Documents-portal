@@ -79,13 +79,14 @@ class Drive(models.Model):
 
 
 class AiUsageLog(models.Model):
-    """One row per Gemini call, so the super admin can see who uses how many
+    """One row per AI call, so the super admin can see who uses how many
     AI credits (tokens)."""
 
     class Action(models.TextChoices):
         EXTRACT = "AI_EXTRACT", "AI Extract"
         CHAT = "AI_CHAT", "AI Chat"
         ASK = "AI_ASK", "AI Ask"
+        RESUME = "AI_RESUME", "AI Resume Review"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

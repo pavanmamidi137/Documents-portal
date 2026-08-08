@@ -1093,9 +1093,13 @@ class ResumeTests(TestCase):
         resume.is_reviewed = True
         resume.reviewed_by = self.faculty
         resume.restored_at = timezone.now()
+        resume.ai_status = Resume.AiStatus.COMPLETE
+        resume.ai_score = 80
+        resume.ai_analysis = {"summary": "old"}
         resume.save()
 
-        # Replacing the file clears the review and any "Restored" badge.
+        # Replacing the file clears the review, any "Restored" badge and the
+        # old file's AI analysis (it no longer applies to the new version).
         services.upload_resume(self.student, self._resume_file("new.pdf"))
         resume.refresh_from_db()
         self.assertEqual(resume.file_name, "new.pdf")
@@ -1103,3 +1107,112 @@ class ResumeTests(TestCase):
         self.assertIsNone(resume.reviewed_by)
         self.assertIsNone(resume.reviewed_at)
         self.assertIsNone(resume.restored_at)
+        self.assertEqual(resume.ai_status, Resume.AiStatus.PENDING)
+        self.assertIsNone(resume.ai_score)
+        self.assertIsNone(resume.ai_analysis)
+        self.assertIsNone(resume.ai_match)
+
+    # -- AI resume review ----------------------------------------------------
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_student_analyzes_resume_and_gets_quality_and_drive_matches(self, mock_upload):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.placements.models import AiUsageLog, Drive
+
+        mock_upload.return_value = {
+            "secure_url": "https://storage.example/r.pdf", "public_id": "r"
+        }
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+
+        drive = Drive.objects.create(
+            company_name="TCS",
+            last_date_to_apply=timezone.localdate() + timedelta(days=5),
+            posted_by=self.admin,
+        )
+        quality = {
+            "score": 84,
+            "summary": "Solid resume with project work.",
+            "strengths": ["Python", "clear layout"],
+            "improvements": ["Add measurable results"],
+            "skills": ["Python", "SQL"],
+            "ats_keywords": ["Git"],
+        }
+        matches = {"matches": [{"drive_id": drive.id, "score": 90, "reason": "Python fits"}]}
+
+        def fake_ai(prompt, text, max_tokens=1024, usage_callback=None):
+            # Like the real client, fire the usage callback with token counts.
+            if usage_callback:
+                usage_callback(100, 40)
+            return fake_ai.responses.pop(0)
+
+        fake_ai.responses = [quality, matches]
+
+        with (
+            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python project, SQL."),
+            patch("apps.placements.resume_ai.ai_json", side_effect=fake_ai),
+        ):
+            client = self._client(self.student)
+            response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        resume.refresh_from_db()
+        self.assertEqual(resume.ai_status, Resume.AiStatus.COMPLETE)
+        self.assertEqual(resume.ai_score, 84)
+        self.assertEqual(resume.ai_analysis["skills"], ["Python", "SQL"])
+        self.assertEqual(resume.ai_match[str(drive.id)]["score"], 90)
+        self.assertEqual(resume.ai_match[str(drive.id)]["company_name"], "TCS")
+        self.assertIsNotNone(resume.ai_analyzed_at)
+        # The AI calls are tracked against the student's own credits.
+        self.assertTrue(
+            AiUsageLog.objects.filter(
+                user=self.student, action=AiUsageLog.Action.RESUME
+            ).exists()
+        )
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_cr_cannot_analyze_resumes(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        cr = User.objects.create_user(
+            roll_number="CR01", password="x", full_name="CR",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        client = self._client(cr)
+        response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 403)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_student_cannot_analyze_another_students_resume(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        other = User.objects.create_user(
+            roll_number="21IT02", password="x", full_name="Arjun",
+            branch=self.branch, section=self.section_a,
+        )
+        services.upload_resume(other, self._resume_file())
+        resume = Resume.objects.get(student=other)
+        client = self._client(self.student)
+        response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 403)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_analyze_surfaces_ai_errors_and_keeps_status(self, mock_upload):
+        from apps.placements.ai import AiError
+
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        with (
+            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python"),
+            patch("apps.placements.resume_ai.ai_json", side_effect=AiError("quota exceeded")),
+        ):
+            client = self._client(self.student)
+            response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("quota exceeded", response.data["detail"])
+        resume.refresh_from_db()
+        self.assertEqual(resume.ai_status, Resume.AiStatus.PENDING)  # unchanged on failure

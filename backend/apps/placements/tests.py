@@ -441,10 +441,10 @@ class DriveApiTests(APITestCase):
         self.assertEqual(len(mine.data["recent"]), 1)
         self.assertEqual(mine.data["recent"][0]["action_label"], "AI Chat")
 
-    def test_gemini_429_is_retried_then_succeeds(self):
+    def test_ai_429_is_retried_then_succeeds(self):
         import urllib.error
 
-        def fake_urlopen(req, timeout=45):
+        def fake_urlopen(req, timeout=60):
             # First call: transient 429. Second call: success with usage.
             if not fake_urlopen.called:
                 fake_urlopen.called = True
@@ -452,8 +452,8 @@ class DriveApiTests(APITestCase):
                     req.full_url, 429, "quota", {}, io.BytesIO(b"{}")
                 )
             payload = {
-                "candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}],
-                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5},
+                "choices": [{"message": {"role": "assistant", "content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             }
             return _FakeResponse(json.dumps(payload))
 
@@ -463,6 +463,46 @@ class DriveApiTests(APITestCase):
 
             result = ai_json("system", "user text", usage_callback=lambda p, c: None)
         self.assertEqual(result, {"ok": True})
+
+    def test_ai_json_strips_markdown_fences_from_nvidia_output(self):
+        import urllib.error
+
+        def fake_urlopen(req, timeout=60):
+            payload = {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "```json\n{\"company\": \"TCS\"}\n```"}
+                }],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+            }
+            return _FakeResponse(json.dumps(payload))
+
+        with patch("apps.placements.ai.urllib.request.urlopen", side_effect=fake_urlopen):
+            from apps.placements.ai import ai_json
+
+            self.assertEqual(ai_json("s", "u"), {"company": "TCS"})
+
+    def test_drive_my_match_comes_from_analyzed_resume(self):
+        from apps.accounts.models import Resume
+
+        drive = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
+            posted_by=self.admin,
+        )
+        resume = Resume.objects.create(
+            student=self.student, file_name="r.pdf", file_size=10,
+            cloudinary_url="https://res.cloudinary.com/x/r.pdf", public_id="resumes/x",
+        )
+        resume.ai_status = Resume.AiStatus.COMPLETE
+        resume.ai_match = {
+            str(drive.id): {"score": 82, "reason": "Java + SQL fit the role", "company_name": "TCS"}
+        }
+        resume.save()
+
+        data = self._client(self.student).get(f"/api/drives/{drive.id}/").data
+        self.assertEqual(data["my_match"]["score"], 82)
+        self.assertIn("Java", data["my_match"]["reason"])
+        # Non-students never see a personal match.
+        self.assertIsNone(self._client(self.admin).get(f"/api/drives/{drive.id}/").data["my_match"])
 
     @patch("apps.placements.views.ai_plain_text", return_value="It closed last week.")
     def test_ai_ask_works_for_expired_drives(self, mock_ai):

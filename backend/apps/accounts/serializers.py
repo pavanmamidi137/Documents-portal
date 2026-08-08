@@ -268,6 +268,8 @@ class ResumeSerializer(serializers.ModelSerializer):
             "branch_name", "section_name",
             "file_name", "file_size", "cloudinary_url",
             "is_reviewed", "reviewed_by_name", "reviewed_at",
-            "is_missing", "restored_at", "created_at", "updated_at",
+            "is_missing", "restored_at",
+            "ai_status", "ai_score", "ai_analysis", "ai_match", "ai_error",
+            "ai_analyzed_at", "created_at", "updated_at",
         ]
         read_only_fields = fields

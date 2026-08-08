@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/providers/providers";
@@ -14,9 +14,31 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "College Document Portal",
+  title: "Placify | College Documents Portal",
   description:
-    "Document management portal for colleges — upload, browse and share notes, question banks, lab manuals and more.",
+    "Placify — placement drives, documents and resumes for your college. Upload, browse and share notes, question banks, lab manuals and more.",
+  // PWA: point the browser at the manifest, icons and iOS metadata. The
+  // service worker (public/sw.js) is registered by next-pwa at runtime.
+  manifest: "/manifest.webmanifest",
+  applicationName: "Placify",
+  appleWebApp: {
+    capable: true,
+    title: "Placify",
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#f56d14",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

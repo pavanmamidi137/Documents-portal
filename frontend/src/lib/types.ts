@@ -152,6 +152,14 @@ export interface SearchResults {
   announcements: Announcement[];
 }
 
+export interface ResumeAiAnalysis {
+  summary: string;
+  strengths: string[];
+  improvements: string[];
+  skills: string[];
+  ats_keywords: string[];
+}
+
 export interface Resume {
   id: number;
   student: number;
@@ -167,6 +175,12 @@ export interface Resume {
   reviewed_at: string | null;
   is_missing: boolean;
   restored_at: string | null;
+  ai_status: "PENDING" | "COMPLETE" | "FAILED";
+  ai_score: number | null;
+  ai_analysis: ResumeAiAnalysis | null;
+  ai_match: Record<string, { score: number; reason: string; company_name: string }> | null;
+  ai_error: string;
+  ai_analyzed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -182,7 +196,8 @@ export type NotificationKind =
   | "RESUME_UPLOAD"
   | "CONTACT_ADMIN"
   | "ANNOUNCEMENT"
-  | "DRIVE";
+  | "DRIVE"
+  | "AI_RESUME";
 
 export interface Notification {
   id: number;
@@ -275,6 +290,7 @@ export interface Drive {
   status: "OPEN" | "EXPIRED";
   expires_at: string | null;
   is_eligible_for_me: boolean | null;
+  my_match: { score: number; reason: string } | null;
   created_at: string;
   updated_at: string;
 }

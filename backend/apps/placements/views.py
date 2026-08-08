@@ -72,7 +72,7 @@ def _drive_recipients():
 
 
 def _log_ai_usage(user, action):
-    """Build a usage callback that records one Gemini call's token counts."""
+    """Build a usage callback that records one AI call's token counts."""
 
     def callback(prompt_tokens: int, completion_tokens: int) -> None:
         try:
@@ -192,8 +192,21 @@ class DriveViewSet(ModelViewSet):
     pagination_class = None
     MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB cap for eligibility sheets
 
+    def get_serializer_context(self):
+        """Pre-load the student's AI match snapshot once per request so the
+        serializer never queries per drive."""
+        context = super().get_serializer_context()
+        user = self.request.user
+        resume_match = {}
+        if user and user.is_authenticated and user.is_student:
+            resume = getattr(user, "resume", None)
+            if resume and isinstance(resume.ai_match, dict):
+                resume_match = resume.ai_match
+        context["resume_match"] = resume_match
+        return context
+
     def get_throttles(self):
-        # The AI calls cost real Gemini quota - throttle them per user.
+        # The AI calls cost real API quota - throttle them per user.
         if self.action in ("ai_extract", "ai_chat", "ai_ask"):
             return [AiRateThrottle()]
         return super().get_throttles()

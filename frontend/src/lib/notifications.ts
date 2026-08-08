@@ -1,4 +1,4 @@
-import { Bell, Briefcase, FileText, Megaphone, MessageSquareText, UserRound } from "lucide-react";
+import { Bell, BrainCircuit, Briefcase, FileText, Megaphone, MessageSquareText, UserRound } from "lucide-react";
 
 export const NOTIFICATION_KIND_ICONS: Record<
   string,
@@ -9,6 +9,7 @@ export const NOTIFICATION_KIND_ICONS: Record<
   CONTACT_ADMIN: MessageSquareText,
   ANNOUNCEMENT: Megaphone,
   DRIVE: Briefcase,
+  AI_RESUME: BrainCircuit,
 };
 
 export const NOTIFICATION_KIND_COLORS: Record<string, string> = {
@@ -19,6 +20,7 @@ export const NOTIFICATION_KIND_COLORS: Record<string, string> = {
   CONTACT_ADMIN: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
   ANNOUNCEMENT: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
   DRIVE: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+  AI_RESUME: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
 };
 
 export function notificationKindIcon(

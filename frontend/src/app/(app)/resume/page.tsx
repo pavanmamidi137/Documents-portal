@@ -4,17 +4,23 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
+  BrainCircuit,
   CheckCircle2,
   Clock,
   Eye,
   FileText,
   FileUp,
+  Lightbulb,
+  ListChecks,
   Loader2,
   RefreshCw,
   RotateCcw,
   Send,
+  Sparkles,
+  Star,
   Trash2,
   TriangleAlert,
+  TrendingUp,
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -31,12 +37,235 @@ import { formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 
 const ACCEPTED = ".pdf,.doc,.docx";
 
+function scoreTone(score: number) {
+  if (score >= 70) return "text-emerald-600 dark:text-emerald-400";
+  if (score >= 45) return "text-amber-600 dark:text-amber-400";
+  return "text-rose-600 dark:text-rose-400";
+}
+
+function scoreRing(score: number) {
+  if (score >= 70) return "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+  if (score >= 45) return "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400";
+  return "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400";
+}
+
+function AiReviewCard({
+  resume,
+  analyzing,
+  onAnalyze,
+}: {
+  resume: Resume;
+  analyzing: boolean;
+  onAnalyze: () => void;
+}) {
+  const analysis = resume.ai_analysis;
+  const matches = resume.ai_match
+    ? Object.values(resume.ai_match)
+        .filter((m) => typeof m.score === "number")
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3)
+    : [];
+
+  if (resume.ai_status === "PENDING") {
+    return (
+      <Card className="border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-transparent">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BrainCircuit className="size-5 text-violet-500" /> AI Resume Review
+          </CardTitle>
+          <CardDescription>
+            {analyzing
+              ? "Analyzing your resume — this takes a few seconds."
+              : resume.is_reviewed
+                ? "Faculty reviewed your resume — run the AI review for a quality score and drive matches."
+                : "Get a quality score and see which open drives match you best."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {analyzing ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin text-violet-500" /> Analyzing your resume…
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-muted-foreground">
+                {resume.is_reviewed
+                  ? "The review takes a few seconds and uses your AI credits."
+                  : "Once faculty review your resume this runs automatically. You can also run it now to see your drive match chances early."}
+              </p>
+              <Button onClick={onAnalyze} variant="outline">
+                <Sparkles className="size-4" /> Analyze with AI
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (resume.ai_status === "FAILED") {
+    return (
+      <Card className="border-destructive/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TriangleAlert className="size-5 text-destructive" /> AI Resume Review
+          </CardTitle>
+          <CardDescription>The analysis could not be completed.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            {resume.ai_error || "The AI service did not respond. Please try again."}
+          </p>
+          <Button onClick={onAnalyze} disabled={analyzing} className="mt-4">
+            {analyzing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Try Again
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!analysis) return null;
+
+  return (
+    <Card className="border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-transparent">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BrainCircuit className="size-5 text-violet-500" /> AI Resume Review
+        </CardTitle>
+        <CardDescription>
+          {resume.is_reviewed
+            ? `Reviewed by ${resume.reviewed_by_name ?? "faculty"} — here's what the AI found.`
+            : "Based on your resume, here's what the AI found."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* Score + summary */}
+        <div className="flex items-start gap-4">
+          <div
+            className={`flex size-16 shrink-0 flex-col items-center justify-center rounded-2xl border ${scoreRing(resume.ai_score ?? 0)}`}
+          >
+            <span className={`text-2xl font-bold tabular-nums ${scoreTone(resume.ai_score ?? 0)}`}>
+              {resume.ai_score ?? 0}
+            </span>
+            <span className="text-[9px] font-semibold tracking-widest text-muted-foreground uppercase">
+              /100
+            </span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">Resume quality score</p>
+            <p className="mt-1 text-sm text-muted-foreground">{analysis.summary}</p>
+          </div>
+        </div>
+
+        {/* Strengths / improvements */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {analysis.strengths.length > 0 && (
+            <div className="rounded-xl border bg-card/60 p-3">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                <Star className="size-3.5" /> Strengths
+              </p>
+              <ul className="space-y-1.5">
+                {analysis.strengths.map((s, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-500" /> {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {analysis.improvements.length > 0 && (
+            <div className="rounded-xl border bg-card/60 p-3">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                <Lightbulb className="size-3.5" /> Improve this
+              </p>
+              <ul className="space-y-1.5">
+                {analysis.improvements.map((s, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <Lightbulb className="mt-0.5 size-3 shrink-0 text-amber-500" /> {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Skills + missing ATS keywords */}
+        {analysis.skills.length > 0 && (
+          <div>
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <ListChecks className="size-3.5" /> Skills found
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {analysis.skills.map((s, i) => (
+                <Badge key={i} variant="outline" className="text-[11px]">
+                  {s}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+        {analysis.ats_keywords.length > 0 && (
+          <div>
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Sparkles className="size-3.5" /> Missing keywords to add (ATS)
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {analysis.ats_keywords.map((s, i) => (
+                <Badge key={i} variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 text-[11px] dark:text-amber-400">
+                  + {s}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Best matching drives */}
+        {matches.length > 0 && (
+          <div>
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <TrendingUp className="size-3.5" /> Your best drive matches
+            </p>
+            <div className="space-y-2">
+              {matches.map((m, i) => (
+                <div key={i} className="flex items-center gap-3 rounded-xl border bg-card/60 p-3">
+                  <span
+                    className={`flex size-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${scoreRing(m.score)}`}
+                  >
+                    {m.score}%
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{m.company_name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{m.reason}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-3 border-t pt-3">
+          <p className="text-[11px] text-muted-foreground">
+            {resume.ai_analyzed_at ? `Analyzed ${formatDate(resume.ai_analyzed_at)}` : ""} · uses your AI credits
+          </p>
+          <Button onClick={onAnalyze} disabled={analyzing} size="sm" variant="outline">
+            {analyzing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            Re-run
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function ResumePage() {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const autoRanRef = useRef(false);
 
   const { data: resume, isLoading } = useQuery({
     queryKey: ["resume", "mine"],
@@ -44,6 +273,36 @@ export default function ResumePage() {
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["resume"] });
+
+  const analyze = async () => {
+    if (!resume || analyzing) return;
+    setAnalyzing(true);
+    try {
+      const updated = await http.post<Resume>(`/resumes/${resume.id}/analyze/`, {});
+      queryClient.setQueryData(["resume", "mine"], updated);
+      invalidate();
+      if (updated.ai_status === "COMPLETE") {
+        toast.success("Resume AI review complete — check your score and drive matches.");
+      } else if (updated.ai_error) {
+        toast.error(updated.ai_error);
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  // Once faculty mark the resume as reviewed, run the AI review automatically
+  // so the quality report is ready when the student checks. Runs once.
+  useEffect(() => {
+    if (!resume || resume.is_missing) return;
+    if (resume.is_reviewed && resume.ai_status === "PENDING" && !autoRanRef.current) {
+      autoRanRef.current = true;
+      void analyze();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resume?.id, resume?.is_reviewed, resume?.ai_status]);
 
   // Live-check the stored file against Cloudinary once per page load, so a
   // resume deleted directly in Cloudinary shows the re-upload prompt instantly
@@ -270,6 +529,12 @@ export default function ResumePage() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {resume && !resume.is_missing && (
+          <div className="mt-6">
+            <AiReviewCard resume={resume} analyzing={analyzing} onAnalyze={analyze} />
+          </div>
         )}
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
