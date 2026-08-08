@@ -139,6 +139,24 @@ def delete_document_file(public_id: str) -> bool:
         return False
 
 
+def signed_raw_url(public_id: str, attachment: bool = False) -> str:
+    """Cloudinary delivery URL for a raw file, signed with the API secret.
+
+    Some accounts restrict anonymous delivery ("Signed URLs" security setting
+    or an access-control rule), which makes plain raw URLs return HTTP 401
+    "deny or ACL failure" - the browser then shows "Failed to load PDF
+    document". A signed URL is accepted by Cloudinary in that mode and is
+    still harmless when delivery is unrestricted.
+    """
+    from cloudinary.utils import cloudinary_url
+
+    options = {"resource_type": "raw", "sign_url": True}
+    if attachment:
+        options["flags"] = "attachment"
+    url, _ = cloudinary_url(public_id, **options)
+    return url
+
+
 def create_document(data: dict, document_file, actor, request=None):
     """Upload the document once and create one record per target section.
 

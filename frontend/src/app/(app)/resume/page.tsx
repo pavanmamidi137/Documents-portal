@@ -169,9 +169,8 @@ export default function ResumePage() {
                 <Button
                   variant="outline"
                   onClick={async () => {
-                    if (!(await openResumeInNewTab(resume))) {
-                      toast.error("Could not load the resume file. Please try again.");
-                    }
+                    const err = await openResumeInNewTab(resume);
+                    if (err) toast.error(err);
                   }}
                 >
                   <Eye className="size-4" /> Preview

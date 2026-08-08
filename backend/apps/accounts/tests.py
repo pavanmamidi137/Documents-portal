@@ -1,4 +1,5 @@
 import io
+import urllib.error
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -711,6 +712,39 @@ class ResumeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertEqual(response.content, b"%PDF-1.4 hello")
+        # The file is fetched through a SIGNED Cloudinary URL so accounts with
+        # restricted delivery (the 401 cause) accept the request. The SDK uses
+        # either the short (s--...) or long (sig=...) signature format.
+        signed_url = mock_open.call_args[0][0]
+        self.assertTrue("s--" in signed_url or "sig=" in signed_url, signed_url)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_preview_download_forces_attachment(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "https://storage.example/r.pdf", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 hi"
+            client = self._client(self.faculty)
+            response = client.get(f"/api/resumes/{resume.id}/preview/?download=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment", response["Content-Disposition"])
+        signed_url = mock_open.call_args[0][0]
+        self.assertTrue("s--" in signed_url or "sig=" in signed_url, signed_url)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_preview_surfaces_cloudinary_block(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "https://storage.example/r.pdf", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.side_effect = urllib.error.HTTPError(
+                "https://x", 401, "Unauthorized", hdrs=None, fp=None
+            )
+            client = self._client(self.faculty)
+            response = client.get(f"/api/resumes/{resume.id}/preview/")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Cloudinary", str(response.data))
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_student_previews_own_resume(self, mock_upload):

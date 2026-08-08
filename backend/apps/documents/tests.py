@@ -179,8 +179,15 @@ class DocumentApiTests(TestCase):
         # Folder passed to Cloudinary matches the required structure.
         folder = mock_upload.call_args.kwargs["folder"]
         self.assertEqual(folder, "documents/cse/a/3-1/notes/dbms")
-        # download_url forces attachment
+        # download_url forces attachment and is signed (restricted delivery safe)
         self.assertIn("fl_attachment", doc.download_url)
+        # The SDK signs with either the short (s--...) or long (sig=...) format.
+        self.assertTrue("s--" in doc.download_url or "sig=" in doc.download_url, doc.download_url)
+        # The API exposes a signed cloudinary_url so previews work too.
+        self.assertTrue(
+            "s--" in response.data["cloudinary_url"] or "sig=" in response.data["cloudinary_url"],
+            response.data["cloudinary_url"],
+        )
 
         # Deleting removes the Cloudinary file, then the record.
         delete_resp = client.delete(f"/api/documents/{doc.id}/")

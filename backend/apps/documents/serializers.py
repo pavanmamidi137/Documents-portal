@@ -12,6 +12,14 @@ class DocumentListSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     subject_name = serializers.CharField(source="subject.name", read_only=True)
     uploaded_by_name = serializers.CharField(source="uploaded_by.full_name", read_only=True, default=None)
+    # Signed delivery URL - plain raw Cloudinary URLs return HTTP 401 for
+    # accounts with restricted delivery (signed URLs / ACL).
+    cloudinary_url = serializers.SerializerMethodField()
+
+    def get_cloudinary_url(self, obj) -> str:
+        from .services import signed_raw_url
+
+        return signed_raw_url(obj.public_id)
 
     class Meta:
         model = Document

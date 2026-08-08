@@ -63,8 +63,14 @@ class Document(models.Model):
 
     @property
     def download_url(self) -> str:
-        """Cloudinary URL flagged to force browser download."""
-        return self.cloudinary_url.replace("/raw/upload/", "/raw/upload/fl_attachment/", 1)
+        """Signed Cloudinary URL flagged to force a browser download.
+
+        Signed so restricted-delivery accounts (signed URLs / ACL) accept it -
+        plain raw URLs return HTTP 401 for those accounts.
+        """
+        from .services import signed_raw_url
+
+        return signed_raw_url(self.public_id, attachment=True)
 
 
 class DocumentShareRequest(models.Model):

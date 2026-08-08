@@ -3,6 +3,7 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 
 import type { Resume } from "@/lib/types";
+import { getErrorMessage } from "@/lib/utils";
 
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -121,16 +122,16 @@ export const http = {
  * built-in viewer fail with "Failed to load PDF document".
  * Returns false when the preview could not be loaded.
  */
-export async function openResumeInNewTab(resume: { id: number }): Promise<boolean> {
+export async function openResumeInNewTab(resume: { id: number }): Promise<string | null> {
   try {
     const blob = await http.blob(`/resumes/${resume.id}/preview/`);
     const url = URL.createObjectURL(blob);
     window.open(url, "_blank", "noopener");
     // Never revoked: the PDF viewer may lazy-fetch ranges while the tab is
     // open, and files are capped at 10MB so memory cost is negligible.
-    return true;
-  } catch {
-    return false;
+    return null;
+  } catch (error) {
+    return getErrorMessage(error);
   }
 }
 

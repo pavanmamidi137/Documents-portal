@@ -257,9 +257,12 @@ class DocumentViewSet(viewsets.ModelViewSet):
         document.refresh_from_db(fields=["downloads"])
         log_audit(request.user, "DOCUMENT_DOWNLOAD", "Document", document.id,
                   {"title": document.title}, request)
+        from .services import signed_raw_url
+
         return Response({
             "download_url": document.download_url,
-            "cloudinary_url": document.cloudinary_url,
+            # Signed so previews work even on restricted-delivery accounts.
+            "cloudinary_url": signed_raw_url(document.public_id),
         })
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])

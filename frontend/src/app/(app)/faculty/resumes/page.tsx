@@ -147,16 +147,9 @@ export default function FacultyResumesPage() {
 
   const handleDownload = async (resume: Resume) => {
     try {
-      // Cloudinary attachment URL forces a download of the file.
-      const url = resume.cloudinary_url.replace("/raw/upload/", "/raw/upload/fl_attachment/");
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = resume.file_name;
-      anchor.target = "_blank";
-      anchor.rel = "noopener noreferrer";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      // Stream through the portal (auth + signed Cloudinary fetch), forcing a
+      // browser download - direct Cloudinary URLs 401 on restricted accounts.
+      await http.download(`/resumes/${resume.id}/preview/?download=1`, undefined, resume.file_name);
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -242,9 +235,8 @@ export default function FacultyResumesPage() {
             aria-label={`Preview ${r.student_name}'s resume`}
             onClick={() =>
               viewResume(r, async (res) => {
-                if (!(await openResumeInNewTab(res))) {
-                  toast.error("Could not load the resume file. Please try again.");
-                }
+                const err = await openResumeInNewTab(res);
+                if (err) toast.error(err);
               })
             }
           >

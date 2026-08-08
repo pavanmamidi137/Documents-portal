@@ -1,3 +1,4 @@
+import urllib.error
 import urllib.request
 
 from django.db.models import Q
@@ -475,27 +476,41 @@ class ResumeViewSet(viewsets.ModelViewSet):
     def preview(self, request, pk=None):
         """Stream the resume file with correct headers so the browser can render it.
 
-        Cloudinary serves raw uploads with an octet-stream content type, which
-        makes the browser's PDF viewer fail with "Failed to load PDF document".
-        Streaming the bytes through this endpoint fixes the preview for every
+        Cloudinary may restrict anonymous delivery (signed URLs / ACL), which
+        makes plain raw URLs return HTTP 401 and the browser's PDF viewer show
+        "Failed to load PDF document". Fetching through a signed delivery URL
+        and streaming with the right headers fixes the preview for every
         browser while keeping the file behind the portal's authentication.
         """
-        resume = self.get_object()
+        # Fetch the resume without the list filters (search/branch/section query
+        # params must not affect a detail lookup), then apply scope manually.
+        resume = Resume.objects.select_related(
+            "student", "student__branch", "student__section"
+        ).filter(pk=pk).first()
+        if not resume:
+            raise NotFound("Resume not found.")
         user = request.user
-        # Students may only preview their own resume; faculty are already
-        # scoped to their branch by get_queryset().
+        if user.is_faculty and user.branch_id and resume.student.branch_id != user.branch_id:
+            raise NotFound("Resume not found.")
         if user.is_student and resume.student_id != user.id:
             raise PermissionDenied("You can only preview your own resume.")
-        # Only fetch https URLs (values are Cloudinary-sourced, but cheap to enforce).
-        if not resume.cloudinary_url.lower().startswith("https://"):
-            raise NotFound("The resume file URL is invalid.")
         try:
-            with urllib.request.urlopen(resume.cloudinary_url, timeout=30) as resp:
+            from apps.documents.services import signed_raw_url
+
+            with urllib.request.urlopen(signed_raw_url(resume.public_id), timeout=30) as resp:
                 content = resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                raise ValidationError(
+                    {"file": "Cloudinary is blocking file delivery. Enable 'Allow delivery of PDF and ZIP files' in the Cloudinary Security settings (Settings > Security), then try again."}
+                )
+            raise NotFound("Could not load the resume file from storage.")
         except Exception:
             raise NotFound("Could not load the resume file from storage.")
+        download = request.query_params.get("download", "").lower() in ("1", "true", "yes")
+        disposition = "attachment" if download else "inline"
         response = HttpResponse(
             content, content_type=_resume_content_type(resume.file_name)
         )
-        response["Content-Disposition"] = f'inline; filename="{resume.file_name}"'
+        response["Content-Disposition"] = f'{disposition}; filename="{resume.file_name}"'
         return response
