@@ -21,6 +21,7 @@ from apps.core.utils import log_audit, notify
 
 from .ai import AiError, ai_json, ai_plain_text
 from .models import AiUsageLog, Drive
+from .resume_ai import maybe_refresh_drive_matches
 from .serializers import DriveSerializer
 
 User = get_user_model()
@@ -505,6 +506,13 @@ class DriveViewSet(ModelViewSet):
             _drive_preview(instance),
             "/placements",
         )
+        # Refresh the AI match for this new drive across already-analyzed
+        # resumes (background, best-effort) so students see their match score
+        # without re-running anything - never blocks the drive post.
+        try:
+            maybe_refresh_drive_matches(instance, self.request.user)
+        except Exception:  # pragma: no cover - the post must always succeed
+            pass
 
     def perform_update(self, serializer):
         instance = serializer.save()

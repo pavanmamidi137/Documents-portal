@@ -9,12 +9,14 @@ students can see which drives give them the best chance.
 
 import html
 import io
+import os
 import re
 import zipfile
+import threading
 
 from django.utils import timezone
 
-from .ai import AiError, ai_json
+from .ai import AiError, ai_json, get_api_key
 from .models import AiUsageLog, Drive
 
 # Cap the resume text sent to the model - resumes are short, so this keeps the
@@ -99,6 +101,234 @@ def extract_resume_text(resume) -> str:
     except Exception:
         return ""
     return ""
+
+
+def _drive_brief(drive) -> str:
+    """One-line summary of a drive for the match prompt."""
+    return (
+        f"- id {drive.id}: {drive.company_name} ({drive.role or 'role not mentioned'}, "
+        f"{drive.package or 'package not mentioned'}). Eligibility: "
+        f"{drive.eligibility or 'not mentioned'}. Eligible rolls: "
+        f"{drive.eligible_roll_numbers or 'not listed'}"
+    )
+
+
+def _resume_brief(resume) -> str:
+    """Short resume description built from the stored analysis (no file fetch)."""
+    analysis = resume.ai_analysis or {}
+    parts = [str(analysis.get("summary") or "")]
+    skills = analysis.get("skills") or []
+    if skills:
+        parts.append("Skills: " + ", ".join(str(s) for s in skills))
+    return " ".join(p for p in parts if p).strip() or "(no extractable text)"
+
+
+def refresh_matches_for_drive(drive, actor=None, limit=None) -> int:
+    """Compute the AI match for one drive across already-analyzed resumes.
+
+    Called automatically when a drive is posted (best-effort, in a background
+    thread) so every analyzed resume picks up the new drive's match score
+    without the student having to re-run anything. Only resumes whose analysis
+    is COMPLETE are updated - the quality report is resume-only and unaffected
+    by new drives. Uses the stored skills/summary (no PDF download) and one
+    small LLM call per resume, capped by AI_REFRESH_BATCH_SIZE.
+    Returns the number of resumes updated.
+    """
+    from apps.accounts.models import Resume
+
+    if limit is None:
+        limit = int(os.environ.get("AI_REFRESH_BATCH_SIZE", "150"))
+    try:
+        get_api_key()  # skip the whole refresh when no key is configured
+    except AiError:
+        return 0
+
+    resumes = list(
+        Resume.objects.filter(
+            ai_status=Resume.AiStatus.COMPLETE,
+            is_missing=False,
+        ).order_by("-updated_at")[:limit]
+    )
+    if not resumes:
+        return 0
+
+    usage = _usage_callback(actor) if actor else None
+
+    updated = 0
+    for resume in resumes:
+        try:
+            match = ai_json(
+                _MATCH_PROMPT.format(
+                    resume_brief=_resume_brief(resume)[:4000],
+                    drives=_drive_brief(drive),
+                ),
+                "Score this resume against this drive.", max_tokens=400,
+                usage_callback=usage,
+            )
+        except AiError:
+            continue  # best-effort - one failure doesn't stop the refresh
+        entries = match.get("matches") if isinstance(match, dict) else None
+        if not isinstance(entries, list) or not entries:
+            continue
+        entry = entries[0] if isinstance(entries[0], dict) else {}
+        # We explicitly asked about THIS drive - never trust the AI's own id.
+        current = dict(resume.ai_match or {})
+        current[str(drive.id)] = {
+            "score": _clamp_score(entry.get("score")),
+            "reason": str(entry.get("reason") or "").strip()[:300],
+            "company_name": drive.company_name,
+        }
+        # Only the match snapshot changes - leave updated_at/analyzed_at alone
+        # so the resume doesn't look freshly submitted to faculty.
+        Resume.objects.filter(pk=resume.pk).update(ai_match=current)
+        updated += 1
+    return updated
+
+
+def _budget_exhausted() -> bool:
+    """True when the admin set a monthly AI budget and it is already spent.
+
+    The budget key lives in views.py (_AI_BUDGET_KEY) - duplicated here with
+    a comment so the auto-refresh can avoid burning quota past the cap.
+    """
+    from django.db.models import Sum
+
+    from apps.core.models import SiteSetting
+
+    try:
+        setting = SiteSetting.objects.filter(key="ai_monthly_budget_tokens").first()
+        if not setting:
+            return False
+        budget = max(0, int(str(setting.value) or 0))
+        if budget <= 0:
+            return False
+        totals = AiUsageLog.objects.aggregate(
+            prompt=Sum("prompt_tokens"), completion=Sum("completion_tokens")
+        )
+        used = int(totals["prompt"] or 0) + int(totals["completion"] or 0)
+        return used >= budget
+    except Exception:  # pragma: no cover - budget checks must never crash the post
+        return False
+
+
+def _refresh_actor(poster):
+    """System-triggered refreshes charge the college's admin, not the poster,
+    so a CR posting a drive doesn't drain their personal AI credits."""
+    try:
+        from apps.accounts.models import User
+
+        admin = (
+            User.objects.filter(role=User.Role.SUPER_ADMIN, is_active=True)
+            .order_by("id")
+            .first()
+        )
+        return admin or poster
+    except Exception:  # pragma: no cover
+        return poster
+
+
+def _refresh_in_thread(drive, actor):
+    try:
+        refresh_matches_for_drive(drive, actor)
+    except Exception:  # pragma: no cover - background work must never crash
+        pass
+
+
+def refresh_all_matches(actor=None, limit=None) -> int:
+    """Recompute every analyzed resume's ai_match across all open drives.
+
+    One LLM call per resume (cheaper than one call per drive). Used by the
+    refresh_drive_matches management command for manual catch-ups.
+    """
+    from apps.accounts.models import Resume
+
+    if limit is None:
+        limit = int(os.environ.get("AI_REFRESH_BATCH_SIZE", "150"))
+    try:
+        get_api_key()
+    except AiError:
+        return 0
+
+    resumes = list(
+        Resume.objects.filter(
+            ai_status=Resume.AiStatus.COMPLETE,
+            is_missing=False,
+        ).order_by("-updated_at")[:limit]
+    )
+    open_drives = list(
+        Drive.objects.filter(
+            last_date_to_apply__gte=timezone.localdate()
+        ).order_by("-created_at")[:20]
+    )
+    if not resumes or not open_drives:
+        return 0
+
+    usage = _usage_callback(actor) if actor else None
+    drives_brief = "\n".join(_drive_brief(d) for d in open_drives)
+    by_id = {d.id: d for d in open_drives}
+    updated = 0
+
+    for resume in resumes:
+        try:
+            match = ai_json(
+                _MATCH_PROMPT.format(
+                    resume_brief=_resume_brief(resume)[:4000], drives=drives_brief
+                ),
+                "Score this resume against each drive.", max_tokens=1600,
+                usage_callback=usage,
+            )
+        except AiError:
+            continue
+        entries = match.get("matches") if isinstance(match, dict) else None
+        if not isinstance(entries, list):
+            continue
+        new_map = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                drive_id = int(entry.get("drive_id"))
+            except (TypeError, ValueError):
+                continue
+            drive = by_id.get(drive_id)
+            if drive is None:
+                continue
+            new_map[str(drive_id)] = {
+                "score": _clamp_score(entry.get("score")),
+                "reason": str(entry.get("reason") or "").strip()[:300],
+                "company_name": drive.company_name,
+            }
+        Resume.objects.filter(pk=resume.pk).update(ai_match=new_map or None)
+        updated += 1
+    return updated
+
+
+def maybe_refresh_drive_matches(drive, actor=None):
+    """Kick off the automatic match refresh after a drive is posted.
+
+    Returns immediately when nothing is analyzed (so most requests and tests
+    never touch threads or the LLM), when the admin's monthly AI budget is
+    already exhausted, or when no AI key is configured. The actual LLM work
+    runs in a daemon thread so the drive-post response stays instant.
+    """
+    from apps.accounts.models import Resume
+
+    try:
+        if _budget_exhausted():
+            return 0
+        if not Resume.objects.filter(
+            ai_status=Resume.AiStatus.COMPLETE, is_missing=False
+        ).exists():
+            return 0
+    except Exception:  # pragma: no cover - never break the drive post
+        return 0
+    try:
+        threading.Thread(
+            target=_refresh_in_thread, args=(drive, _refresh_actor(actor)), daemon=True
+        ).start()
+        return 1
+    except Exception:  # pragma: no cover
+        return 0
 
 
 def _clamp_score(value) -> int:

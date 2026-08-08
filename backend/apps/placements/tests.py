@@ -202,6 +202,70 @@ class DriveApiTests(APITestCase):
         # Only new posts notify - edits must not spam every student.
         self.assertEqual(Notification.objects.filter(kind=Notification.Kind.DRIVE).count(), 0)
 
+    # ---- Auto match refresh when a drive is posted ----
+
+    @patch("apps.placements.views.maybe_refresh_drive_matches")
+    def test_new_drive_triggers_auto_match_refresh(self, mock_refresh):
+        response = self._client(self.faculty).post(
+            "/api/drives/", self._payload(), format="json"
+        )
+        self.assertEqual(response.status_code, 201)
+        drive = Drive.objects.get(company_name="TCS")
+        mock_refresh.assert_called_once()
+        self.assertEqual(mock_refresh.call_args.args[0].id, drive.id)
+        self.assertEqual(mock_refresh.call_args.args[1], self.faculty)
+
+    def test_refresh_matches_for_new_drive_updates_only_analyzed_resumes(self):
+        from apps.accounts.models import Resume
+        from apps.placements.resume_ai import refresh_matches_for_drive
+
+        resume = Resume.objects.create(
+            student=self.student, file_name="r.pdf", file_size=10,
+            cloudinary_url="https://x/r.pdf", public_id="r",
+            ai_status=Resume.AiStatus.COMPLETE, ai_score=70,
+            ai_analysis={"summary": "Python developer", "skills": ["Python", "SQL"]},
+        )
+        # An unanalyzed resume must be left untouched.
+        Resume.objects.create(
+            student=self.student2, file_name="r2.pdf", file_size=10,
+            cloudinary_url="https://x/r2.pdf", public_id="r2",
+        )
+        drive = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
+            posted_by=self.admin,
+        )
+
+        def fake_match(prompt, text, max_tokens=1024, usage_callback=None):
+            if usage_callback:
+                usage_callback(30, 10)
+            return {"matches": [{"drive_id": drive.id, "score": 88, "reason": "Python fits"}]}
+
+        with (
+            patch("apps.placements.resume_ai.ai_json", side_effect=fake_match),
+            patch("apps.placements.resume_ai.get_api_key", return_value="test-key"),
+        ):
+            updated = refresh_matches_for_drive(drive, self.admin)
+        self.assertEqual(updated, 1)
+        resume.refresh_from_db()
+        entry = resume.ai_match[str(drive.id)]
+        self.assertEqual(entry["score"], 88)
+        self.assertEqual(entry["reason"], "Python fits")
+        self.assertEqual(entry["company_name"], "TCS")
+        self.assertIsNone(Resume.objects.get(student=self.student2).ai_match)
+
+    def test_refresh_drive_matches_command_runs_for_analyzed_resumes(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        with patch(
+            "apps.placements.resume_ai.refresh_all_matches", return_value=2
+        ) as mock_refresh:
+            call_command("refresh_drive_matches", stdout=StringIO())
+        mock_refresh.assert_called_once()
+        # The command charges the college's admin, not an individual poster.
+        self.assertEqual(mock_refresh.call_args.args[0], self.admin)
+
     # ---- AI helpers ----
 
     @patch("apps.placements.views.ai_json", return_value={"company_name": "TCS", "package": "7 LPA"})
