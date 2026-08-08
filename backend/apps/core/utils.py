@@ -54,6 +54,32 @@ def csv_response(filename: str, headers: list[str], rows: list[list]) -> HttpRes
     return response
 
 
+def build_zip_response(files: list[tuple[str, bytes]], filename: str) -> HttpResponse:
+    """Bundle files into an in-memory ZIP download response.
+
+    Duplicate file names get a numeric suffix so every entry stays unique.
+    """
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        used: set[str] = set()
+        for raw_name, data in files:
+            safe = raw_name.replace("\\", "/").rsplit("/", 1)[-1].strip() or "file"
+            base, count, name = safe, 1, safe
+            while name.lower() in used:
+                stem, _, ext = base.rpartition(".")
+                name = f"{stem}-{count}.{ext}" if ext else f"{base}-{count}"
+                count += 1
+            used.add(name.lower())
+            zf.writestr(name, data)
+    buffer.seek(0)
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
 def slugify(value: str) -> str:
     """URL/Cloudinary-folder-safe slug."""
     value = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")

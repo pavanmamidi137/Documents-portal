@@ -60,6 +60,18 @@ interface RetriableConfig extends InternalAxiosRequestConfig {
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
+    // Blob requests (previews/downloads) receive error bodies as Blobs, which
+    // callers can't read - parse the JSON so they can show the real message
+    // instead of a generic "Request failed.".
+    if (typeof Blob !== "undefined" && error.response?.data instanceof Blob) {
+      try {
+        const text = await error.response.data.text();
+        const parsed: unknown = text ? JSON.parse(text) : null;
+        if (parsed !== null) error.response.data = parsed;
+      } catch {
+        // Not JSON (e.g. an HTML error page) - leave the Blob as-is.
+      }
+    }
     const original = error.config as RetriableConfig | undefined;
     const url = original?.url ?? "";
     const isAuthRoute = url.includes("/auth/login") || url.includes("/auth/refresh");

@@ -21,7 +21,7 @@ from apps.core.permissions import (
     IsSuperAdminOrFaculty,
 )
 from apps.core.throttles import LoginRateThrottle
-from apps.core.utils import csv_response, log_audit
+from apps.core.utils import build_zip_response, csv_response, log_audit
 
 from .models import Resume, User
 from .serializers import (
@@ -366,7 +366,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
         # Students manage their own resume; faculty/admins browse the list.
         if self.action in ("create", "mine"):
             return [IsStudent()]
-        if self.action in ("list", "mark_reviewed", "mark_all_reviewed"):
+        if self.action in ("list", "mark_reviewed", "mark_all_reviewed", "download_zip"):
             return [IsSuperAdminOrFaculty()]
         # destroy/preview: ownership is checked in the body (owner student or admin).
         return [IsAuthenticated()]
@@ -447,6 +447,41 @@ class ResumeViewSet(viewsets.ModelViewSet):
             request,
         )
         return Response(ResumeSerializer(resume).data)
+
+    @action(detail=False, methods=["get"])
+    def download_zip(self, request):
+        """Faculty/admins download every resume in the filtered view as one ZIP.
+
+        Branch-scoped for faculty (same queryset as the list). Files are
+        fetched via signed Cloudinary URLs; capped at 100 files / 150MB.
+        """
+        import urllib.request
+
+        from apps.documents.services import signed_raw_url
+
+        max_files = 100
+        max_bytes = 150 * 1024 * 1024
+        files: list[tuple[str, bytes]] = []
+        skipped = 0
+        total = 0
+        for resume in self.get_queryset()[:max_files]:
+            try:
+                with urllib.request.urlopen(signed_raw_url(resume.public_id), timeout=10) as resp:
+                    data = resp.read()
+                if total + len(data) > max_bytes:
+                    skipped += 1
+                    continue
+                files.append((resume.file_name, data))
+                total += len(data)
+            except Exception:
+                skipped += 1
+        if not files:
+            raise ValidationError({
+                "detail": "No resumes could be downloaded. Check the Cloudinary 'Allow delivery of PDF and ZIP files' setting (Settings > Security)."
+            })
+        log_audit(request.user, "ZIP_DOWNLOAD", "Resume", "",
+                  {"count": len(files), "skipped": skipped}, request)
+        return build_zip_response(files, "resumes.zip")
 
     @action(detail=False, methods=["post"])
     def mark_all_reviewed(self, request):

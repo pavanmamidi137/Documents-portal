@@ -1,3 +1,4 @@
+import urllib.error
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -355,6 +356,86 @@ class DocumentApiTests(TestCase):
         self.assertEqual(req.status, "PENDING")
         self.assertIn("share_requests", response.data)
         mock_upload.assert_called_once()
+
+
+@patch("apps.documents.services.cloudinary.api.delete_resources")
+class DocumentZipTests(TestCase):
+    """ZIP export of the filtered document list (Cloudinary fetch mocked)."""
+
+    def setUp(self):
+        import io
+        import zipfile
+
+        self.zipfile, self.io = zipfile, io
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.semester = Semester.objects.create(name="3-1", order=5)
+        self.category = Category.objects.create(name="Notes")
+        self.subject = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.semester, branch=self.branch
+        )
+        self.subject_other = Subject.objects.create(
+            name="Python", code="CS101", semester=self.semester, branch=self.branch
+        )
+        self.doc_a = Document.objects.create(
+            title="DBMS Unit 1", description="",
+            file_name="dbms.pdf", file_size=1024,
+            cloudinary_url="https://x.example/dbms.pdf",
+            public_id="documents/cse/a/3-1/notes/dbms/dbms123",
+            branch=self.branch, section=self.section_a,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.admin,
+        )
+        self.doc_b = Document.objects.create(
+            title="Python Unit 1", description="",
+            file_name="python.pdf", file_size=1024,
+            cloudinary_url="https://x.example/python.pdf",
+            public_id="documents/cse/b/3-1/notes/dbms/python123",
+            branch=self.branch, section=self.section_b,
+            semester=self.semester, category=self.category,
+            subject=self.subject_other, uploaded_by=self.admin,
+        )
+
+    def _client(self):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(self.admin)}")
+        return client
+
+    def _names(self, response) -> list[str]:
+        with self.zipfile.ZipFile(self.io.BytesIO(response.content)) as zf:
+            return zf.namelist()
+
+    def test_download_zip_bundles_filtered_documents(self, mock_delete):
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 data"
+            response = self._client().get("/api/documents/download_zip/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        self.assertEqual(sorted(self._names(response)), ["dbms.pdf", "python.pdf"])
+
+    def test_download_zip_respects_subject_filter(self, mock_delete):
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 data"
+            response = self._client().get(
+                "/api/documents/download_zip/?subject=%d" % self.subject.id
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._names(response), ["dbms.pdf"])
+
+    def test_download_zip_surfaces_cloudinary_block(self, mock_delete):
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.side_effect = urllib.error.HTTPError(
+                "https://x", 401, "Unauthorized", hdrs=None, fp=None
+            )
+            response = self._client().get("/api/documents/download_zip/")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Cloudinary", str(response.data))
 
 
 @patch("apps.documents.services.cloudinary.api.delete_resources")

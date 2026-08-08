@@ -822,6 +822,63 @@ class ResumeTests(TestCase):
         response = client.post("/api/resumes/mark_all_reviewed/", {}, format="json")
         self.assertEqual(response.status_code, 403)
 
+    # -- ZIP download ---------------------------------------------------------
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_faculty_downloads_branch_resumes_zip(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file("diya.pdf"))
+        sec_b = User.objects.create_user(
+            roll_number="21IT03", password="x", full_name="Bhavya",
+            branch=self.branch, section=self.section_b,
+        )
+        services.upload_resume(sec_b, self._resume_file("bhavya.pdf"))
+        other = User.objects.create_user(
+            roll_number="22CSE01", password="x", full_name="Ravi",
+            branch=self.other_branch, section=self.other_section,
+        )
+        services.upload_resume(other, self._resume_file("ravi.pdf"))
+
+        import io
+        import zipfile
+
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 x"
+            client = self._client(self.faculty)
+            response = client.get("/api/resumes/download_zip/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            self.assertEqual(sorted(zf.namelist()), ["bhavya.pdf", "diya.pdf"])
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_zip_respects_section_filter(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file("diya.pdf"))
+        sec_b = User.objects.create_user(
+            roll_number="21IT03", password="x", full_name="Bhavya",
+            branch=self.branch, section=self.section_b,
+        )
+        services.upload_resume(sec_b, self._resume_file("bhavya.pdf"))
+
+        import io
+        import zipfile
+
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 x"
+            client = self._client(self.faculty)
+            response = client.get(
+                "/api/resumes/download_zip/?section=%d" % self.section_a.id
+            )
+        self.assertEqual(response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            self.assertEqual(zf.namelist(), ["diya.pdf"])
+
+    def test_student_cannot_download_zip(self):
+        client = self._client(self.student)
+        response = client.get("/api/resumes/download_zip/")
+        self.assertEqual(response.status_code, 403)
+
     @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_replacing_resume_resets_review_status(self, mock_upload):
         mock_upload.side_effect = [

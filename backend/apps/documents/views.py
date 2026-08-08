@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.permissions import IsSuperAdmin, IsSuperAdminOrCR
-from apps.core.utils import csv_response, log_audit
+from apps.core.utils import build_zip_response, csv_response, log_audit
 
 from . import services
 from .models import Document, DocumentShareRequest
@@ -264,6 +264,42 @@ class DocumentViewSet(viewsets.ModelViewSet):
             # Signed so previews work even on restricted-delivery accounts.
             "cloudinary_url": signed_raw_url(document.public_id),
         })
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
+    def download_zip(self, request):
+        """Download every file in the current filtered view as one ZIP.
+
+        Files are fetched through signed Cloudinary delivery URLs so the ZIP
+        works even on accounts with restricted delivery. Capped at 100 files /
+        150MB to keep the in-memory bundle reasonable.
+        """
+        import urllib.request
+
+        from .services import signed_raw_url
+
+        max_files = 100
+        max_bytes = 150 * 1024 * 1024
+        files: list[tuple[str, bytes]] = []
+        skipped = 0
+        total = 0
+        for doc in self.get_queryset()[:max_files]:
+            try:
+                with urllib.request.urlopen(signed_raw_url(doc.public_id), timeout=10) as resp:
+                    data = resp.read()
+                if total + len(data) > max_bytes:
+                    skipped += 1
+                    continue
+                files.append((doc.file_name, data))
+                total += len(data)
+            except Exception:
+                skipped += 1
+        if not files:
+            raise ValidationError({
+                "detail": "No files could be downloaded. Check the Cloudinary 'Allow delivery of PDF and ZIP files' setting (Settings > Security)."
+            })
+        log_audit(request.user, "ZIP_DOWNLOAD", "Document", "",
+                  {"count": len(files), "skipped": skipped}, request)
+        return build_zip_response(files, "documents.zip")
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def export_csv(self, request):

@@ -2,7 +2,18 @@
 
 import { useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Download, Eye, ListChecks, Plus, Send, Share2, Trash2 } from "lucide-react";
+import {
+  Archive,
+  Bell,
+  Download,
+  Eye,
+  ListChecks,
+  Plus,
+  RotateCcw,
+  Send,
+  Share2,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentExt, getDocumentTypeMeta } from "@/lib/document-types";
@@ -52,14 +63,18 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<DocumentItem[]>([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
+  // Debounce filter changes (like search) so rapid changes batch into one
+  // request and the table doesn't flicker on every selection.
+  const debouncedFilters = useDebouncedValue(filters, 250);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["documents", page, pageSize, debouncedQ, filters],
+    queryKey: ["documents", page, pageSize, debouncedQ, debouncedFilters],
     queryFn: () =>
       http.get<Paginated<DocumentItem>>("/documents/", {
         page,
         page_size: pageSize,
         q: debouncedQ || undefined,
-        ...filters,
+        ...debouncedFilters,
       }),
     // Keep the current rows visible while paging/filtering loads the next one.
     placeholderData: keepPreviousData,
@@ -76,13 +91,13 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
 
   const prefetchNextPage = (next: number) => {
     void queryClient.prefetchQuery({
-      queryKey: ["documents", next, pageSize, debouncedQ, filters],
+      queryKey: ["documents", next, pageSize, debouncedQ, debouncedFilters],
       queryFn: () =>
         http.get<Paginated<DocumentItem>>("/documents/", {
           page: next,
           page_size: pageSize,
           q: debouncedQ || undefined,
-          ...filters,
+          ...debouncedFilters,
         }),
       staleTime: 30_000,
     });
@@ -106,7 +121,30 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
     }
   };
 
-  const currentQueryKey = ["documents", page, pageSize, debouncedQ, filters] as const;
+  const handleZip = async () => {
+    try {
+      await http.download(
+        "/documents/download_zip/",
+        { q: q || undefined, ...filters },
+        "documents.zip"
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const hasFilters = Object.keys(filters).length > 0 || q !== "";
+  const clearFilters = () => {
+    setFilters({});
+    setQ("");
+    setPage(1);
+  };
+
+  const semesterName = meta.semesters.find((s) => String(s.id) === filters.semester)?.name;
+  const categoryName = meta.categories.find((c) => String(c.id) === filters.category)?.name;
+  const subjectName = meta.subjects.find((s) => String(s.id) === filters.subject)?.name;
+
+  const currentQueryKey = ["documents", page, pageSize, debouncedQ, debouncedFilters] as const;
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
@@ -328,6 +366,9 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
                 )}
               </Button>
             )}
+            <Button variant="outline" onClick={handleZip}>
+              <Archive className="size-4" /> Download ZIP
+            </Button>
             <Button variant="outline" onClick={handleExport}>
               <Download className="size-4" /> Export Reports
             </Button>
@@ -341,7 +382,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
       <div className="mb-4 flex flex-wrap gap-2">
         <Select value={filters.semester ?? ""} onValueChange={(v) => setFilter("semester", v ?? "")}>
           <SelectTrigger className="w-36">
-            <SelectValue placeholder="Semester" />
+            <SelectValue placeholder="Semester">{semesterName}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {meta.semesters.map((s) => (
@@ -353,7 +394,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         </Select>
         <Select value={filters.category ?? ""} onValueChange={(v) => setFilter("category", v ?? "")}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="Category" />
+            <SelectValue placeholder="Category">{categoryName}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {meta.categories.map((c) => (
@@ -365,7 +406,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         </Select>
         <Select value={filters.subject ?? ""} onValueChange={(v) => setFilter("subject", v ?? "")}>
           <SelectTrigger className="w-52">
-            <SelectValue placeholder="Subject" />
+            <SelectValue placeholder="Subject">{subjectName}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {meta.subjects.map((s) => (
@@ -376,6 +417,11 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
             ))}
           </SelectContent>
         </Select>
+        {hasFilters && (
+          <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground" onClick={clearFilters}>
+            <RotateCcw className="size-3.5" /> Clear all filters
+          </Button>
+        )}
       </div>
 
       <DataTable

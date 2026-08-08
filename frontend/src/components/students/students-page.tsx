@@ -13,6 +13,7 @@ import {
   Pencil,
   Plus,
   Power,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import {
@@ -82,7 +83,11 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   const [pendingBulk, setPendingBulk] = useState<BulkAction | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
 
-  const currentQueryKey = ["students", page, pageSize, debouncedQ, filters] as const;
+  // Debounce filter changes (like search) so rapid changes batch into one
+  // request instead of firing one query per selection.
+  const debouncedFilters = useDebouncedValue(filters, 250);
+
+  const currentQueryKey = ["students", page, pageSize, debouncedQ, debouncedFilters] as const;
 
   const { data, isLoading } = useQuery({
     queryKey: currentQueryKey,
@@ -91,7 +96,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         page,
         page_size: pageSize,
         search: debouncedQ || undefined,
-        ...filters,
+        ...debouncedFilters,
       }),
     // Keep the current rows visible while paging/filtering loads the next one.
     placeholderData: keepPreviousData,
@@ -101,13 +106,13 @@ export function StudentsPage({ meta, isCr = false }: Props) {
 
   const prefetchNextPage = (next: number) => {
     void queryClient.prefetchQuery({
-      queryKey: ["students", next, pageSize, debouncedQ, filters],
+      queryKey: ["students", next, pageSize, debouncedQ, debouncedFilters],
       queryFn: () =>
         http.get<Paginated<User>>("/students/", {
           page: next,
           page_size: pageSize,
           search: debouncedQ || undefined,
-          ...filters,
+          ...debouncedFilters,
         }),
       staleTime: 30_000,
     });
@@ -440,12 +445,14 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         }
       />
 
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         {!isCr && (
           <>
             <Select value={filters.branch ?? ""} onValueChange={(v) => setFilter("branch", v ?? "")}>
               <SelectTrigger className="w-40">
-                <SelectValue placeholder="Branch" />
+                <SelectValue placeholder="Branch">
+                  {meta.branches.find((b) => String(b.id) === filters.branch)?.name}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {meta.branches.map((b) => (
@@ -457,7 +464,9 @@ export function StudentsPage({ meta, isCr = false }: Props) {
             </Select>
             <Select value={filters.section ?? ""} onValueChange={(v) => setFilter("section", v ?? "")}>
               <SelectTrigger className="w-32">
-                <SelectValue placeholder="Section" />
+                <SelectValue placeholder="Section">
+                  {meta.sections.find((s) => String(s.id) === filters.section)?.name}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {meta.sections.map((s) => (
@@ -469,7 +478,9 @@ export function StudentsPage({ meta, isCr = false }: Props) {
             </Select>
             <Select value={filters.role ?? ""} onValueChange={(v) => setFilter("role", v ?? "")}>
               <SelectTrigger className="w-32">
-                <SelectValue placeholder="Role" />
+                <SelectValue placeholder="Role">
+                  {filters.role === "STUDENT" ? "Students" : filters.role === "CR" ? "CRs" : undefined}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="STUDENT">Students</SelectItem>
@@ -477,6 +488,20 @@ export function StudentsPage({ meta, isCr = false }: Props) {
               </SelectContent>
             </Select>
           </>
+        )}
+        {!isCr && (Object.keys(filters).length > 0 || q !== "") && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              setFilters({});
+              setQ("");
+              setPage(1);
+            }}
+          >
+            <RotateCcw className="size-3.5" /> Clear all filters
+          </Button>
         )}
       </div>
 

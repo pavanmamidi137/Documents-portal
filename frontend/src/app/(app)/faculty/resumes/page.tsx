@@ -8,6 +8,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  Archive,
   CheckCheck,
   CheckCircle2,
   Circle,
@@ -15,6 +16,7 @@ import {
   Download,
   Eye,
   FileText,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,6 +54,7 @@ export default function FacultyResumesPage() {
   const [branch, setBranch] = useState("");
   const [section, setSection] = useState("");
   const [markAllOpen, setMarkAllOpen] = useState(false);
+  const [zipping, setZipping] = useState(false);
 
   const branches = meta?.branches ?? [];
   // Faculty are locked to their own branch; admins pick from all branches.
@@ -59,6 +62,7 @@ export default function FacultyResumesPage() {
   const sections = (meta?.sections ?? []).filter((s) =>
     effectiveBranch ? s.branch === Number(effectiveBranch) : true
   );
+  const selectedSection = sections.find((s) => String(s.id) === section);
 
   const setFilter = (key: string, value: string) => {
     setPage(1);
@@ -153,6 +157,36 @@ export default function FacultyResumesPage() {
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
+  };
+
+  const handleZip = async () => {
+    if (zipping) return;
+    setZipping(true);
+    try {
+      await http.download(
+        "/resumes/download_zip/",
+        {
+          search: q || undefined,
+          branch: branch || undefined,
+          section: section || undefined,
+        },
+        "resumes.zip"
+      );
+      if ((data?.count ?? 0) > 100)
+        toast.info("ZIP includes the first 100 resumes in the current view.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setZipping(false);
+    }
+  };
+
+  const hasFilters = q !== "" || branch !== "" || section !== "";
+  const clearFilters = () => {
+    setQ("");
+    setBranch("");
+    setSection("");
+    setPage(1);
   };
 
   const columns: Column<Resume>[] = [
@@ -303,10 +337,25 @@ export default function FacultyResumesPage() {
         >
           <CheckCheck className="size-4" /> Mark all reviewed
         </Button>
+        <Button
+          variant="outline"
+          className="gap-2"
+          onClick={handleZip}
+          disabled={zipping}
+          title={
+            (data?.count ?? 0) > 100
+              ? "ZIP includes the first 100 resumes in the current view"
+              : "Download every resume in the current view as a ZIP"
+          }
+        >
+          <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
+        </Button>
         {isAdmin && (
           <Select value={branch} onValueChange={(v) => setFilter("branch", v ?? "")}>
             <SelectTrigger className="w-40">
-              <SelectValue placeholder="Branch" />
+              <SelectValue placeholder="Branch">
+                {branches.find((b) => String(b.id) === branch)?.name}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {branches.map((b) => (
@@ -319,7 +368,9 @@ export default function FacultyResumesPage() {
         )}
         <Select value={section} onValueChange={(v) => setFilter("section", v ?? "")}>
           <SelectTrigger className="w-36">
-            <SelectValue placeholder="Section" />
+            <SelectValue placeholder="Section">
+              {selectedSection ? `Sec ${selectedSection.name}` : undefined}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {sections.map((s) => (
@@ -329,6 +380,16 @@ export default function FacultyResumesPage() {
             ))}
           </SelectContent>
         </Select>
+        {hasFilters && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-muted-foreground hover:text-foreground"
+            onClick={clearFilters}
+          >
+            <RotateCcw className="size-3.5" /> Clear all filters
+          </Button>
+        )}
       </div>
 
       <DataTable
