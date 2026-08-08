@@ -153,6 +153,47 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class AdminCreateSerializer(serializers.ModelSerializer):
+    """Super Admin creates another admin account (default password = roll number)."""
+
+    password = serializers.CharField(write_only=True, min_length=6, required=False, allow_blank=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id", "roll_number", "full_name", "email", "phone",
+            "password", "is_active",
+        ]
+        read_only_fields = ["id"]
+
+    def validate_roll_number(self, value):
+        value = value.strip().upper()
+        if User.objects.filter(roll_number=value).exists():
+            raise serializers.ValidationError("A user with this roll number already exists.")
+        return value
+
+    def validate_email(self, value):
+        value = (value or "").strip().lower()
+        if not value:
+            return None
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
+    def validate(self, attrs):
+        attrs["role"] = User.Role.SUPER_ADMIN
+        return attrs
+
+    def create(self, validated_data):
+        roll_number = validated_data.pop("roll_number")
+        password = validated_data.pop("password", None) or roll_number
+        # Match create_superuser: new admins also get Django admin access.
+        return User.objects.create_user(
+            roll_number, password, **validated_data,
+            is_staff=True, is_superuser=True,
+        )
+
+
 class FacultyCreateSerializer(serializers.ModelSerializer):
     """Admin creates a faculty account (roll number + branch + default password)."""
 
@@ -227,6 +268,6 @@ class ResumeSerializer(serializers.ModelSerializer):
             "branch_name", "section_name",
             "file_name", "file_size", "cloudinary_url",
             "is_reviewed", "reviewed_by_name", "reviewed_at",
-            "created_at", "updated_at",
+            "is_missing", "restored_at", "created_at", "updated_at",
         ]
         read_only_fields = fields

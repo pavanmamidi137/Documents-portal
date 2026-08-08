@@ -125,6 +125,13 @@ class Resume(models.Model):
         related_name="reviewed_resumes",
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    # Set when the Cloudinary file is found to be deleted; the student sees a
+    # "re-upload" prompt and faculty lists hide it.
+    is_missing = models.BooleanField(default=False)
+    file_checked_at = models.DateTimeField(null=True, blank=True)
+    # When a previously-deleted resume comes back in Cloudinary this marks
+    # when, so the UI can show a "Restored" badge for a while.
+    restored_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

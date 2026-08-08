@@ -39,6 +39,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { UploadDocumentDialog } from "./upload-document-dialog";
 import { http } from "@/lib/api";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import type { DocumentItem, MetaData, Paginated } from "@/lib/types";
 import { formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 
@@ -146,6 +147,14 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
 
   const currentQueryKey = ["documents", page, pageSize, debouncedQ, debouncedFilters] as const;
 
+  // Files deleted directly in Cloudinary disappear from this view instantly.
+  useCloudinaryCheck<DocumentItem>({
+    url: "/documents/check-files/",
+    params: { q: debouncedQ || undefined, ...debouncedFilters },
+    queryKey: currentQueryKey,
+    kind: "document",
+  });
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -228,7 +237,18 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
               <Icon className="size-4" />
             </div>
             <div className="min-w-0">
-              <p className="truncate font-medium">{d.title}</p>
+              <p className="flex items-center gap-1.5 font-medium">
+                <span className="truncate">{d.title}</span>
+                {d.restored_at && (
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    title="This file was deleted in Cloudinary and restored recently."
+                  >
+                    <RotateCcw className="size-2.5" /> Restored
+                  </Badge>
+                )}
+              </p>
               <p className="truncate text-xs text-muted-foreground">
                 {d.file_name} · {formatBytes(d.file_size)}
                 <span className="ml-1.5 rounded border px-1 py-px text-[10px] font-semibold uppercase">
@@ -468,7 +488,9 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         )}
       />
 
+      {/* key remounts the dialog on open so file/selection state starts fresh. */}
       <UploadDocumentDialog
+        key={String(uploadOpen)}
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         meta={meta}

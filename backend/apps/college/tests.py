@@ -67,3 +67,130 @@ class MetaQueryCountTests(TestCase):
         # Auth user lookup + one query per reference table (5) + session/rate
         # checks. Way below the old N+1 behaviour (~150+ COUNT queries).
         self.assertLess(len(ctx.captured_queries), 15)
+
+
+class SubjectBulkImportTests(TestCase):
+    """Semester-wise bulk subject import (typed names + copying existing)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE")
+        self.semester = Semester.objects.create(name="4-1", order=7)
+        self.other_semester = Semester.objects.create(name="3-1", order=5)
+        self.existing = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.other_semester, branch=None
+        )
+
+    def _client(self) -> APIClient:
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": "admin", "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        return client
+
+    def test_bulk_import_creates_typed_subjects(self):
+        client = self._client()
+        response = client.post(
+            "/api/subjects/bulk_import/",
+            {"semester": self.semester.id, "names": ["Operating Systems", "Computer Networks"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["created"], 2)
+        self.assertEqual(
+            Subject.objects.filter(semester=self.semester).count(), 2
+        )
+
+    def test_bulk_import_supports_name_and_code(self):
+        client = self._client()
+        response = client.post(
+            "/api/subjects/bulk_import/",
+            {"semester": self.semester.id, "names": ["Operating Systems, CS401", "DBMS"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        subj = Subject.objects.get(name="Operating Systems", semester=self.semester)
+        self.assertEqual(subj.code, "CS401")
+        self.assertEqual(subj.branch, None)  # college-wide by default
+
+    def test_bulk_import_to_branch(self):
+        client = self._client()
+        response = client.post(
+            "/api/subjects/bulk_import/",
+            {
+                "semester": self.semester.id,
+                "branch": self.branch.id,
+                "names": ["ML"],
+            },
+            format="json",
+        )
+        self.assertEqual(response.data["created"], 1)
+        self.assertEqual(
+            Subject.objects.get(name="ML", semester=self.semester).branch, self.branch
+        )
+
+    def test_bulk_import_skips_duplicates_case_insensitive(self):
+        Subject.objects.create(name="Operating Systems", semester=self.semester)
+        client = self._client()
+        response = client.post(
+            "/api/subjects/bulk_import/",
+            {"semester": self.semester.id, "names": ["operating systems"]},
+            format="json",
+        )
+        self.assertEqual(response.data["created"], 0)
+        self.assertEqual(len(response.data["skipped"]), 1)
+
+    def test_bulk_import_copies_existing_subjects(self):
+        client = self._client()
+        response = client.post(
+            "/api/subjects/bulk_import/",
+            {"semester": self.semester.id, "copy_ids": [self.existing.id]},
+            format="json",
+        )
+        self.assertEqual(response.data["created"], 1)
+        copied = Subject.objects.get(name="DBMS", semester=self.semester)
+        self.assertEqual(copied.code, "CS303")
+        self.assertEqual(
+            Subject.objects.filter(name="DBMS").count(), 2  # original + copy
+        )
+
+    def test_bulk_import_requires_semester(self):
+        client = self._client()
+        response = client.post(
+            "/api/subjects/bulk_import/",
+            {"names": ["OS"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_bulk_import_requires_input(self):
+        client = self._client()
+        response = client.post(
+            "/api/subjects/bulk_import/",
+            {"semester": self.semester.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_non_admin_cannot_bulk_import(self):
+        student = User.objects.create_user(
+            roll_number="21CSE01", password="x", full_name="Student"
+        )
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": "21CSE01", "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        response = client.post(
+            "/api/subjects/bulk_import/",
+            {"semester": self.semester.id, "names": ["OS"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)

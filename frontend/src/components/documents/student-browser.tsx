@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { http } from "@/lib/api";
+import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import type { Category, DocumentItem, MetaData, Semester, Subject } from "@/lib/types";
 import { DocumentCard } from "./document-card";
 import { EmptyState } from "@/components/empty-state";
@@ -140,13 +141,27 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
     );
   };
 
+  const listQueryKey = [
+    "student-documents",
+    "semester" in step ? step.semester.id : undefined,
+    "category" in step ? step.category.id : undefined,
+    "subject" in step ? step.subject.id : undefined,
+  ] as const;
+
+  // Files deleted directly in Cloudinary are removed from this view instantly.
+  useCloudinaryCheck<DocumentItem>({
+    url: "/documents/check-files/",
+    params: {
+      ...("semester" in step ? { semester: step.semester.id } : {}),
+      ...("category" in step ? { category: step.category.id } : {}),
+      ...("subject" in step ? { subject: step.subject.id } : {}),
+    },
+    queryKey: listQueryKey,
+    kind: "document",
+  });
+
   const { data, isLoading } = useQuery({
-    queryKey: [
-      "student-documents",
-      "semester" in step ? step.semester.id : undefined,
-      "category" in step ? step.category.id : undefined,
-      "subject" in step ? step.subject.id : undefined,
-    ],
+    queryKey: listQueryKey,
     queryFn: async () => {
       const params: Record<string, unknown> = {};
       if ("semester" in step) params.semester = step.semester.id;

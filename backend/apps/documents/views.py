@@ -34,9 +34,11 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        # Files deleted directly in Cloudinary are hidden from every list until
+        # a re-upload replaces them (is_missing is set by check-files).
         qs = Document.objects.select_related(
             "branch", "section", "semester", "category", "subject", "uploaded_by"
-        ).all()
+        ).exclude(is_missing=True)
 
         if user.is_super_admin:
             pass
@@ -217,7 +219,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         user = request.user
         qs = Document.objects.select_related(
             "branch", "section", "semester", "category", "subject", "uploaded_by"
-        ).all()
+        ).exclude(is_missing=True)
         if user.is_cr and user.section_id:
             own_public_ids = Document.objects.filter(section_id=user.section_id).values_list(
                 "public_id", flat=True
@@ -263,6 +265,65 @@ class DocumentViewSet(viewsets.ModelViewSet):
             "download_url": document.download_url,
             # Signed so previews work even on restricted-delivery accounts.
             "cloudinary_url": signed_raw_url(document.public_id),
+        })
+
+    @action(detail=False, methods=["get"], url_path="check-files", permission_classes=[IsAuthenticated])
+    def check_files(self, request):
+        """Verify the current view's files still exist on Cloudinary.
+
+        Called by the frontend when a document list loads: files in the current
+        view that have not been checked in the last minute are verified via the
+        admin API and any that were deleted directly in Cloudinary are flagged
+        missing and hidden immediately. Long-missing files are re-checked too,
+        so a file restored in the Cloudinary console reappears. Returns the ids
+        that were removed so the UI can drop them without a refetch.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from .services import cloudinary_file_exists
+
+        cutoff = timezone.now() - timedelta(seconds=60)
+        visible = self.get_queryset().filter(
+            Q(file_checked_at__lt=cutoff) | Q(file_checked_at__isnull=True)
+        )[:100]
+        # Re-check files that were found missing a while ago (revival support).
+        stale_missing = Document.objects.filter(
+            is_missing=True, file_checked_at__lt=cutoff
+        )[:50]
+        missing_ids: list[int] = []
+        restored_ids: list[int] = []
+        checked = 0
+        for doc in list(visible) + list(stale_missing):
+            exists = cloudinary_file_exists(doc.public_id)
+            if exists is None:
+                continue
+            checked += 1
+            now = timezone.now()
+            if not exists:
+                if not doc.is_missing:
+                    missing_ids.append(doc.id)
+                Document.objects.filter(pk=doc.pk).update(
+                    is_missing=True, file_checked_at=now, restored_at=None
+                )
+            else:
+                updates = {"is_missing": False, "file_checked_at": now}
+                if doc.is_missing:
+                    # The file came back (restored in Cloudinary) - unhide it
+                    # with a restored marker so the UI can show a badge.
+                    restored_ids.append(doc.id)
+                    updates["restored_at"] = now
+                elif doc.restored_at and doc.restored_at < now - timedelta(days=3):
+                    # The "Restored" badge fades out a few days after revival.
+                    updates["restored_at"] = None
+                else:
+                    continue  # unchanged - avoid a pointless write
+                Document.objects.filter(pk=doc.pk).update(**updates)
+        return Response({
+            "checked": checked,
+            "missing_ids": missing_ids,
+            "restored_ids": restored_ids,
         })
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])

@@ -18,6 +18,13 @@ class Document(models.Model):
     cloudinary_url = models.URLField(max_length=500)
     public_id = models.CharField(max_length=255)
     downloads = models.PositiveIntegerField(default=0)
+    # Set when the Cloudinary file is found to be deleted; missing files are
+    # hidden from every list until a new file replaces them.
+    is_missing = models.BooleanField(default=False)
+    file_checked_at = models.DateTimeField(null=True, blank=True)
+    # When a previously-deleted file comes back in Cloudinary it is un-hidden
+    # and this marks when, so the UI can show a "Restored" badge for a while.
+    restored_at = models.DateTimeField(null=True, blank=True)
 
     branch = models.ForeignKey(
         "college.Branch", on_delete=models.PROTECT, related_name="documents"

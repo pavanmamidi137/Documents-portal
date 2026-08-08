@@ -97,6 +97,8 @@ export interface DocumentItem {
   uploaded_by: number | null;
   uploaded_by_name: string | null;
   forked_from: number | null;
+  is_missing: boolean;
+  restored_at: string | null;
 }
 
 export interface Announcement {
@@ -162,6 +164,8 @@ export interface Resume {
   is_reviewed: boolean;
   reviewed_by_name: string | null;
   reviewed_at: string | null;
+  is_missing: boolean;
+  restored_at: string | null;
   created_at: string;
   updated_at: string;
 }

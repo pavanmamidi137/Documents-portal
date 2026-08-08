@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Menu, Moon, Palette, PanelLeft, Search, Sun } from "lucide-react";
+import { Check, LogOut, Menu, Moon, Palette, PanelLeft, Search, Sun, UserRound } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 
@@ -12,13 +12,14 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/lib/auth";
 import { useSiteTheme } from "@/lib/site-theme";
-import { cn, getErrorMessage } from "@/lib/utils";
+import { cn, getErrorMessage, initials } from "@/lib/utils";
 import { ShareRequestBell } from "@/components/documents/share-request-bell";
 import type { SidebarMode } from "./sidebar";
 
@@ -29,7 +30,7 @@ interface TopbarProps {
 }
 
 export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: TopbarProps) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const { theme: siteTheme, themes, setTheme: setSiteTheme } = useSiteTheme();
   const router = useRouter();
@@ -146,6 +147,38 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+
+        {/* Profile — the "right side button" for your account, settings and logout. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <button
+                className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 transition-transform hover:scale-105 dark:text-indigo-400"
+                aria-label="Open profile menu"
+              >
+                {initials(user?.full_name ?? "?")}
+              </button>
+            }
+          />
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuLabel className="px-2 py-3">
+              <p className="truncate text-sm font-semibold">{user?.full_name}</p>
+              <p className="truncate text-xs font-normal text-muted-foreground">
+                {user?.roll_number} · {user?.role_label}
+              </p>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => router.push("/profile")}>
+              <UserRound className="size-4" /> My Profile
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={logout}
+            >
+              <LogOut className="size-4" /> Log out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

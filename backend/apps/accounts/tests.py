@@ -469,6 +469,103 @@ class FacultyManagementTests(TestCase):
         self.assertFalse(User.objects.filter(roll_number="FAC01").exists())
 
 
+class AdminManagementTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+
+    def _client(self, user=None) -> APIClient:
+        client = APIClient()
+        target = user or self.admin
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": target.roll_number, "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        return client
+
+    def test_admin_creates_another_admin(self):
+        client = self._client()
+        response = client.post(
+            "/api/admins/",
+            {"roll_number": "ADMIN2", "full_name": "Second Admin"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        new_admin = User.objects.get(roll_number="ADMIN2")
+        self.assertEqual(new_admin.role, User.Role.SUPER_ADMIN)
+        self.assertTrue(new_admin.is_super_admin)
+        # Default password is the roll number.
+        self.assertTrue(new_admin.check_password("ADMIN2"))
+
+    def test_non_admin_cannot_manage_admins(self):
+        faculty = User.objects.create_user(
+            roll_number="FAC01", password="x", full_name="Prof. Rao",
+            role=User.Role.FACULTY,
+        )
+        client = self._client(faculty)
+        response = client.get("/api/admins/")
+        self.assertEqual(response.status_code, 403)
+        created = client.post(
+            "/api/admins/",
+            {"roll_number": "ADMIN3", "full_name": "Nope"},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 403)
+
+    def test_admin_cannot_delete_self(self):
+        client = self._client()
+        response = client.delete(f"/api/admins/{self.admin.id}/")
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(User.objects.filter(pk=self.admin.id).exists())
+
+    def test_admin_can_delete_another_admin(self):
+        other = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        client = self._client()
+        response = client.delete(f"/api/admins/{other.id}/")
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(User.objects.filter(pk=other.id).exists())
+
+    def test_transfer_creates_admin_and_demotes_caller(self):
+        client = self._client()
+        response = client.post(
+            "/api/admins/transfer/",
+            {
+                "roll_number": "NEWADMIN",
+                "full_name": "New Boss",
+                "email": "boss@college.edu",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        new_admin = User.objects.get(roll_number="NEWADMIN")
+        self.assertEqual(new_admin.role, User.Role.SUPER_ADMIN)
+        self.assertTrue(new_admin.check_password("NEWADMIN"))
+        # The caller is demoted to a regular student and loses staff flags.
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.role, User.Role.STUDENT)
+        self.assertTrue(self.admin.is_student)
+        self.assertFalse(self.admin.is_staff)
+        # The old admin's token no longer grants admin access.
+        list_response = client.get("/api/admins/")
+        self.assertEqual(list_response.status_code, 403)
+
+    def test_transfer_requires_valid_roll_number(self):
+        client = self._client()
+        response = client.post(
+            "/api/admins/transfer/",
+            {"full_name": "No Roll"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_super_admin)  # nothing changed
+
+
 class ResumeTests(TestCase):
     def setUp(self):
         self.branch = Branch.objects.create(name="IT", code="IT")
@@ -733,6 +830,110 @@ class ResumeTests(TestCase):
         self.assertTrue("s--" in signed_url or "sig=" in signed_url, signed_url)
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_check_files_flags_deleted_resume_and_hides_it(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = False
+            client = self._client(self.faculty)
+            response = client.get("/api/resumes/check-files/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["missing_ids"], [resume.id])
+        resume.refresh_from_db()
+        self.assertTrue(resume.is_missing)
+        # The faculty list no longer shows the missing resume.
+        listed = client.get("/api/resumes/")
+        self.assertEqual(len(listed.data["results"]), 0)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_student_still_sees_own_missing_resume(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        resume.is_missing = True
+        resume.save()
+        client = self._client(self.student)
+        mine = client.get("/api/resumes/mine/")
+        self.assertEqual(mine.status_code, 200)
+        self.assertTrue(mine.data["is_missing"])
+        # Preview of a missing resume fails with a clear message.
+        preview = client.get(f"/api/resumes/{resume.id}/preview/")
+        self.assertEqual(preview.status_code, 404)
+        self.assertIn("deleted from storage", str(preview.data))
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_student_check_flags_deleted_resume(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = False
+            client = self._client(self.student)
+            response = client.get(f"/api/resumes/{resume.id}/check/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["is_missing"])
+        resume.refresh_from_db()
+        self.assertTrue(resume.is_missing)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_check_files_revives_restored_resume(self, mock_upload):
+        """A resume restored in Cloudinary reappears with a restored marker."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        resume.is_missing = True
+        resume.file_checked_at = timezone.now() - timedelta(days=1)
+        resume.save()
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = True
+            client = self._client(self.faculty)
+            response = client.get("/api/resumes/check-files/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["restored_ids"], [resume.id])
+        resume.refresh_from_db()
+        self.assertFalse(resume.is_missing)
+        self.assertIsNotNone(resume.restored_at)
+        # The faculty list shows the restored resume again.
+        listed = client.get("/api/resumes/")
+        self.assertEqual(len(listed.data["results"]), 1)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_student_check_revives_restored_resume(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        resume.is_missing = True
+        resume.save()
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = True
+            client = self._client(self.student)
+            response = client.get(f"/api/resumes/{resume.id}/check/")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["is_missing"])
+        self.assertIsNotNone(response.data["restored_at"])
+        resume.refresh_from_db()
+        self.assertFalse(resume.is_missing)
+        self.assertIsNotNone(resume.restored_at)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_student_cannot_check_others_resume(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        other = User.objects.create_user(
+            roll_number="21IT02", password="x", full_name="Arjun",
+            branch=self.branch, section=self.section_a,
+        )
+        services.upload_resume(other, self._resume_file())
+        resume = Resume.objects.get(student=other)
+        client = self._client(self.student)
+        response = client.get(f"/api/resumes/{resume.id}/check/")
+        self.assertEqual(response.status_code, 403)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_preview_surfaces_cloudinary_block(self, mock_upload):
         mock_upload.return_value = {"secure_url": "https://storage.example/r.pdf", "public_id": "r"}
         services.upload_resume(self.student, self._resume_file())
@@ -886,15 +1087,19 @@ class ResumeTests(TestCase):
             {"secure_url": "https://x.example/new.pdf", "public_id": "new"},
         ]
         services.upload_resume(self.student, self._resume_file("old.pdf"))
+        from django.utils import timezone
+
         resume = Resume.objects.get(student=self.student)
         resume.is_reviewed = True
         resume.reviewed_by = self.faculty
+        resume.restored_at = timezone.now()
         resume.save()
 
-        # Replacing the file clears the review.
+        # Replacing the file clears the review and any "Restored" badge.
         services.upload_resume(self.student, self._resume_file("new.pdf"))
         resume.refresh_from_db()
         self.assertEqual(resume.file_name, "new.pdf")
         self.assertFalse(resume.is_reviewed)
         self.assertIsNone(resume.reviewed_by)
         self.assertIsNone(resume.reviewed_at)
+        self.assertIsNone(resume.restored_at)

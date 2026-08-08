@@ -29,7 +29,7 @@ class DocumentListSerializer(serializers.ModelSerializer):
             "branch", "branch_name", "section", "section_name",
             "semester", "semester_name", "category", "category_name",
             "subject", "subject_name", "uploaded_by", "uploaded_by_name",
-            "forked_from",
+            "forked_from", "is_missing", "restored_at",
         ]
         read_only_fields = fields
 

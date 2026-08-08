@@ -438,6 +438,124 @@ class DocumentZipTests(TestCase):
         self.assertIn("Cloudinary", str(response.data))
 
 
+class DocumentCheckFilesTests(TestCase):
+    """Files deleted directly in Cloudinary are detected and hidden instantly."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE")
+        self.section = Section.objects.create(branch=self.branch, name="A")
+        self.semester = Semester.objects.create(name="3-1", order=5)
+        self.category = Category.objects.create(name="Notes")
+        self.subject = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.semester, branch=self.branch
+        )
+        self.doc = Document.objects.create(
+            title="DBMS Unit 1", description="",
+            file_name="dbms.pdf", file_size=1024,
+            cloudinary_url="https://x.example/dbms.pdf",
+            public_id="documents/cse/a/3-1/notes/dbms/dbms123",
+            branch=self.branch, section=self.section,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.admin,
+        )
+
+    def _client(self):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(self.admin)}")
+        return client
+
+    def test_check_files_flags_deleted_and_returns_id(self):
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = False
+            response = self._client().get("/api/documents/check-files/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["missing_ids"], [self.doc.id])
+        self.doc.refresh_from_db()
+        self.assertTrue(self.doc.is_missing)
+
+    def test_check_files_keeps_existing_files(self):
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = True
+            response = self._client().get("/api/documents/check-files/")
+        self.assertEqual(response.data["missing_ids"], [])
+        self.doc.refresh_from_db()
+        self.assertFalse(self.doc.is_missing)
+
+    def test_check_files_unknown_result_leaves_flag_alone(self):
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = None  # auth/network failure
+            response = self._client().get("/api/documents/check-files/")
+        self.assertEqual(response.data["missing_ids"], [])
+        self.doc.refresh_from_db()
+        self.assertFalse(self.doc.is_missing)
+
+    def test_missing_documents_hidden_from_list(self):
+        self.doc.is_missing = True
+        self.doc.save()
+        response = self._client().get("/api/documents/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["results"]), 0)
+
+    def test_missing_document_download_is_404(self):
+        self.doc.is_missing = True
+        self.doc.save()
+        response = self._client().post(f"/api/documents/{self.doc.id}/download/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_check_files_revives_restored_file(self):
+        """A file restored in Cloudinary reappears with a restored marker."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self.doc.is_missing = True
+        self.doc.file_checked_at = timezone.now() - timedelta(days=1)
+        self.doc.save()
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = True
+            response = self._client().get("/api/documents/check-files/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["restored_ids"], [self.doc.id])
+        self.doc.refresh_from_db()
+        self.assertFalse(self.doc.is_missing)
+        self.assertIsNotNone(self.doc.restored_at)
+        # The document is visible in the list again.
+        listed = self._client().get("/api/documents/")
+        self.assertEqual(len(listed.data["results"]), 1)
+
+    def test_restored_badge_expires_after_three_days(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self.doc.restored_at = timezone.now() - timedelta(days=4)
+        self.doc.file_checked_at = timezone.now() - timedelta(days=1)
+        self.doc.save()
+        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
+            mock_exists.return_value = True
+            response = self._client().get("/api/documents/check-files/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["restored_ids"], [])
+        self.doc.refresh_from_db()
+        self.assertIsNone(self.doc.restored_at)
+
+    def test_restored_at_exposed_in_list(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self.doc.restored_at = timezone.now() - timedelta(hours=1)
+        self.doc.save()
+        response = self._client().get("/api/documents/")
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertIsNotNone(response.data["results"][0]["restored_at"])
+
+
 @patch("apps.documents.services.cloudinary.api.delete_resources")
 class ShareForkTests(TestCase):
     """Multi-section sharing and CR fork behaviour (no Cloudinary upload needed)."""

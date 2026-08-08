@@ -36,6 +36,7 @@ import {
 import { useMetaData } from "@/lib/use-meta";
 import { useAuth } from "@/lib/auth";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import { http, openResumeInNewTab } from "@/lib/api";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Paginated, Resume } from "@/lib/types";
@@ -72,6 +73,18 @@ export default function FacultyResumesPage() {
   };
 
   const currentQueryKey = ["resumes", "list", page, pageSize, debouncedQ, branch, section] as const;
+
+  // Resumes deleted directly in Cloudinary are removed from this view instantly.
+  useCloudinaryCheck<Resume>({
+    url: "/resumes/check-files/",
+    params: {
+      search: debouncedQ || undefined,
+      branch: branch || undefined,
+      section: section || undefined,
+    },
+    queryKey: currentQueryKey,
+    kind: "resume",
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: currentQueryKey,
@@ -228,6 +241,15 @@ export default function FacultyResumesPage() {
           <FileText className="size-4 shrink-0 text-rose-500" />
           <span className="max-w-44 truncate">{r.file_name}</span>
           <span className="text-xs text-muted-foreground">{formatBytes(r.file_size)}</span>
+          {r.restored_at && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              title="This resume was deleted in Cloudinary and restored recently."
+            >
+              <RotateCcw className="size-3" /> Restored
+            </Badge>
+          )}
         </div>
       ),
     },

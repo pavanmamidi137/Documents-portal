@@ -25,6 +25,7 @@ from apps.core.utils import build_zip_response, csv_response, log_audit
 
 from .models import Resume, User
 from .serializers import (
+    AdminCreateSerializer,
     ChangePasswordSerializer,
     FacultyCreateSerializer,
     FacultyUpdateSerializer,
@@ -355,6 +356,96 @@ class FacultyViewSet(viewsets.ModelViewSet):
 
 
 # ---------------------------------------------------------------------------
+# Admin account management (Super Admin manages other admins + handover)
+# ---------------------------------------------------------------------------
+class AdminViewSet(viewsets.ModelViewSet):
+    """Super Admin manages admin accounts.
+
+    Create additional admin accounts, delete them (never the last one, never
+    yourself) and "transfer" the role: a new admin account is created and the
+    calling admin is demoted to a regular student so only one person holds
+    admin access at the end of the handover.
+    """
+
+    http_method_names = ["get", "post", "delete", "head", "options"]
+    permission_classes = [IsSuperAdmin]
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return AdminCreateSerializer
+        return UserSerializer
+
+    def get_queryset(self):
+        qs = User.objects.filter(role=User.Role.SUPER_ADMIN)
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(roll_number__icontains=search)
+                | Q(full_name__icontains=search)
+                | Q(email__icontains=search)
+                | Q(phone__icontains=search)
+            )
+        return qs.order_by("roll_number")
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        admin = serializer.save()
+        log_audit(request.user, "CREATE", "Admin", admin.id,
+                  {"roll_number": admin.roll_number}, request)
+        return Response(UserSerializer(admin).data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        admin = self.get_object()
+        # The caller is always an admin themselves, so deleting any other admin
+        # can never remove the last one - the only danger is self-deletion.
+        if admin.pk == request.user.pk:
+            raise ValidationError(
+                "You cannot delete your own admin account. Use 'Transfer admin' to hand over access."
+            )
+        roll = admin.roll_number
+        admin.delete()
+        log_audit(request.user, "DELETE", "Admin", roll,
+                  {"roll_number": roll}, request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"])
+    def reset_password(self, request, pk=None):
+        admin = self.get_object()
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.reset_password(
+            admin, serializer.validated_data["new_password"], request.user, request
+        )
+        return Response({"detail": "Password reset successfully."})
+
+    @action(detail=False, methods=["post"])
+    def transfer(self, request):
+        """Hand the admin role to another person.
+
+        Creates a new SUPER_ADMIN from the payload, then demotes the calling
+        admin to a regular student (clearing staff flags) so the handover is
+        complete. The caller's session stops being admin immediately.
+        """
+        serializer = AdminCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_admin = serializer.save()
+        old = request.user
+        old.role = User.Role.STUDENT
+        old.is_staff = False
+        old.is_superuser = False
+        old.save(update_fields=["role", "is_staff", "is_superuser"])
+        log_audit(new_admin, "ADMIN_TRANSFER_IN", "Admin", new_admin.id,
+                  {"from_roll": old.roll_number}, request)
+        log_audit(old, "ADMIN_TRANSFER_OUT", "Admin", new_admin.id,
+                  {"to_roll": new_admin.roll_number}, request)
+        return Response({
+            "admin": UserSerializer(new_admin).data,
+            "transferred_from": old.roll_number,
+        })
+
+
+# ---------------------------------------------------------------------------
 # Student resumes (students upload; faculty view their whole branch)
 # ---------------------------------------------------------------------------
 class ResumeViewSet(viewsets.ModelViewSet):
@@ -373,9 +464,11 @@ class ResumeViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        # Resumes whose Cloudinary file was deleted are hidden from faculty
+        # lists; the owning student still sees their own via ``mine``.
         qs = Resume.objects.select_related(
             "student", "student__branch", "student__section"
-        )
+        ).exclude(is_missing=True)
         # Faculty see resumes of every section in their branch; admins see all.
         if user.is_faculty and user.branch_id:
             qs = qs.filter(student__branch_id=user.branch_id)
@@ -447,6 +540,113 @@ class ResumeViewSet(viewsets.ModelViewSet):
             request,
         )
         return Response(ResumeSerializer(resume).data)
+
+    @action(detail=True, methods=["get"])
+    def check(self, request, pk=None):
+        """Live-check a single resume against Cloudinary (students verify their own).
+
+        Used by the student resume page so a file deleted directly in
+        Cloudinary is reflected the moment the page loads.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.documents.services import cloudinary_file_exists
+
+        resume = Resume.objects.filter(pk=pk).first()
+        if not resume:
+            raise NotFound("Resume not found.")
+        user = request.user
+        if user.is_faculty and user.branch_id and resume.student.branch_id != user.branch_id:
+            raise NotFound("Resume not found.")
+        if user.is_student and resume.student_id != user.id:
+            raise PermissionDenied("You can only check your own resume.")
+        exists = cloudinary_file_exists(resume.public_id)
+        now = timezone.now()
+        if exists is False:
+            resume.is_missing = True
+            resume.file_checked_at = now
+            resume.restored_at = None
+            resume.save(update_fields=["is_missing", "file_checked_at", "restored_at"])
+        elif exists is True and resume.is_missing:
+            # The file came back (restored in Cloudinary) - unhide it and mark
+            # it so the student's page can show a "Restored" badge.
+            resume.is_missing = False
+            resume.file_checked_at = now
+            resume.restored_at = now
+            resume.save(update_fields=["is_missing", "file_checked_at", "restored_at"])
+        elif (
+            exists is True
+            and resume.restored_at
+            and resume.restored_at < now - timedelta(days=3)
+        ):
+            # The "Restored" badge fades out a few days after revival.
+            resume.file_checked_at = now
+            resume.restored_at = None
+            resume.save(update_fields=["file_checked_at", "restored_at"])
+        return Response({
+            "id": resume.id,
+            "is_missing": resume.is_missing,
+            "restored_at": resume.restored_at,
+        })
+
+    @action(detail=False, methods=["get"], url_path="check-files")
+    def check_files(self, request):
+        """Verify the current view's resumes still exist on Cloudinary.
+
+        Same instant-removal behaviour as the documents check-files: any
+        resume deleted directly in Cloudinary is flagged missing and hidden
+        from the faculty list immediately. Files checked within the last
+        minute are skipped to protect the Cloudinary API quota, and long-
+        missing resumes are re-checked so a restored file reappears.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.documents.services import cloudinary_file_exists
+
+        cutoff = timezone.now() - timedelta(seconds=60)
+        visible = self.get_queryset().filter(
+            Q(file_checked_at__lt=cutoff) | Q(file_checked_at__isnull=True)
+        )[:100]
+        stale_missing = Resume.objects.filter(
+            is_missing=True, file_checked_at__lt=cutoff
+        )[:50]
+        missing_ids: list[int] = []
+        restored_ids: list[int] = []
+        checked = 0
+        for resume in list(visible) + list(stale_missing):
+            exists = cloudinary_file_exists(resume.public_id)
+            if exists is None:
+                continue
+            checked += 1
+            now = timezone.now()
+            if not exists:
+                if not resume.is_missing:
+                    missing_ids.append(resume.id)
+                Resume.objects.filter(pk=resume.pk).update(
+                    is_missing=True, file_checked_at=now, restored_at=None
+                )
+            else:
+                updates = {"is_missing": False, "file_checked_at": now}
+                if resume.is_missing:
+                    # The file came back (restored in Cloudinary) - unhide it
+                    # with a restored marker so the UI can show a badge.
+                    restored_ids.append(resume.id)
+                    updates["restored_at"] = now
+                elif resume.restored_at and resume.restored_at < now - timedelta(days=3):
+                    # The "Restored" badge fades out a few days after revival.
+                    updates["restored_at"] = None
+                else:
+                    continue  # unchanged - avoid a pointless write
+                Resume.objects.filter(pk=resume.pk).update(**updates)
+        return Response({
+            "checked": checked,
+            "missing_ids": missing_ids,
+            "restored_ids": restored_ids,
+        })
 
     @action(detail=False, methods=["get"])
     def download_zip(self, request):
@@ -529,6 +729,10 @@ class ResumeViewSet(viewsets.ModelViewSet):
             raise NotFound("Resume not found.")
         if user.is_student and resume.student_id != user.id:
             raise PermissionDenied("You can only preview your own resume.")
+        if resume.is_missing:
+            raise NotFound(
+                "This resume's file was deleted from storage. Re-upload it from your profile."
+            )
         try:
             from apps.documents.services import signed_raw_url
 

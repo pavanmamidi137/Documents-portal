@@ -26,6 +26,8 @@ interface Props<T extends { id: number }> {
     branches?: { id: number; name: string }[];
     semesters?: { id: number; name: string }[];
   };
+  /** Extra buttons rendered in the page header, before the "Add" button. */
+  extraActions?: React.ReactNode;
 }
 
 export function ReferenceCrud<T extends { id: number }>({
@@ -36,6 +38,7 @@ export function ReferenceCrud<T extends { id: number }>({
   fields,
   columns,
   meta,
+  extraActions,
 }: Props<T>) {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
@@ -186,14 +189,17 @@ export function ReferenceCrud<T extends { id: number }>({
         title={title}
         description={description}
         actions={
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-          >
-            <Plus className="size-4" /> Add {singular}
-          </Button>
+          <>
+            {extraActions}
+            <Button
+              onClick={() => {
+                setEditing(null);
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="size-4" /> Add {singular}
+            </Button>
+          </>
         }
       />
 

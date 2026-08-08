@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useQueryClient } from "@tanstack/react-query";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
@@ -77,6 +78,7 @@ export function UploadDocumentDialog({
   onUploaded,
 }: Props) {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const isAdmin = user?.is_super_admin ?? false;
   const isCr = user?.is_cr ?? false;
   const [file, setFile] = useState<File | null>(null);
@@ -112,38 +114,37 @@ export function UploadDocumentDialog({
   const {
     register,
     handleSubmit,
-    watch,
     setValue,
     reset,
+    control,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { description: "" } });
 
-  const selectedBranch = watch("branch");
-  const selectedSemester = watch("semester");
+  // useWatch is the linter-friendly way to observe fields during render.
+  const selectedBranch = useWatch({ control, name: "branch" });
+  const selectedSemester = useWatch({ control, name: "semester" });
+  const selectedSection = useWatch({ control, name: "section" });
+  const selectedCategory = useWatch({ control, name: "category" });
+  const selectedSubject = useWatch({ control, name: "subject" });
+  const selectedUnit = useWatch({ control, name: "unit" });
+  const selectedTitle = useWatch({ control, name: "title" });
 
-  // watch() inside useMemo keeps dependent selects in sync (RHF-safe pattern).
+  // Derived from useWatch so the selects stay in sync without re-watching
+  // inside the memo (subjects with no branch are college-wide, so they appear
+  // for every branch of the semester).
   const sections = useMemo(
-    () => {
-      const branch = watch("branch");
-      return meta.sections.filter((s) => !branch || s.branch === Number(branch));
-    },
-    [meta.sections, watch]
+    () => meta.sections.filter((s) => !selectedBranch || s.branch === Number(selectedBranch)),
+    [meta.sections, selectedBranch]
   );
   const subjects = useMemo(
-    () => {
-      const semester = watch("semester");
-      const branch = watch("branch");
-      // Subjects allotted by the admin branch-wise (a subject with no branch is
-      // college-wide and available to every branch of that semester).
-      return meta.subjects.filter(
+    () =>
+      meta.subjects.filter(
         (s) =>
-          s.semester === Number(semester) &&
-          (!branch || !s.branch || s.branch === Number(branch))
-      );
-    },
-    [meta.subjects, watch]
+          s.semester === Number(selectedSemester) &&
+          (!selectedBranch || !s.branch || s.branch === Number(selectedBranch))
+      ),
+    [meta.subjects, selectedSemester, selectedBranch]
   );
-  const selectedSubject = watch("subject");
   const subjectName =
     meta.subjects.find((s) => s.id === Number(selectedSubject))?.name ?? "";
   const branchName =
@@ -154,12 +155,11 @@ export function UploadDocumentDialog({
   const shareableSections = useMemo(
     () => {
       if (!isCr) return [];
-      const branch = watch("branch");
       return meta.sections.filter(
-        (s) => s.branch === Number(branch) && s.id !== user?.section
+        (s) => s.branch === Number(selectedBranch) && s.id !== user?.section
       );
     },
-    [meta.sections, watch, isCr, user?.section]
+    [meta.sections, isCr, selectedBranch, user?.section]
   );
 
   const toggleShared = (id: number, checked: boolean) => {
@@ -181,6 +181,9 @@ export function UploadDocumentDialog({
 
   useEffect(() => {
     if (open) {
+      // Refetch the shared reference data so subjects/branches/sections added
+      // by the admin appear here instantly (the old bug: stale meta cache).
+      void queryClient.invalidateQueries({ queryKey: ["meta"] });
       // CRs are locked to their own branch/section - default the values so
       // the submit payload always carries valid ids.
       reset({
@@ -194,12 +197,9 @@ export function UploadDocumentDialog({
         unit: "",
       });
       titleDirty.current = false;
-      setFile(null);
-      setFileError("");
-      setSharedSections([]);
-      setTarget("all");
+      // File/error/selection state is reset by the parent's `key` remount.
     }
-  }, [open, reset, lockBranchSection, user?.branch, user?.section]);
+  }, [open, reset, lockBranchSection, user?.branch, user?.section, queryClient]);
 
   const onSubmit = async (values: FormValues) => {
     if (!file) {
@@ -322,7 +322,7 @@ export function UploadDocumentDialog({
               <div className="space-y-2">
                 <Label>Section</Label>
                 <Select
-                  value={watch("section")}
+                  value={selectedSection}
                   onValueChange={(v) => setValue("section", v ?? "")}
                   disabled={lockBranchSection || sections.length === 0}
                 >
@@ -451,7 +451,7 @@ export function UploadDocumentDialog({
             </div>
             <div className="space-y-2">
               <Label>Category</Label>
-              <Select value={watch("category")} onValueChange={(v) => setValue("category", v ?? "")}>
+              <Select value={selectedCategory} onValueChange={(v) => setValue("category", v ?? "")}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
@@ -472,7 +472,7 @@ export function UploadDocumentDialog({
               <BookOpen className="size-3.5 text-muted-foreground" /> Subject
             </Label>
             <Select
-              value={watch("subject")}
+              value={selectedSubject}
               onValueChange={(v) => {
                 setValue("subject", v ?? "");
                 setValue("unit", "");
@@ -508,7 +508,8 @@ export function UploadDocumentDialog({
             ) : subjects.length === 0 ? (
               <p className="text-xs text-muted-foreground">
                 No subjects for {semesterName}
-                {selectedBranch ? ` in ${branchName}` : ""} yet — ask the admin to add subjects.
+                {selectedBranch ? ` in ${branchName}` : ""} yet — add them in Admin → Subjects
+                (or use Bulk Import), then reopen this dialog to see them.
               </p>
             ) : null}
             {errors.subject && <p className="text-xs text-destructive">{errors.subject.message}</p>}
@@ -517,7 +518,7 @@ export function UploadDocumentDialog({
           <div className="space-y-2">
             <Label>Unit</Label>
             <Select
-              value={watch("unit")}
+              value={selectedUnit}
               onValueChange={(v) => {
                 const unit = v ?? "";
                 setValue("unit", unit);
@@ -544,7 +545,7 @@ export function UploadDocumentDialog({
             <Input
               id="doc-title"
               placeholder="e.g. DBMS - Unit 1"
-              value={watch("title")}
+              value={selectedTitle}
               onChange={(e) => {
                 titleDirty.current = true;
                 setValue("title", e.target.value);

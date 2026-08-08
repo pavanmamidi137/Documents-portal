@@ -361,10 +361,15 @@ def upload_resume(student: User, resume_file, request=None) -> Resume:
     resume.cloudinary_url = uploaded["url"]
     resume.public_id = uploaded["public_id"]
     if not created:
-        # A new file is a fresh submission - clear any previous review status.
+        # A new file is a fresh submission - clear any previous review status
+        # and any "file missing" flag from a deleted Cloudinary file.
         resume.is_reviewed = False
         resume.reviewed_by = None
         resume.reviewed_at = None
+    resume.is_missing = False
+    resume.file_checked_at = None
+    # A fresh submission is not a "restored" file - clear any previous badge.
+    resume.restored_at = None
     resume.save()
     log_audit(
         student, "RESUME_UPLOAD" if created else "RESUME_UPDATE", "Resume", resume.id,

@@ -61,7 +61,8 @@ class SearchView(APIView):
 
     @staticmethod
     def _search_documents(user, q: str):
-        qs = Document.objects.all()
+        # Files deleted directly in Cloudinary stay hidden everywhere.
+        qs = Document.objects.exclude(is_missing=True)
         if user.is_cr:
             qs = qs.filter(branch_id=user.branch_id, section_id=user.section_id)
         elif user.is_student:

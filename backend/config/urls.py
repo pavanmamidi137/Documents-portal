@@ -2,11 +2,12 @@ from django.contrib import admin
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from apps.accounts.views import FacultyViewSet, ResumeViewSet, StudentViewSet
+from apps.accounts.views import AdminViewSet, FacultyViewSet, ResumeViewSet, StudentViewSet
 
 router = DefaultRouter()
 router.register("students", StudentViewSet, basename="students")
 router.register("faculty", FacultyViewSet, basename="faculty")
+router.register("admins", AdminViewSet, basename="admins")
 router.register("resumes", ResumeViewSet, basename="resumes")
 
 urlpatterns = [

@@ -1,6 +1,8 @@
+from django.db import IntegrityError
 from django.db.models import Count
 from django.db.models.deletion import ProtectedError
 from rest_framework import viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
@@ -208,6 +210,90 @@ class SubjectViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": "This subject has related documents and cannot be deleted."}
             )
+
+    @action(detail=False, methods=["post"], permission_classes=[IsSuperAdminForWrite])
+    def bulk_import(self, request):
+        """Create subjects for a semester in bulk.
+
+        Body:
+          semester: id (required) - the semester to import INTO
+          branch: id or blank (college-wide when omitted)
+          names:    list of "Name" or "Name, CODE" lines (typed in the UI)
+          copy_ids: existing subject ids to copy into this semester
+
+        Duplicates (same name, semester, branch - case-insensitive) are
+        skipped. Returns created count and the skipped entries.
+        """
+        semester = Semester.objects.filter(pk=request.data.get("semester")).first()
+        if not semester:
+            raise ValidationError({"semester": "Select a semester to import into."})
+        branch = None
+        branch_id = request.data.get("branch")
+        if branch_id:
+            branch = Branch.objects.filter(pk=branch_id).first()
+            if not branch:
+                raise ValidationError({"branch": "Selected branch does not exist."})
+
+        names = request.data.get("names") or []
+        copy_ids = request.data.get("copy_ids") or []
+        if isinstance(names, str):
+            names = [names]
+        if isinstance(copy_ids, str):
+            copy_ids = [copy_ids]
+        if not names and not copy_ids:
+            raise ValidationError(
+                {"detail": "Type at least one subject or select existing subjects to copy."}
+            )
+
+        created: list[Subject] = []
+        skipped: list[dict] = []
+
+        def add(name: str, code: str = "") -> None:
+            name = (name or "").strip()
+            if not name:
+                return
+            if Subject.objects.filter(
+                name__iexact=name, semester=semester, branch=branch
+            ).exists():
+                skipped.append({"name": name, "reason": "already exists"})
+                return
+            try:
+                created.append(
+                    Subject.objects.create(
+                        name=name, code=(code or "").strip(),
+                        semester=semester, branch=branch,
+                    )
+                )
+            except IntegrityError:  # pragma: no cover - racing insert safety
+                # A subject with the exact same name was created concurrently.
+                skipped.append({"name": name, "reason": "already exists"})
+
+        for line in names:
+            line = line.strip()
+            if not line:
+                continue
+            if "," in line:
+                name, _, code = line.partition(",")
+                add(name, code)
+            else:
+                add(line)
+
+        if copy_ids:
+            valid = [int(i) for i in copy_ids if str(i).lstrip("-").isdigit()]
+            for subj in Subject.objects.filter(id__in=valid):
+                add(subj.name, subj.code)
+
+        log_audit(
+            request.user, "SUBJECT_BULK_IMPORT", "Subject", "",
+            {
+                "semester": semester.name,
+                "branch": branch.name if branch else None,
+                "created": len(created),
+                "skipped": len(skipped),
+            },
+            request,
+        )
+        return Response({"created": len(created), "skipped": skipped})
 
 
 class MetaView(viewsets.ViewSet):

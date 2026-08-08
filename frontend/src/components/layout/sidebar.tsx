@@ -20,6 +20,7 @@ import {
   PanelLeftClose,
   ScrollText,
   Settings2,
+  ShieldCheck,
   Tags,
   Users,
   X,
@@ -53,6 +54,7 @@ const FACULTY_ONLY: NavItem[] = [
 ];
 
 const ADMIN_ONLY: NavItem[] = [
+  { href: "/admin/admins", label: "Admins", icon: ShieldCheck },
   { href: "/admin/branches", label: "Branches", icon: Building2 },
   { href: "/admin/sections", label: "Sections", icon: Layers },
   { href: "/admin/students", label: "Students", icon: Users },

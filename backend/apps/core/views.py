@@ -39,7 +39,7 @@ class DashboardView(APIView):
 
         recent_docs = Document.objects.select_related(
             "branch", "section", "semester", "category", "subject", "uploaded_by"
-        ).order_by("-created_at")[:8]
+        ).exclude(is_missing=True).order_by("-created_at")[:8]
         docs_by_category = (
             Document.objects.values("category__name")
             .annotate(count=Count("id"))
@@ -93,6 +93,8 @@ class DashboardView(APIView):
             if user.branch_id
             else Resume.objects.none()
         )
+        # Resumes whose Cloudinary file was deleted are hidden everywhere.
+        resumes = resumes.exclude(is_missing=True)
         recent = (
             resumes.select_related("student", "student__section")
             .order_by("-updated_at")[:8]

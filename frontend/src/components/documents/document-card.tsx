@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Download, Eye, Trash2 } from "lucide-react";
+import { Download, Eye, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentTypeMeta } from "@/lib/document-types";
@@ -108,6 +108,15 @@ export function DocumentCard({
         <Badge variant="outline" className="text-[11px]">
           {document.semester_name}
         </Badge>
+        {document.restored_at && (
+          <Badge
+            variant="outline"
+            className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-[11px] text-emerald-600 dark:text-emerald-400"
+            title="This file was deleted in Cloudinary and restored recently."
+          >
+            <RotateCcw className="size-3" /> Restored
+          </Badge>
+        )}
       </div>
 
       <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">

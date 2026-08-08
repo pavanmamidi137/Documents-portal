@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -11,8 +11,10 @@ import {
   FileUp,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Send,
   Trash2,
+  TriangleAlert,
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -42,6 +44,38 @@ export default function ResumePage() {
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["resume"] });
+
+  // Live-check the stored file against Cloudinary once per page load, so a
+  // resume deleted directly in Cloudinary shows the re-upload prompt instantly
+  // and a file restored in Cloudinary reappears with a "Restored" badge.
+  useEffect(() => {
+    if (!resume) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await http.get<{
+          id: number;
+          is_missing: boolean;
+          restored_at: string | null;
+        }>(`/resumes/${resume.id}/check/`);
+        if (cancelled) return;
+        const next = {
+          ...resume,
+          is_missing: res.is_missing,
+          restored_at: res.restored_at,
+        };
+        // Only write when something actually changed so the check can't loop.
+        if (next.is_missing !== resume.is_missing || next.restored_at !== resume.restored_at) {
+          queryClient.setQueryData(["resume", "mine"], next);
+        }
+      } catch {
+        // Best-effort - never block the page on the check.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [resume, queryClient]);
 
   const pickFile = () => fileRef.current?.click();
 
@@ -126,9 +160,21 @@ export default function ResumePage() {
                   <p className="text-xs text-muted-foreground">
                     {formatBytes(resume.file_size)} · Updated {formatDate(resume.updated_at)}
                   </p>
-                  <p className="mt-0.5 text-xs text-sky-600 dark:text-sky-400">
-                    <CheckCircle2 className="mr-1 inline size-3.5" /> Delivered to faculty
-                  </p>
+                  {resume.is_missing ? (
+                    <p className="mt-0.5 text-xs font-medium text-destructive">
+                      <TriangleAlert className="mr-1 inline size-3.5" /> File deleted from storage —
+                      re-upload to keep it visible to faculty
+                    </p>
+                  ) : resume.restored_at ? (
+                    <p className="mt-0.5 text-xs text-emerald-600 dark:text-emerald-400">
+                      <RotateCcw className="mr-1 inline size-3.5" /> File restored in storage —
+                      visible to faculty again
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-xs text-sky-600 dark:text-sky-400">
+                      <CheckCircle2 className="mr-1 inline size-3.5" /> Delivered to faculty
+                    </p>
+                  )}
                   {resume.is_reviewed ? (
                     <p className="mt-0.5 text-xs text-emerald-600 dark:text-emerald-400">
                       Reviewed by {resume.reviewed_by_name ?? "faculty"}
@@ -141,12 +187,28 @@ export default function ResumePage() {
                   )}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  <Badge
-                    variant="outline"
-                    className="gap-1 border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400"
-                  >
-                    <Send className="size-3.5" /> Delivered
-                  </Badge>
+                  {resume.is_missing ? (
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-destructive/40 bg-destructive/10 text-destructive"
+                    >
+                      <TriangleAlert className="size-3.5" /> File missing
+                    </Badge>
+                  ) : resume.restored_at ? (
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    >
+                      <RotateCcw className="size-3.5" /> Restored
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400"
+                    >
+                      <Send className="size-3.5" /> Delivered
+                    </Badge>
+                  )}
                   {resume.is_reviewed ? (
                     <Badge
                       variant="outline"
@@ -168,6 +230,8 @@ export default function ResumePage() {
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
+                  disabled={resume.is_missing}
+                  title={resume.is_missing ? "File deleted from storage - re-upload first" : undefined}
                   onClick={async () => {
                     const err = await openResumeInNewTab(resume);
                     if (err) toast.error(err);

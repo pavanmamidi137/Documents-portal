@@ -11,6 +11,6 @@ export function useMetaData() {
     queryFn: () => http.get<MetaData>("/meta/"),
     // Short cache so newly created branches/sections/subjects show up in the
     // upload forms within seconds instead of several minutes.
-    staleTime: 30_000,
+    staleTime: 10_000,
   });
 }

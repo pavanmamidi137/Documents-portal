@@ -1,11 +1,17 @@
 "use client";
 
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ListPlus } from "lucide-react";
+
 import { RoleGuard } from "@/components/role-guard";
 import { ReferenceCrud } from "@/components/reference/reference-crud";
 import type { Column } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useMetaData } from "@/lib/use-meta";
 import { LoadingPage } from "@/components/loading-page";
+import { BulkSubjectImportDialog } from "./bulk-subject-import-dialog";
 
 interface SubjectRow {
   id: number;
@@ -20,6 +26,8 @@ interface SubjectRow {
 
 export default function SubjectsPage() {
   const { data: meta, isLoading } = useMetaData();
+  const queryClient = useQueryClient();
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const columns: Column<SubjectRow>[] = [
     { key: "name", header: "Subject", cell: (s) => <span className="font-medium">{s.name}</span> },
@@ -43,6 +51,11 @@ export default function SubjectsPage() {
 
   if (isLoading || !meta) return <LoadingPage />;
 
+  const refreshAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["subjects"] });
+    queryClient.invalidateQueries({ queryKey: ["meta"] });
+  };
+
   return (
     <RoleGuard roles={["SUPER_ADMIN"]}>
       <ReferenceCrud
@@ -50,6 +63,11 @@ export default function SubjectsPage() {
         title="Subject Management"
         description="Subjects are linked to a semester; leave branch empty for college-wide subjects."
         singular="Subject"
+        extraActions={
+          <Button variant="outline" onClick={() => setBulkOpen(true)} className="gap-2">
+            <ListPlus className="size-4" /> Bulk Import
+          </Button>
+        }
         fields={[
           { name: "name", label: "Subject Name", type: "text", placeholder: "e.g. Operating Systems", required: true },
           { name: "code", label: "Code (optional)", type: "text", placeholder: "e.g. CS303" },
@@ -58,6 +76,15 @@ export default function SubjectsPage() {
         ]}
         columns={columns}
         meta={meta}
+      />
+
+      {/* key remounts the dialog on open so its form state starts fresh. */}
+      <BulkSubjectImportDialog
+        key={String(bulkOpen)}
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        meta={meta}
+        onImported={refreshAll}
       />
     </RoleGuard>
   );

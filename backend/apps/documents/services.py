@@ -139,6 +139,22 @@ def delete_document_file(public_id: str) -> bool:
         return False
 
 
+def cloudinary_file_exists(public_id: str):
+    """Check whether a raw file still exists on Cloudinary (admin API).
+
+    Returns True when present, False when it has been deleted, and None when
+    the check itself failed (auth/network) - callers must not mark files as
+    missing when the answer is unknown.
+    """
+    try:
+        cloudinary.api.resource(public_id, resource_type="raw")
+        return True
+    except cloudinary.exceptions.NotFound:
+        return False
+    except Exception:
+        return None
+
+
 def signed_raw_url(public_id: str, attachment: bool = False) -> str:
     """Cloudinary delivery URL for a raw file, signed with the API secret.
 
