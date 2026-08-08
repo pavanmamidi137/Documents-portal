@@ -96,6 +96,9 @@ export const http = {
         timeout,
       })
       .then((r) => r.data),
+  /** Fetch a file as a blob (used to open previews without auth headers). */
+  blob: (url: string, params?: Record<string, unknown>) =>
+    api.get<Blob>(url, { params, responseType: "blob" }).then((r) => r.data),
   /** Fetch a file as a blob and trigger a browser download. */
   download: async (url: string, params?: Record<string, unknown>, filename?: string) => {
     const res = await api.get(url, { params, responseType: "blob" });
@@ -109,6 +112,27 @@ export const http = {
     URL.revokeObjectURL(blobUrl);
   },
 };
+
+/**
+ * Open a resume PDF in a new tab.
+ *
+ * The file streams through the API (with the auth header) so the browser
+ * receives the correct PDF content type - Cloudinary raw URLs make the
+ * built-in viewer fail with "Failed to load PDF document".
+ * Returns false when the preview could not be loaded.
+ */
+export async function openResumeInNewTab(resume: { id: number }): Promise<boolean> {
+  try {
+    const blob = await http.blob(`/resumes/${resume.id}/preview/`);
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    // Never revoked: the PDF viewer may lazy-fetch ranges while the tab is
+    // open, and files are capped at 10MB so memory cost is negligible.
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Fetch the signed-in student's resume, or null when none is uploaded yet

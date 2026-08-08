@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import {
   Building2,
+  Clock,
   FileText,
   FileUser,
   FolderOpen,
@@ -46,7 +47,8 @@ const STAT_META: Record<string, { label: string; icon: typeof Users; gradient: s
   categories: { label: "Categories Used", icon: FolderOpen, gradient: "from-teal-500 to-emerald-600" },
   semesters: { label: "Semesters", icon: Layers, gradient: "from-orange-500 to-amber-600" },
   announcements: { label: "Announcements", icon: Megaphone, gradient: "from-pink-500 to-rose-600" },
-  resumes: { label: "Student Resumes", icon: FileUser, gradient: "from-cyan-500 to-sky-600" },
+  resumes: { label: "Resumes Uploaded", icon: FileUser, gradient: "from-cyan-500 to-sky-600" },
+  pending_resumes: { label: "Pending Resumes", icon: Clock, gradient: "from-amber-500 to-orange-600" },
 };
 
 const CHART_COLORS = ["#6366f1", "#8b5cf6", "#0ea5e9", "#10b981", "#f59e0b", "#f43f5e"];

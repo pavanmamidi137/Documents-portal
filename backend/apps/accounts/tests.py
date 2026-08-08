@@ -697,6 +697,97 @@ class ResumeTests(TestCase):
         resume.refresh_from_db()
         self.assertFalse(resume.is_reviewed)
 
+    # -- preview (browser PDF rendering) -------------------------------------
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_faculty_previews_resume(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "https://storage.example/r.pdf", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 hello"
+            client = self._client(self.faculty)
+            response = client.get(f"/api/resumes/{resume.id}/preview/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertEqual(response.content, b"%PDF-1.4 hello")
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_student_previews_own_resume(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "https://storage.example/r.pdf", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 mine"
+            client = self._client(self.student)
+            response = client.get(f"/api/resumes/{resume.id}/preview/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_student_cannot_preview_others_resume(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        other = User.objects.create_user(
+            roll_number="21IT02", password="x", full_name="Arjun",
+            branch=self.branch, section=self.section_a,
+        )
+        services.upload_resume(other, self._resume_file())
+        resume = Resume.objects.get(student=other)
+        client = self._client(self.student)
+        response = client.get(f"/api/resumes/{resume.id}/preview/")
+        self.assertEqual(response.status_code, 403)
+
+    # -- bulk review ---------------------------------------------------------
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_faculty_marks_all_branch_resumes_reviewed(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        sec_b = User.objects.create_user(
+            roll_number="21IT03", password="x", full_name="Bhavya",
+            branch=self.branch, section=self.section_b,
+        )
+        services.upload_resume(sec_b, self._resume_file("b.pdf"))
+        other_branch = User.objects.create_user(
+            roll_number="22CSE01", password="x", full_name="Ravi",
+            branch=self.other_branch, section=self.other_section,
+        )
+        services.upload_resume(other_branch, self._resume_file("o.pdf"))
+
+        client = self._client(self.faculty)
+        response = client.post("/api/resumes/mark_all_reviewed/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated"], 2)  # own branch only
+        self.assertTrue(Resume.objects.get(student=self.student).is_reviewed)
+        self.assertTrue(Resume.objects.get(student=sec_b).is_reviewed)
+        # The other branch's resume is untouched.
+        self.assertFalse(Resume.objects.get(student=other_branch).is_reviewed)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_mark_all_respects_section_filter(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())  # section A
+        sec_b = User.objects.create_user(
+            roll_number="21IT03", password="x", full_name="Bhavya",
+            branch=self.branch, section=self.section_b,
+        )
+        services.upload_resume(sec_b, self._resume_file("b.pdf"))
+
+        client = self._client(self.faculty)
+        response = client.post(
+            "/api/resumes/mark_all_reviewed/?section=%d" % self.section_a.id,
+            {}, format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated"], 1)
+        self.assertTrue(Resume.objects.get(student=self.student).is_reviewed)
+        self.assertFalse(Resume.objects.get(student=sec_b).is_reviewed)
+
+    def test_student_cannot_mark_all(self):
+        client = self._client(self.student)
+        response = client.post("/api/resumes/mark_all_reviewed/", {}, format="json")
+        self.assertEqual(response.status_code, 403)
+
     @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_replacing_resume_resets_review_status(self, mock_upload):
         mock_upload.side_effect = [

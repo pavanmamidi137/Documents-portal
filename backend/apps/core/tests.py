@@ -3,7 +3,8 @@ from types import SimpleNamespace
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.accounts.models import User
+from apps.accounts.models import Resume, User
+from apps.college.models import Branch, Section
 from apps.core.models import AuditLog, SiteSetting
 from apps.core.permissions import IsSuperAdmin, IsSuperAdminOrCR, IsStudent
 from apps.core.utils import csv_safe
@@ -137,3 +138,51 @@ class AuditLogClearTests(TestCase):
         client = self._client(self.cr)
         response = client.post("/api/audit-logs/clear/", {"all": True}, format="json")
         self.assertEqual(response.status_code, 403)
+
+
+class FacultyDashboardTests(TestCase):
+    def setUp(self):
+        self.branch = Branch.objects.create(name="IT", code="IT")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.other_branch = Branch.objects.create(name="CSE", code="CSE")
+        self.faculty = User.objects.create_user(
+            roll_number="FAC01", password="x", full_name="Prof. Rao",
+            branch=self.branch, role=User.Role.FACULTY,
+        )
+        self.student = User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya",
+            branch=self.branch, section=self.section_a, role=User.Role.STUDENT,
+        )
+        User.objects.create_user(
+            roll_number="CR01", password="x", full_name="Charan",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        User.objects.create_user(
+            roll_number="22CSE01", password="x", full_name="Ravi",
+            branch=self.other_branch, role=User.Role.STUDENT,
+        )
+        Resume.objects.create(
+            student=self.student, file_name="r.pdf", file_size=10,
+            cloudinary_url="https://x.example/r.pdf", public_id="r",
+            is_reviewed=False,
+        )
+
+    def _client(self):
+        client = APIClient()
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(self.faculty)}")
+        return client
+
+    def test_faculty_dashboard_totals_cover_own_branch(self):
+        response = self._client().get("/api/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        totals = response.data["totals"]
+        self.assertEqual(totals["branches"], 1)
+        self.assertEqual(totals["sections"], 2)
+        self.assertEqual(totals["crs"], 1)
+        self.assertEqual(totals["students"], 1)
+        self.assertEqual(totals["resumes"], 1)
+        self.assertEqual(totals["pending_resumes"], 1)
+        self.assertEqual(response.data["role"], "FACULTY")

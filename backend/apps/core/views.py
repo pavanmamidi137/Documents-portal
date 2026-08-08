@@ -8,7 +8,7 @@ from apps.college.models import Branch, Section, Subject
 from apps.documents.models import Document
 from apps.documents.serializers import DocumentListSerializer
 
-from apps.accounts.models import Resume
+from apps.accounts.models import Resume, User
 
 
 def health(request):
@@ -85,8 +85,9 @@ class DashboardView(APIView):
 
     @staticmethod
     def _faculty_stats(user):
-        """Faculty dashboard: students + resumes across their whole branch."""
-        students = user.branch.students.filter(role="STUDENT") if user.branch else None
+        """Faculty dashboard: everything about their own branch."""
+        students = user.branch.students.filter(role=User.Role.STUDENT) if user.branch else None
+        crs = user.branch.students.filter(role=User.Role.CR) if user.branch else None
         resumes = (
             Resume.objects.filter(student__branch_id=user.branch_id)
             if user.branch_id
@@ -99,9 +100,12 @@ class DashboardView(APIView):
         return {
             "role": "FACULTY",
             "totals": {
-                "students": students.count() if students else 0,
+                "branches": 1,
                 "sections": user.branch.sections.count() if user.branch else 0,
+                "crs": crs.count() if crs else 0,
+                "students": students.count() if students else 0,
                 "resumes": resumes.count(),
+                "pending_resumes": resumes.filter(is_reviewed=False).count(),
             },
             "recent_resumes": [
                 {

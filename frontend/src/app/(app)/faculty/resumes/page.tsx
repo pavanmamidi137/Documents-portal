@@ -7,7 +7,15 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { CheckCircle2, Circle, Clock, Download, Eye, FileText } from "lucide-react";
+import {
+  CheckCheck,
+  CheckCircle2,
+  Circle,
+  Clock,
+  Download,
+  Eye,
+  FileText,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { RoleGuard } from "@/components/role-guard";
@@ -26,7 +34,8 @@ import {
 import { useMetaData } from "@/lib/use-meta";
 import { useAuth } from "@/lib/auth";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
-import { http } from "@/lib/api";
+import { http, openResumeInNewTab } from "@/lib/api";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Paginated, Resume } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 
@@ -42,6 +51,7 @@ export default function FacultyResumesPage() {
   const debouncedQ = useDebouncedValue(q);
   const [branch, setBranch] = useState("");
   const [section, setSection] = useState("");
+  const [markAllOpen, setMarkAllOpen] = useState(false);
 
   const branches = meta?.branches ?? [];
   // Faculty are locked to their own branch; admins pick from all branches.
@@ -95,6 +105,28 @@ export default function FacultyResumesPage() {
       if (ctx?.previous) queryClient.setQueryData(currentQueryKey, ctx.previous);
       toast.error(getErrorMessage(error));
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["resumes", "list"] }),
+  });
+
+  /** Open/download a resume and automatically mark it as reviewed. */
+  const viewResume = (r: Resume, open: (r: Resume) => Promise<void> | void) => {
+    // Read the live review state from the cache so a fast second click on the
+    // same row can't double-toggle (the optimistic flip already updated it).
+    const live = queryClient
+      .getQueryData<Paginated<Resume>>(currentQueryKey)
+      ?.results.find((x) => x.id === r.id);
+    if (!(live?.is_reviewed ?? r.is_reviewed)) markReviewed.mutate(r);
+    void open(r);
+  };
+
+  // Bulk action: mark every resume in the current filtered view as reviewed.
+  const markAll = useMutation({
+    mutationFn: () => http.post<{ updated: number }>("/resumes/mark_all_reviewed/", {}),
+    onSuccess: (res) => {
+      setMarkAllOpen(false);
+      toast.success(`Marked ${res.updated} resume${res.updated === 1 ? "" : "s"} as reviewed.`);
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["resumes", "list"] }),
   });
 
@@ -206,9 +238,15 @@ export default function FacultyResumesPage() {
             size="icon"
             variant="ghost"
             className="size-8"
-            title="Preview resume"
+            title="Preview resume (marks as reviewed)"
             aria-label={`Preview ${r.student_name}'s resume`}
-            onClick={() => window.open(r.cloudinary_url, "_blank", "noopener")}
+            onClick={() =>
+              viewResume(r, async (res) => {
+                if (!(await openResumeInNewTab(res))) {
+                  toast.error("Could not load the resume file. Please try again.");
+                }
+              })
+            }
           >
             <Eye className="size-4" />
           </Button>
@@ -216,9 +254,9 @@ export default function FacultyResumesPage() {
             size="icon"
             variant="ghost"
             className="size-8"
-            title="Download resume"
+            title="Download resume (marks as reviewed)"
             aria-label={`Download ${r.student_name}'s resume`}
-            onClick={() => handleDownload(r)}
+            onClick={() => viewResume(r, (res) => handleDownload(res))}
           >
             <Download className="size-4" />
           </Button>
@@ -265,6 +303,14 @@ export default function FacultyResumesPage() {
             className="h-9 bg-muted/50 pl-3"
           />
         </div>
+        <Button
+          variant="outline"
+          className="gap-2"
+          disabled={!data?.count || markAll.isPending}
+          onClick={() => setMarkAllOpen(true)}
+        >
+          <CheckCheck className="size-4" /> Mark all reviewed
+        </Button>
         {isAdmin && (
           <Select value={branch} onValueChange={(v) => setFilter("branch", v ?? "")}>
             <SelectTrigger className="w-40">
@@ -308,8 +354,18 @@ export default function FacultyResumesPage() {
       />
 
       <p className="mt-4 text-xs text-muted-foreground">
-        Students manage their own resumes — they can upload, preview, replace or delete them from their profile.
+        Students manage their own resumes — they can upload, preview, replace or delete them from their profile. Viewing or downloading a resume marks it as reviewed.
       </p>
+
+      <ConfirmDialog
+        open={markAllOpen}
+        onOpenChange={setMarkAllOpen}
+        title="Mark all resumes as reviewed?"
+        description={`This marks every resume in the current filtered view (${data?.count ?? 0} resume${(data?.count ?? 0) === 1 ? "" : "s"}) as reviewed.`}
+        confirmLabel="Mark all reviewed"
+        loading={markAll.isPending}
+        onConfirm={() => markAll.mutate()}
+      />
     </RoleGuard>
   );
 }

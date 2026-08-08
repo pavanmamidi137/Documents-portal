@@ -11,6 +11,7 @@ import {
   FileUp,
   Loader2,
   RefreshCw,
+  Send,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -22,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { fetchMyResume, http } from "@/lib/api";
+import { fetchMyResume, http, openResumeInNewTab } from "@/lib/api";
 import type { Resume } from "@/lib/types";
 import { formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 
@@ -51,11 +52,11 @@ export default function ResumePage() {
       const form = new FormData();
       form.append("file", file);
       const saved = await http.upload<Resume>("/resumes/", form);
-      toast.success(resume ? "Resume updated." : "Resume uploaded.");
+      toast.success(resume ? "Resume updated and delivered to faculty." : "Resume delivered to faculty.");
       queryClient.setQueryData(["resume", "mine"], saved);
       invalidate();
     } catch (error) {
-      toast.error(getErrorMessage(error));
+      toast.error(`Failed to send to faculty — ${getErrorMessage(error)}`);
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -112,7 +113,7 @@ export default function ResumePage() {
                 <FileText className="size-5 text-primary" /> Your Resume
               </CardTitle>
               <CardDescription>
-                Faculty in your branch can see this file. Re-upload anytime to keep it current.
+                Your resume is shared with every faculty member in your branch. Re-upload anytime to keep it current.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -125,6 +126,9 @@ export default function ResumePage() {
                   <p className="text-xs text-muted-foreground">
                     {formatBytes(resume.file_size)} · Updated {formatDate(resume.updated_at)}
                   </p>
+                  <p className="mt-0.5 text-xs text-sky-600 dark:text-sky-400">
+                    <CheckCircle2 className="mr-1 inline size-3.5" /> Delivered to faculty
+                  </p>
                   {resume.is_reviewed ? (
                     <p className="mt-0.5 text-xs text-emerald-600 dark:text-emerald-400">
                       Reviewed by {resume.reviewed_by_name ?? "faculty"}
@@ -136,27 +140,39 @@ export default function ResumePage() {
                     </p>
                   )}
                 </div>
-                {resume.is_reviewed ? (
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
                   <Badge
                     variant="outline"
-                    className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    className="gap-1 border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400"
                   >
-                    <CheckCircle2 className="size-3.5" /> Reviewed
+                    <Send className="size-3.5" /> Delivered
                   </Badge>
-                ) : (
-                  <Badge
-                    variant="outline"
-                    className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                  >
-                    <Clock className="size-3.5" /> Pending
-                  </Badge>
-                )}
+                  {resume.is_reviewed ? (
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    >
+                      <CheckCircle2 className="size-3.5" /> Reviewed
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                    >
+                      <Clock className="size-3.5" /> Pending
+                    </Badge>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => window.open(resume.cloudinary_url, "_blank", "noopener")}
+                  onClick={async () => {
+                    if (!(await openResumeInNewTab(resume))) {
+                      toast.error("Could not load the resume file. Please try again.");
+                    }
+                  }}
                 >
                   <Eye className="size-4" /> Preview
                 </Button>

@@ -1,5 +1,8 @@
+import urllib.request
+
 from django.db.models import Q
 from django.conf import settings
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -33,6 +36,18 @@ from .serializers import (
     UserSerializer,
 )
 from . import services
+
+
+def _resume_content_type(file_name: str) -> str:
+    """Map a resume file name to its browser content type."""
+    name = (file_name or "").lower()
+    if name.endswith(".pdf"):
+        return "application/pdf"
+    if name.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if name.endswith(".doc"):
+        return "application/msword"
+    return "application/octet-stream"
 
 
 # ---------------------------------------------------------------------------
@@ -350,9 +365,9 @@ class ResumeViewSet(viewsets.ModelViewSet):
         # Students manage their own resume; faculty/admins browse the list.
         if self.action in ("create", "mine"):
             return [IsStudent()]
-        if self.action in ("list", "mark_reviewed"):
+        if self.action in ("list", "mark_reviewed", "mark_all_reviewed"):
             return [IsSuperAdminOrFaculty()]
-        # destroy: ownership is checked in the body (owner student or admin).
+        # destroy/preview: ownership is checked in the body (owner student or admin).
         return [IsAuthenticated()]
 
     def get_queryset(self):
@@ -431,3 +446,56 @@ class ResumeViewSet(viewsets.ModelViewSet):
             request,
         )
         return Response(ResumeSerializer(resume).data)
+
+    @action(detail=False, methods=["post"])
+    def mark_all_reviewed(self, request):
+        """Mark every resume in the current filtered view as reviewed.
+
+        The viewset queryset applies the caller's branch scope and the same
+        search/branch/section filters as the list endpoint, so this marks all
+        resumes the faculty member can currently see.
+        """
+        qs = self.get_queryset()
+        now = timezone.now()
+        count = qs.filter(is_reviewed=False).update(
+            is_reviewed=True,
+            reviewed_by=request.user,
+            reviewed_at=now,
+            # .update() skips auto_now, so set updated_at explicitly.
+            updated_at=now,
+        )
+        log_audit(
+            request.user, "RESUME_REVIEW_ALL", "Resume", "",
+            {"updated": count},
+            request,
+        )
+        return Response({"updated": count})
+
+    @action(detail=True, methods=["get"], url_path="preview")
+    def preview(self, request, pk=None):
+        """Stream the resume file with correct headers so the browser can render it.
+
+        Cloudinary serves raw uploads with an octet-stream content type, which
+        makes the browser's PDF viewer fail with "Failed to load PDF document".
+        Streaming the bytes through this endpoint fixes the preview for every
+        browser while keeping the file behind the portal's authentication.
+        """
+        resume = self.get_object()
+        user = request.user
+        # Students may only preview their own resume; faculty are already
+        # scoped to their branch by get_queryset().
+        if user.is_student and resume.student_id != user.id:
+            raise PermissionDenied("You can only preview your own resume.")
+        # Only fetch https URLs (values are Cloudinary-sourced, but cheap to enforce).
+        if not resume.cloudinary_url.lower().startswith("https://"):
+            raise NotFound("The resume file URL is invalid.")
+        try:
+            with urllib.request.urlopen(resume.cloudinary_url, timeout=30) as resp:
+                content = resp.read()
+        except Exception:
+            raise NotFound("Could not load the resume file from storage.")
+        response = HttpResponse(
+            content, content_type=_resume_content_type(resume.file_name)
+        )
+        response["Content-Disposition"] = f'inline; filename="{resume.file_name}"'
+        return response
