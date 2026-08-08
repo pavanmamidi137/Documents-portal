@@ -45,8 +45,21 @@ interface DataTableProps<T> {
   /** Enable multi-row selection via checkboxes and Ctrl/Cmd+click. */
   selectable?: boolean;
   onSelectionChange?: (keys: Array<string | number>) => void;
-  /** Rendered above the table while rows are selected (bulk actions). */
-  selectionBar?: (selected: T[], clearSelection: () => void) => ReactNode;
+  /**
+   * Keep the selection bar visible even with no rows ticked - used for
+   * "select all matching across all pages" (the parent tracks that state).
+   */
+  selectionActive?: boolean;
+  /**
+   * Rendered above the table while rows are selected (bulk actions).
+   * `selectAllOnPage` selects every row visible on the current page in one
+   * click, so bulk delete reaches everything without per-row ticking.
+   */
+  selectionBar?: (
+    selected: T[],
+    clearSelection: () => void,
+    selectAllOnPage: () => void
+  ) => ReactNode;
   /**
    * Called with `page + 1` when a next page exists, so the consumer can
    * prefetch it (e.g. via queryClient.prefetchQuery) and make paging instant.
@@ -71,6 +84,7 @@ export function DataTable<T>({
   rowKey,
   selectable = false,
   onSelectionChange,
+  selectionActive = false,
   selectionBar,
   prefetchNextPage,
 }: DataTableProps<T>) {
@@ -193,13 +207,13 @@ export function DataTable<T>({
         </div>
       )}
 
-      {selectable && selected.size > 0 && selectionBar && (
+      {selectable && (selected.size > 0 || selectionActive) && selectionBar && (
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
           className="rounded-xl border border-primary/30 bg-primary/5 p-3"
         >
-          {selectionBar(selectedRows, clearSelection)}
+          {selectionBar(selectedRows, clearSelection, () => setAllOnPage(true))}
         </motion.div>
       )}
 
@@ -274,9 +288,9 @@ export function DataTable<T>({
             {count === 0 ? 0 : (page - 1) * pageSize + 1}–{Math.min(page * pageSize, count)}
           </span>{" "}
           of <span className="font-medium text-foreground">{count}</span>
-          {selectable && selected.size > 0 && (
+          {selectable && (selected.size > 0 || selectionActive) && (
             <span className="ml-2 text-primary">
-              · {selected.size} selected
+              · {selectionActive ? `all ${count} matching selected` : `${selected.size} selected`}
             </span>
           )}
         </p>

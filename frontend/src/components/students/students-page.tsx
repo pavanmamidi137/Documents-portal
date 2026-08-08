@@ -14,6 +14,7 @@ import {
   Plus,
   Power,
   RotateCcw,
+  SquareCheckBig,
   Trash2,
 } from "lucide-react";
 import {
@@ -82,6 +83,9 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   const [bulkTargets, setBulkTargets] = useState<User[]>([]);
   const [pendingBulk, setPendingBulk] = useState<BulkAction | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
+  // "Select all across all pages" - deletes every student matching the
+  // current search/filters in one request instead of one row at a time.
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
 
   // Debounce filter changes (like search) so rapid changes batch into one
   // request instead of firing one query per selection.
@@ -120,6 +124,8 @@ export function StudentsPage({ meta, isCr = false }: Props) {
 
   const setFilter = (key: string, value: string) => {
     setPage(1);
+    // The "matching set" changes with the filters - drop all-pages mode.
+    setSelectAllMatching(false);
     setFilters((prev) => {
       const next = { ...prev };
       if (value) next[key] = value;
@@ -176,18 +182,20 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   };
 
   const executeBulk = async (targets: User[], action: BulkAction) => {
-    if (targets.length === 0) return;
+    if (targets.length === 0 && !selectAllMatching) return;
     setBulkRunning(true);
     const targetIds = new Set(targets.map((s) => s.id));
     const previous = queryClient.getQueryData<Paginated<User>>(currentQueryKey);
     if (action.type === "delete") {
-      // Optimistic removal of every selected row before the requests fire.
+      // Optimistic removal of every matching row before the requests fire.
       queryClient.setQueryData<Paginated<User>>(currentQueryKey, (old) =>
         old
           ? {
               ...old,
-              count: Math.max(0, old.count - targetIds.size),
-              results: old.results.filter((s) => !targetIds.has(s.id)),
+              count: selectAllMatching ? 0 : Math.max(0, old.count - targetIds.size),
+              results: selectAllMatching
+                ? []
+                : old.results.filter((s) => !targetIds.has(s.id)),
             }
           : old
       );
@@ -195,36 +203,72 @@ export function StudentsPage({ meta, isCr = false }: Props) {
     let ok = 0;
     const failed: string[] = [];
     try {
-      for (const s of targets) {
+      if (selectAllMatching) {
+        // Delete EVERY matching student in ONE request, scoped server-side by
+        // the same filters the list is showing (search/branch/section/role).
         try {
-          switch (action.type) {
-            case "delete":
-              await http.delete(`/students/${s.id}/`);
-              break;
-            case "reset_password":
-              await http.post(`/students/${s.id}/reset_password/`, {
-                new_password: s.roll_number,
-              });
-              break;
-            case "activate":
-              await http.post(`/students/${s.id}/activate/`);
-              break;
-            case "deactivate":
-              await http.post(`/students/${s.id}/deactivate/`);
-              break;
-            case "promote":
-              await http.post(`/students/${s.id}/promote/`);
-              break;
-            case "demote":
-              await http.post(`/students/${s.id}/demote/`);
-              break;
+          const res = await http.post<{ deleted: number }>(
+            "/students/bulk_delete/",
+            { all_matching: true },
+            { search: debouncedQ || undefined, ...debouncedFilters }
+          );
+          ok = res.deleted;
+          const skipped = Math.max(0, (data?.count ?? 0) - res.deleted);
+          if (skipped > 0) {
+            failed.push(
+              `${skipped} could not be deleted (outside your section scope or already removed)`
+            );
           }
-          ok += 1;
         } catch {
-          failed.push(s.roll_number);
+          failed.push("the bulk request could not be completed");
+        }
+      } else if (action.type === "delete") {
+        // ONE request for the whole selection - instant even for hundreds of
+        // rows (scope checks happen server-side per student).
+        try {
+          const res = await http.post<{ deleted: number }>("/students/bulk_delete/", {
+            ids: targets.map((s) => s.id),
+          });
+          ok = res.deleted;
+          const skipped = targets.length - res.deleted;
+          if (skipped > 0) {
+            failed.push(
+              `${skipped} could not be deleted (outside your section scope or already removed)`
+            );
+          }
+        } catch {
+          failed.push(...targets.map((s) => s.roll_number));
+        }
+      } else {
+        for (const s of targets) {
+          try {
+            switch (action.type) {
+              case "reset_password":
+                await http.post(`/students/${s.id}/reset_password/`, {
+                  new_password: s.roll_number,
+                });
+                break;
+              case "activate":
+                await http.post(`/students/${s.id}/activate/`);
+                break;
+              case "deactivate":
+                await http.post(`/students/${s.id}/deactivate/`);
+                break;
+              case "promote":
+                await http.post(`/students/${s.id}/promote/`);
+                break;
+              case "demote":
+                await http.post(`/students/${s.id}/demote/`);
+                break;
+            }
+            ok += 1;
+          } catch {
+            failed.push(s.roll_number);
+          }
         }
       }
-      toast.success(`${ok} student${ok === 1 ? "" : "s"} ${action.doneLabel}.`);
+      if (ok > 0)
+        toast.success(`${ok} student${ok === 1 ? "" : "s"} ${action.doneLabel}.`);
       if (failed.length > 0)
         toast.error(`Couldn't ${FAILURE_LABELS[action.type]} ${failed.length}: ${failed.join(", ")}`);
       // Background refetch reconciles the optimistic removal with the server.
@@ -234,6 +278,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       toast.error(getErrorMessage(error));
     } finally {
       setBulkRunning(false);
+      setSelectAllMatching(false);
     }
   };
 
@@ -510,6 +555,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
               setFilters({});
               setQ("");
               setPage(1);
+              setSelectAllMatching(false);
             }}
           >
             <RotateCcw className="size-3.5" /> Clear all filters
@@ -529,35 +575,96 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         onSearchChange={(v) => {
           setQ(v);
           setPage(1);
+          setSelectAllMatching(false);
         }}
         searchPlaceholder="Search roll number, name, email…"
         rowKey={(s) => s.id}
         prefetchNextPage={prefetchNextPage}
         selectable={isAdmin || isCr}
-        selectionBar={(selected, clear) => {
+        selectionActive={selectAllMatching}
+        onSelectionChange={(keys) => {
+          // Ticking an individual row leaves all-pages mode.
+          if (keys.length > 0) setSelectAllMatching(false);
+        }}
+        selectionBar={(selected, clear, selectAllOnPage) => {
+          const matchingCount = data?.count ?? 0;
           const requestBulk = (action: BulkAction) => {
-            setBulkTargets(selected);
-            if (action.type === "activate" || action.type === "deactivate") {
-              // Reversible actions run immediately, no confirmation needed.
-              void executeBulk(selected, action).then(clear);
-            } else {
-              // Drop the visual selection now; the confirm dialog works from
-              // the captured targets and the list refetches without them.
-              clear();
+            if (selectAllMatching) {
+              // All-pages mode has no per-row targets; the confirm dialog
+              // reads the flag + matching count instead.
+              setBulkTargets([]);
               setPendingBulk(action);
+            } else {
+              setBulkTargets(selected);
+              if (action.type === "activate" || action.type === "deactivate") {
+                // Reversible actions run immediately, no confirmation needed.
+                void executeBulk(selected, action).then(clear);
+              } else {
+                // Drop the visual selection now; the confirm dialog works from
+                // the captured targets and the list refetches without them.
+                clear();
+                setPendingBulk(action);
+              }
             }
           };
           return (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm font-medium">
-                <span className="text-foreground">{selected.length}</span> selected — hold{" "}
-                <kbd className="rounded border bg-background px-1 text-[10px]">Ctrl</kbd> and click rows
+                {selectAllMatching ? (
+                  <>
+                    All{" "}
+                    <span className="text-foreground">{matchingCount}</span> matching{" "}
+                    student{matchingCount === 1 ? "" : "s"} selected
+                  </>
+                ) : (
+                  <>
+                    <span className="text-foreground">{selected.length}</span> selected{" "}
+                    {selected.length < (data?.results.length ?? 0) && (
+                      <button
+                        type="button"
+                        onClick={selectAllOnPage}
+                        className="ml-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                      >
+                        <SquareCheckBig className="size-3.5" /> Select all {data?.results.length ?? 0} on this page
+                      </button>
+                    )}
+                  </>
+                )}
               </p>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={clear}>
-                  Clear
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    clear();
+                    setSelectAllMatching(false);
+                  }}
+                >
+                  {selectAllMatching ? "Cancel" : "Clear"}
                 </Button>
-                <DropdownMenu>
+                {!selectAllMatching && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      clear();
+                      setSelectAllMatching(true);
+                    }}
+                    title="Select every student matching the current search and filters, across all pages"
+                  >
+                    <SquareCheckBig className="size-4" /> Select all {matchingCount} matching
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => requestBulk({ type: "delete", doneLabel: "deleted" })}
+                >
+                  <Trash2 className="size-4" />
+                  {selectAllMatching ? "Delete All Matching" : "Delete"}
+                </Button>
+                {!selectAllMatching && (
+                  <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
                       <Button variant="outline" size="sm">
@@ -596,6 +703,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+                )}
               </div>
             </div>
           );
@@ -633,9 +741,22 @@ export function StudentsPage({ meta, isCr = false }: Props) {
 
       <ConfirmDialog
         open={!!pendingBulk}
-        onOpenChange={(open) => !open && setPendingBulk(null)}
-        title={bulkConfirmTitle(pendingBulk, bulkTargets.length)}
-        description={bulkConfirmDescription(pendingBulk)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingBulk(null);
+            // Matches the documents page: cancelling leaves all-pages mode.
+            setSelectAllMatching(false);
+          }
+        }}
+        title={bulkConfirmTitle(
+          pendingBulk,
+          selectAllMatching ? (data?.count ?? 0) : bulkTargets.length
+        )}
+        description={
+          pendingBulk?.type === "delete" && selectAllMatching
+            ? `This permanently removes ALL ${data?.count ?? 0} students matching your current search and filters (across every page). This cannot be undone.`
+            : bulkConfirmDescription(pendingBulk)
+        }
         confirmLabel={pendingBulk?.type === "delete" ? "Delete" : "Continue"}
         destructive={pendingBulk?.type === "delete"}
         loading={bulkRunning}

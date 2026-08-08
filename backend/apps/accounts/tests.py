@@ -382,6 +382,166 @@ class AdminApiCsvImportTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class StudentBulkDeleteTests(TestCase):
+    """One-request bulk delete for the selection bar (scope + safety)."""
+
+    def setUp(self):
+        self.branch = Branch.objects.create(name="CSE")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.cr = User.objects.create_user(
+            roll_number="CR01", password="x", full_name="CR",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        self.student_a1 = User.objects.create_user(
+            roll_number="21CSE01", password="x", full_name="Aarav",
+            branch=self.branch, section=self.section_a,
+        )
+        self.student_a2 = User.objects.create_user(
+            roll_number="21CSE02", password="x", full_name="Bhavya",
+            branch=self.branch, section=self.section_a,
+        )
+        self.student_b = User.objects.create_user(
+            roll_number="21CSE03", password="x", full_name="Charan",
+            branch=self.branch, section=self.section_b,
+        )
+
+    def _client(self, user) -> APIClient:
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": user.roll_number, "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        return client
+
+    def test_admin_bulk_deletes_selected_students_in_one_request(self):
+        response = self._client(self.admin).post(
+            "/api/students/bulk_delete/",
+            {"ids": [self.student_a1.id, self.student_a2.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        self.assertFalse(User.objects.filter(id__in=[self.student_a1.id, self.student_a2.id]).exists())
+        self.assertTrue(User.objects.filter(pk=self.student_b.id).exists())
+
+    def test_cr_bulk_delete_scoped_to_own_section(self):
+        response = self._client(self.cr).post(
+            "/api/students/bulk_delete/",
+            {"ids": [self.student_a1.id, self.student_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the own-section student is removed; the other section's is skipped.
+        self.assertEqual(response.data["deleted"], 1)
+        self.assertFalse(User.objects.filter(pk=self.student_a1.id).exists())
+        self.assertTrue(User.objects.filter(pk=self.student_b.id).exists())
+
+    def test_admin_accounts_are_never_deleted(self):
+        response = self._client(self.admin).post(
+            "/api/students/bulk_delete/",
+            {"ids": [self.admin.id, self.student_a1.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 1)
+        self.assertTrue(User.objects.filter(pk=self.admin.id).exists())
+
+    def test_bulk_delete_requires_ids_list(self):
+        client = self._client(self.admin)
+        missing = client.post("/api/students/bulk_delete/", {}, format="json")
+        self.assertEqual(missing.status_code, 400)
+        not_list = client.post(
+            "/api/students/bulk_delete/", {"ids": "12"}, format="json"
+        )
+        self.assertEqual(not_list.status_code, 400)
+
+    def test_student_cannot_bulk_delete(self):
+        client = self._client(self.student_a1)
+        response = client.post(
+            "/api/students/bulk_delete/",
+            {"ids": [self.student_a2.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_bulk_delete_all_matching(self):
+        response = self._client(self.admin).post(
+            "/api/students/bulk_delete/",
+            {"all_matching": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        # All three students + the CR go; the admin survives.
+        self.assertEqual(response.data["deleted"], 4)
+        self.assertEqual(
+            User.objects.filter(role__in=[User.Role.STUDENT, User.Role.CR]).count(),
+            0,
+        )
+        self.assertTrue(User.objects.filter(pk=self.admin.id).exists())
+
+    def test_bulk_delete_all_matching_respects_filters(self):
+        response = self._client(self.admin).post(
+            "/api/students/bulk_delete/?role=CR",
+            {"all_matching": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the CR matches the active role filter.
+        self.assertEqual(response.data["deleted"], 1)
+        self.assertTrue(User.objects.filter(pk=self.student_a1.id).exists())
+        self.assertTrue(User.objects.filter(pk=self.student_b.id).exists())
+        self.assertFalse(User.objects.filter(role=User.Role.CR).exists())
+
+    def test_cr_bulk_delete_all_matching_scoped_to_own_section(self):
+        response = self._client(self.cr).post(
+            "/api/students/bulk_delete/",
+            {"all_matching": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        # Section A's two students go; section B's student is untouched.
+        self.assertEqual(response.data["deleted"], 2)
+        self.assertTrue(User.objects.filter(pk=self.student_b.id).exists())
+
+    def test_bulk_delete_all_matching_over_cap_is_rejected(self):
+        from django.test import override_settings
+
+        with override_settings(BULK_DELETE_MAX_MATCHES=2):
+            response = self._client(self.admin).post(
+                "/api/students/bulk_delete/",
+                {"all_matching": True},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("safety limit", response.data["detail"])
+        # Nothing was deleted.
+        self.assertEqual(
+            User.objects.filter(role__in=[User.Role.STUDENT, User.Role.CR]).count(),
+            4,
+        )
+
+    def test_bulk_delete_removes_resume_files(self):
+        Resume.objects.create(
+            student=self.student_a1, file_name="r.pdf", file_size=10,
+            cloudinary_url="https://x.example/r.pdf", public_id="resume_pid",
+        )
+        with patch("apps.documents.services.cloudinary.api.delete_resources") as mock_delete:
+            response = self._client(self.admin).post(
+                "/api/students/bulk_delete/",
+                {"ids": [self.student_a1.id]},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 1)
+        mock_delete.assert_called_once_with(["resume_pid"], resource_type="raw")
+
+
 class ProfileUpdateTests(TestCase):
     def setUp(self):
         self.branch = Branch.objects.create(name="IT")
@@ -1245,7 +1405,7 @@ class ResumeTests(TestCase):
         }
         matches = {"matches": [{"drive_id": drive.id, "score": 90, "reason": "Python fits"}]}
 
-        def fake_ai(prompt, text, max_tokens=1024, usage_callback=None):
+        def fake_ai(prompt, text, max_tokens=1024, usage_callback=None, **kwargs):
             # Like the real client, fire the usage callback with token counts.
             if usage_callback:
                 usage_callback(100, 40)

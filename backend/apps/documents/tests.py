@@ -877,6 +877,141 @@ class ShareRequestTests(TestCase):
         self.assertEqual(DocumentShareRequest.objects.count(), 0)
 
 
+@patch("apps.documents.services.cloudinary.api.delete_resources")
+class DocumentBulkDeleteTests(TestCase):
+    """One-request bulk delete (scope + last-copy Cloudinary cleanup)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.semester = Semester.objects.create(name="3-1", order=5)
+        self.category = Category.objects.create(name="Notes")
+        self.subject = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.semester, branch=self.branch
+        )
+        self.cr_a = User.objects.create_user(
+            roll_number="cra", password="x", full_name="CR A",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        self.doc1 = self._doc("DBMS Unit 1", "pid-1", self.section_a)
+        self.doc2 = self._doc("DBMS Unit 2", "pid-2", self.section_a)
+
+    def _doc(self, title, public_id, section):
+        return Document.objects.create(
+            title=title, description="",
+            file_name="notes.pdf", file_size=1024,
+            cloudinary_url="https://x.example/n.pdf",
+            public_id=public_id, branch=self.branch, section=section,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.admin,
+        )
+
+    def _client(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
+        return client
+
+    def test_admin_bulk_deletes_and_removes_cloudinary_files(self, mock_delete):
+        response = self._client(self.admin).post(
+            "/api/documents/bulk_delete/",
+            {"ids": [self.doc1.id, self.doc2.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        self.assertEqual(Document.objects.count(), 0)
+        # Both files had no other copies - each is removed from Cloudinary.
+        self.assertEqual(mock_delete.call_count, 2)
+
+    def test_shared_copy_keeps_cloudinary_file(self, mock_delete):
+        # Same file also lives in section B (shared/forked copy).
+        self._doc("DBMS Unit 1", "pid-1", self.section_b)
+        response = self._client(self.admin).post(
+            "/api/documents/bulk_delete/",
+            {"ids": [self.doc1.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 1)
+        # The file is still referenced by the section-B copy -> not deleted.
+        mock_delete.assert_not_called()
+        self.assertTrue(
+            Document.objects.filter(public_id="pid-1", section=self.section_b).exists()
+        )
+
+    def test_cr_bulk_delete_scoped_to_own_section(self, mock_delete):
+        other_section_doc = self._doc("Python Unit 1", "pid-3", self.section_b)
+        response = self._client(self.cr_a).post(
+            "/api/documents/bulk_delete/",
+            {"ids": [self.doc1.id, other_section_doc.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 1)
+        self.assertFalse(Document.objects.filter(pk=self.doc1.id).exists())
+        self.assertTrue(Document.objects.filter(pk=other_section_doc.id).exists())
+
+    def test_admin_bulk_delete_all_matching(self, mock_delete):
+        response = self._client(self.admin).post(
+            "/api/documents/bulk_delete/",
+            {"all_matching": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        self.assertEqual(Document.objects.count(), 0)
+        self.assertEqual(mock_delete.call_count, 2)
+
+    def test_bulk_delete_all_matching_respects_filters(self, mock_delete):
+        other = self._doc("Python Unit 1", "pid-3", self.section_b)
+        response = self._client(self.admin).post(
+            "/api/documents/bulk_delete/?section=%d" % self.section_a.id,
+            {"all_matching": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        # The section-B document is outside the active filter.
+        self.assertTrue(Document.objects.filter(pk=other.id).exists())
+        self.assertEqual(Document.objects.count(), 1)
+
+    def test_cr_bulk_delete_all_matching_scoped_to_own_section(self, mock_delete):
+        other = self._doc("Python Unit 1", "pid-3", self.section_b)
+        response = self._client(self.cr_a).post(
+            "/api/documents/bulk_delete/",
+            {"all_matching": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        self.assertTrue(Document.objects.filter(pk=other.id).exists())
+
+    def test_bulk_delete_requires_ids_list(self, mock_delete):
+        client = self._client(self.admin)
+        self.assertEqual(client.post("/api/documents/bulk_delete/", {}, format="json").status_code, 400)
+        self.assertEqual(
+            client.post("/api/documents/bulk_delete/", {"ids": "1"}, format="json").status_code, 400
+        )
+
+    def test_student_cannot_bulk_delete(self, mock_delete):
+        student = User.objects.create_user(
+            roll_number="st1", password="x", full_name="Student",
+            branch=self.branch, section=self.section_a,
+        )
+        response = self._client(student).post(
+            "/api/documents/bulk_delete/",
+            {"ids": [self.doc1.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+
 class DocumentTreeTests(TestCase):
     """The student browser's single-request data source (Subjects → Units)."""
 

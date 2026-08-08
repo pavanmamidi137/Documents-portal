@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Send,
   Share2,
+  SquareCheckBig,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -63,6 +64,9 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<DocumentItem[]>([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  // "Select all across all pages" - deletes every document matching the
+  // current search/filters in one request instead of one row at a time.
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
 
   // Debounce filter changes (like search) so rapid changes batch into one
   // request and the table doesn't flicker on every selection.
@@ -106,6 +110,8 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
 
   const setFilter = (key: string, value: string) => {
     setPage(1);
+    // The "matching set" changes with the filters - drop all-pages mode.
+    setSelectAllMatching(false);
     setFilters((prev) => {
       const next = { ...prev };
       if (value) next[key] = value;
@@ -139,6 +145,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
     setFilters({});
     setQ("");
     setPage(1);
+    setSelectAllMatching(false);
   };
 
   const semesterName = meta.semesters.find((s) => String(s.id) === filters.semester)?.name;
@@ -184,30 +191,49 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   };
 
   const confirmBulkDelete = async () => {
-    if (bulkDeleteTargets.length === 0) return;
+    if (bulkDeleteTargets.length === 0 && !selectAllMatching) return;
     setBulkDeleting(true);
     const targetIds = new Set(bulkDeleteTargets.map((d) => d.id));
     const previous = queryClient.getQueryData<Paginated<DocumentItem>>(currentQueryKey);
-    // Optimistic removal of every selected row, then fire the deletes.
+    // Optimistic removal of every matching row, then fire the deletes.
     queryClient.setQueryData<Paginated<DocumentItem>>(currentQueryKey, (old) =>
       old
         ? {
             ...old,
-            count: Math.max(0, old.count - targetIds.size),
-            results: old.results.filter((d) => !targetIds.has(d.id)),
+            count: selectAllMatching ? 0 : Math.max(0, old.count - targetIds.size),
+            results: selectAllMatching
+              ? []
+              : old.results.filter((d) => !targetIds.has(d.id)),
           }
         : old
     );
     let ok = 0;
     const failed: string[] = [];
     try {
-      for (const d of bulkDeleteTargets) {
-        try {
-          await http.delete(`/documents/${d.id}/`);
-          ok += 1;
-        } catch {
-          failed.push(d.title);
+      // ONE request for the whole selection - instant even for hundreds of
+      // rows (scope checks happen server-side per document).
+      try {
+        const res = await http.post<{ deleted: number }>(
+          "/documents/bulk_delete/",
+          selectAllMatching
+            ? { all_matching: true }
+            : { ids: bulkDeleteTargets.map((d) => d.id) },
+          selectAllMatching ? { q: debouncedQ || undefined, ...debouncedFilters } : undefined
+        );
+        ok = res.deleted;
+        const skipped =
+          (selectAllMatching ? (data?.count ?? 0) : bulkDeleteTargets.length) - res.deleted;
+        if (skipped > 0) {
+          failed.push(
+            `${skipped} could not be deleted (outside your section scope or already removed)`
+          );
         }
+      } catch {
+        failed.push(
+          ...(selectAllMatching
+            ? ["the bulk request could not be completed"]
+            : bulkDeleteTargets.map((d) => d.title))
+        );
       }
       if (ok > 0)
         toast.success(`${ok} document${ok === 1 ? "" : "s"} deleted.`);
@@ -221,7 +247,25 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
       toast.error(getErrorMessage(error));
     } finally {
       setBulkDeleting(false);
+      setSelectAllMatching(false);
     }
+  };
+
+  // Uploaded documents appear in the list INSTANTLY (optimistic prepend on
+  // page 1) when no filters are active, then a background refetch keeps every
+  // page/filter consistent. With filters on, we skip the prepend so a document
+  // that doesn't match the active filter never flashes in the view.
+  const handleUploaded = (doc: DocumentItem) => {
+    if (!hasFilters) {
+      queryClient.setQueryData<Paginated<DocumentItem>>(
+        ["documents", 1, pageSize, debouncedQ, debouncedFilters],
+        (old) =>
+          old && !old.results.some((d) => d.id === doc.id)
+            ? { ...old, count: old.count + 1, results: [doc, ...old.results] }
+            : old
+      );
+    }
+    invalidateDocuments();
   };
 
   const columns: Column<DocumentItem>[] = [
@@ -456,36 +500,83 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         onSearchChange={(v) => {
           setQ(v);
           setPage(1);
+          setSelectAllMatching(false);
         }}
         searchPlaceholder="Search title, subject, uploader…"
         rowKey={(d) => d.id}
         prefetchNextPage={prefetchNextPage}
         selectable
-        selectionBar={(selected, clear) => (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm font-medium">
-              <span className="text-foreground">{selected.length}</span> selected — hold{" "}
-              <kbd className="rounded border bg-background px-1 text-[10px]">Ctrl</kbd> and click rows
-            </p>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={clear}>
-                Clear
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => {
-                  // Drop the visual selection now; the confirm dialog works
-                  // from the captured targets and the list refetches without them.
-                  clear();
-                  setBulkDeleteTargets(selected);
-                }}
-              >
-                <ListChecks className="size-4" /> Delete Selected
-              </Button>
+        selectionActive={selectAllMatching}
+        onSelectionChange={(keys) => {
+          // Ticking an individual row leaves all-pages mode.
+          if (keys.length > 0) setSelectAllMatching(false);
+        }}
+        selectionBar={(selected, clear, selectAllOnPage) => {
+          const matchingCount = data?.count ?? 0;
+          return (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-medium">
+                {selectAllMatching ? (
+                  <>
+                    All <span className="text-foreground">{matchingCount}</span> matching{" "}
+                    document{matchingCount === 1 ? "" : "s"} selected
+                  </>
+                ) : (
+                  <>
+                    <span className="text-foreground">{selected.length}</span> selected{" "}
+                    {selected.length < (data?.results.length ?? 0) && (
+                      <button
+                        type="button"
+                        onClick={selectAllOnPage}
+                        className="ml-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                      >
+                        <SquareCheckBig className="size-3.5" /> Select all {data?.results.length ?? 0} on this page
+                      </button>
+                    )}
+                  </>
+                )}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    clear();
+                    setSelectAllMatching(false);
+                  }}
+                >
+                  {selectAllMatching ? "Cancel" : "Clear"}
+                </Button>
+                {!selectAllMatching && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      clear();
+                      setSelectAllMatching(true);
+                    }}
+                    title="Select every document matching the current search and filters, across all pages"
+                  >
+                    <SquareCheckBig className="size-4" /> Select all {matchingCount} matching
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    // Drop the visual selection now; the confirm dialog works
+                    // from the captured targets and the list refetches without them.
+                    clear();
+                    setBulkDeleteTargets(selectAllMatching ? [] : selected);
+                  }}
+                >
+                  <ListChecks className="size-4" />
+                  {selectAllMatching ? "Delete All Matching" : "Delete Selected"}
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        }}
       />
 
       {/* key remounts the dialog on open so file/selection state starts fresh. */}
@@ -495,7 +586,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         onOpenChange={setUploadOpen}
         meta={meta}
         lockBranchSection={isCr}
-        onUploaded={invalidateDocuments}
+        onUploaded={handleUploaded}
       />
 
       <ShareDocumentDialog
@@ -534,10 +625,23 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
       />
 
       <ConfirmDialog
-        open={bulkDeleteTargets.length > 0}
-        onOpenChange={(open) => !open && setBulkDeleteTargets([])}
-        title={`Delete ${bulkDeleteTargets.length} document${bulkDeleteTargets.length === 1 ? "" : "s"}?`}
-        description={`This removes ${bulkDeleteTargets.length === 1 ? "this document" : `these ${bulkDeleteTargets.length} documents`} from the portal. The file is only removed from Cloudinary when no other section still uses it.`}
+        open={bulkDeleteTargets.length > 0 || selectAllMatching}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBulkDeleteTargets([]);
+            setSelectAllMatching(false);
+          }
+        }}
+        title={
+          selectAllMatching
+            ? `Delete all ${data?.count ?? 0} matching document${data?.count === 1 ? "" : "s"}?`
+            : `Delete ${bulkDeleteTargets.length} document${bulkDeleteTargets.length === 1 ? "" : "s"}?`
+        }
+        description={
+          selectAllMatching
+            ? `This removes every document matching your current search and filters (across all pages). The file is only removed from Cloudinary when no other section still uses it.`
+            : `This removes ${bulkDeleteTargets.length === 1 ? "this document" : `these ${bulkDeleteTargets.length} documents`} from the portal. The file is only removed from Cloudinary when no other section still uses it.`
+        }
         confirmLabel="Delete"
         destructive
         loading={bulkDeleting}

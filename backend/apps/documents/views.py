@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db.models import F, Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -72,7 +73,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return DocumentListSerializer
 
     def get_permissions(self):
-        if self.action in ("create", "destroy", "share_request"):
+        if self.action in ("create", "destroy", "bulk_delete", "share_request"):
             return [IsSuperAdminOrCR()]
         if self.action in ("share", "fork", "forkable"):
             return [IsSuperAdmin()]
@@ -250,6 +251,63 @@ class DocumentViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("You can only delete documents in your assigned section.")
         services.delete_document(document, user, request)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=["post"], permission_classes=[IsSuperAdminOrCR])
+    def bulk_delete(self, request):
+        """Delete many documents in ONE request instead of one call per row.
+
+        Pass ``{ids: [...]}`` for a specific selection, or
+        ``{all_matching: true}`` (with the same q/branch/section/semester/
+        category/subject query params as the list) to delete every matching
+        document at once. Scope rules match the list/destroy endpoints: CRs
+        may only delete documents in their own assigned section. The
+        Cloudinary file is only removed when the deleted rows were the last
+        copies of that file across every section (sharing/forking keeps the
+        file alive for others).
+        """
+        all_matching = request.data.get("all_matching") in (True, "true", "1", 1)
+        qs = self.get_queryset()
+        if request.user.is_cr:
+            qs = qs.filter(section_id=request.user.section_id)
+        if all_matching:
+            docs = list(qs)
+            # Safety cap: a misclick on "delete all" must not wipe thousands of
+            # files in one request - narrow the filters instead.
+            max_matches = int(getattr(settings, "BULK_DELETE_MAX_MATCHES", 5000))
+            if len(docs) > max_matches:
+                raise ValidationError({
+                    "detail": (
+                        f"This would delete {len(docs)} documents, more than the "
+                        f"{max_matches}-document bulk-delete safety limit. Narrow your "
+                        "search or filters (semester/category/subject) and try again."
+                    )
+                })
+        else:
+            raw_ids = request.data.get("ids")
+            if not isinstance(raw_ids, list) or not raw_ids:
+                raise ValidationError({"ids": "Provide a list of document ids to delete."})
+            ids = [int(i) for i in raw_ids if str(i).lstrip("-").isdigit()]
+            if not ids:
+                raise ValidationError({"ids": "Provide valid document ids."})
+            docs = list(qs.filter(id__in=ids))
+        if not docs:
+            return Response({"deleted": 0})
+        doc_ids = [d.id for d in docs]
+        # Files still referenced by rows OUTSIDE this deletion are kept.
+        keep_public_ids = set(
+            Document.objects.filter(public_id__in={d.public_id for d in docs})
+            .exclude(id__in=doc_ids)
+            .values_list("public_id", flat=True)
+        )
+        # One Cloudinary call per unique file (two selected rows can share a
+        # public_id via sharing/forking - the file must not be deleted twice).
+        for public_id in {d.public_id for d in docs} - keep_public_ids:
+            services.delete_document_file(public_id)
+        Document.objects.filter(id__in=doc_ids).delete()
+        log_audit(request.user, "BULK_DELETE", "Document", "",
+                  {"count": len(docs), "all_matching": all_matching,
+                   "titles": [d.title for d in docs][:20]}, request)
+        return Response({"deleted": len(docs)})
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def download(self, request, pk=None):

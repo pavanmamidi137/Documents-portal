@@ -223,6 +223,64 @@ class StudentViewSet(viewsets.ModelViewSet):
             raise ValidationError({"file": str(exc)})
         return Response(result)
 
+    @action(detail=False, methods=["post"], permission_classes=[IsSuperAdminOrCR])
+    def bulk_delete(self, request):
+        """Delete many students in ONE request instead of one call per row.
+
+        Pass ``{ids: [...]}`` for a specific selection, or
+        ``{all_matching: true}`` (with the same search/branch/section/role
+        query params as the list) to delete every matching student at once.
+        Scope rules match the list/destroy endpoints: CRs may only delete
+        students inside their own assigned section; Super Admins delete
+        anywhere. Admin accounts are always protected. Each student's resume
+        file is removed from Cloudinary before the rows are deleted.
+        """
+        all_matching = request.data.get("all_matching") in (True, "true", "1", 1)
+        # is_super_admin is a model property (role == SUPER_ADMIN), so the
+        # exclusion must be done on the stored role column. The caller is also
+        # protected - deleting your own account would orphan its audit trail.
+        qs = (
+            self.get_queryset()
+            .exclude(role=User.Role.SUPER_ADMIN)
+            .exclude(pk=request.user.pk)
+        )
+        if all_matching:
+            ids_to_delete = list(qs.values_list("id", flat=True))
+            # Safety cap: a misclick on "delete all" must not wipe an entire
+            # college in one request - narrow the filters instead.
+            max_matches = int(getattr(settings, "BULK_DELETE_MAX_MATCHES", 5000))
+            if len(ids_to_delete) > max_matches:
+                raise ValidationError({
+                    "detail": (
+                        f"This would delete {len(ids_to_delete)} students, more than the "
+                        f"{max_matches}-student bulk-delete safety limit. Narrow your search "
+                        "or filters (branch/section/role) and try again."
+                    )
+                })
+        else:
+            raw_ids = request.data.get("ids")
+            if not isinstance(raw_ids, list) or not raw_ids:
+                raise ValidationError({"ids": "Provide a list of student ids to delete."})
+            ids = [int(i) for i in raw_ids if str(i).lstrip("-").isdigit()]
+            if not ids:
+                raise ValidationError({"ids": "Provide valid student ids."})
+            ids_to_delete = list(qs.filter(id__in=ids).values_list("id", flat=True))
+        if not ids_to_delete:
+            return Response({"deleted": 0})
+        # Remove resume files from Cloudinary before the rows cascade.
+        for resume in Resume.objects.filter(student_id__in=ids_to_delete).only("public_id"):
+            if resume.public_id:
+                from apps.documents.services import delete_document_file
+
+                delete_document_file(resume.public_id)
+        User.objects.filter(id__in=ids_to_delete).delete()
+        # Count only the students themselves (a .delete() return value would
+        # also include cascaded rows like resumes).
+        count = len(ids_to_delete)
+        log_audit(request.user, "BULK_DELETE", "Student", "",
+                  {"count": count, "all_matching": all_matching}, request)
+        return Response({"deleted": count})
+
     @action(detail=False, methods=["get"], permission_classes=[IsSuperAdminOrCR])
     def export_csv(self, request):
         qs = self.get_queryset()
