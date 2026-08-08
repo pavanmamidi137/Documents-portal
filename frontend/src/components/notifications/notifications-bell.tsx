@@ -3,15 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Bell,
-  CheckCheck,
-  FileText,
-  Inbox,
-  Loader2,
-  MessageSquareText,
-  UserRound,
-} from "lucide-react";
+import { ArrowRight, Bell, CheckCheck, Inbox, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -27,20 +19,9 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { useAuth } from "@/lib/auth";
 import { http } from "@/lib/api";
+import { notificationKindColor, notificationKindIcon } from "@/lib/notifications";
 import type { Notification } from "@/lib/types";
 import { cn, formatDate, getErrorMessage } from "@/lib/utils";
-
-const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  DOCUMENT_UPLOAD: FileText,
-  RESUME_UPLOAD: UserRound,
-  CONTACT_ADMIN: MessageSquareText,
-};
-
-const KIND_COLORS: Record<string, string> = {
-  DOCUMENT_UPLOAD: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
-  RESUME_UPLOAD: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
-  CONTACT_ADMIN: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-};
 
 /** Bell in the top bar: unread badge + dropdown of the user's notifications. */
 export function NotificationsBell() {
@@ -140,8 +121,8 @@ export function NotificationsBell() {
         ) : (
           <div className="max-h-80 overflow-y-auto">
             {items.map((n) => {
-              const Icon = KIND_ICONS[n.kind] ?? Bell;
-              const color = KIND_COLORS[n.kind] ?? "bg-primary/10 text-primary";
+              const Icon = notificationKindIcon(n.kind);
+              const color = notificationKindColor(n.kind);
               return (
                 <DropdownMenuItem
                   key={n.id}
@@ -170,6 +151,19 @@ export function NotificationsBell() {
             })}
           </div>
         )}
+
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="justify-center py-2.5"
+          onClick={() => {
+            setOpen(false);
+            router.push("/notifications");
+          }}
+        >
+          <span className="flex items-center gap-1.5 text-sm font-medium text-primary">
+            <ArrowRight className="size-4" /> View all notifications
+          </span>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

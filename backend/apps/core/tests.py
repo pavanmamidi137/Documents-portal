@@ -259,6 +259,14 @@ class NotificationApiTests(TestCase):
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["title"], "unread")
 
+    def test_all_scope_returns_full_history(self):
+        for i in range(55):
+            self._notify(self.student, f"n{i}")
+        capped = self._client(self.student).get("/api/notifications/")
+        self.assertEqual(len(capped.data), 50)  # the bell only shows the newest 50
+        full = self._client(self.student).get("/api/notifications/?scope=all")
+        self.assertEqual(len(full.data), 55)  # the history page gets everything
+
 
 class NotificationTriggerTests(TestCase):
     """Uploads fan out notifications to the right people."""

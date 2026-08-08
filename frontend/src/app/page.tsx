@@ -155,7 +155,7 @@ export default function HomePage() {
       <header className="sticky top-0 z-40 border-b bg-background/75 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/25">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-md shadow-primary/25">
               <GraduationCap className="size-5" />
             </div>
             <div className="leading-tight">
@@ -192,9 +192,9 @@ export default function HomePage() {
 
       {/* ------------------------------------------------ Hero */}
       <section className="relative overflow-hidden">
-        <div className="pointer-events-none absolute -top-40 left-1/2 size-[42rem] -translate-x-1/2 rounded-full bg-indigo-500/15 blur-3xl" />
-        <div className="pointer-events-none absolute top-48 -right-40 size-96 rounded-full bg-violet-500/15 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-32 -left-32 size-96 rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute -top-40 left-1/2 size-[42rem] -translate-x-1/2 rounded-full bg-primary/15 blur-3xl" />
+        <div className="pointer-events-none absolute top-48 -right-40 size-96 rounded-full bg-primary/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 -left-32 size-96 rounded-full bg-primary/5 blur-3xl" />
 
         <div className="relative mx-auto max-w-6xl px-4 pt-20 pb-16 text-center sm:px-6 sm:pt-28">
           <motion.div {...fadeUp} transition={{ duration: 0.5 }}>
@@ -209,7 +209,7 @@ export default function HomePage() {
             className="mx-auto mt-6 max-w-3xl text-4xl leading-tight font-extrabold tracking-tight sm:text-6xl"
           >
             Every note, question paper &amp; lab manual.{" "}
-            <span className="bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
               One portal.
             </span>
           </motion.h1>
@@ -229,7 +229,7 @@ export default function HomePage() {
             transition={{ duration: 0.5, delay: 0.24 }}
             className="mt-9 flex flex-wrap items-center justify-center gap-3"
           >
-            <Button size="lg" render={<Link href="/login" />} className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-500 hover:to-violet-500">
+            <Button size="lg" render={<Link href="/login" />} className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110">
               Get started <ArrowRight className="size-4" />
             </Button>
             <Button size="lg" variant="outline" render={<a href="#features" />}>
@@ -291,7 +291,7 @@ export default function HomePage() {
             transition={{ duration: 0.5 }}
             className="relative"
           >
-            <div className="pointer-events-none absolute -inset-6 rounded-3xl bg-gradient-to-br from-indigo-500/10 to-violet-500/10 blur-2xl" />
+            <div className="pointer-events-none absolute -inset-6 rounded-3xl bg-gradient-to-br from-primary/10 to-primary/5 blur-2xl" />
             <div className="relative space-y-3 rounded-2xl border bg-card p-5 shadow-xl">
               <div className="flex items-center justify-between">
                 <p className="flex items-center gap-2 text-sm font-semibold">
@@ -352,7 +352,7 @@ export default function HomePage() {
                 transition={{ duration: 0.4, delay: (i % 4) * 0.06 }}
                 className="group rounded-2xl border bg-card p-5 transition-all hover:-translate-y-1 hover:border-primary/30 hover:shadow-lg"
               >
-                <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 text-primary ring-1 ring-primary/20 transition-colors group-hover:from-indigo-500 group-hover:to-violet-600 group-hover:text-white">
+                <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-1 ring-primary/20 transition-colors group-hover:from-primary group-hover:to-primary/60 group-hover:text-primary-foreground">
                   <feature.icon className="size-5" />
                 </div>
                 <h3 className="mt-4 font-semibold">{feature.title}</h3>
@@ -421,7 +421,7 @@ export default function HomePage() {
                 transition={{ duration: 0.4, delay: i * 0.08 }}
                 className="relative rounded-2xl border bg-card p-6"
               >
-                <span className="bg-gradient-to-br from-indigo-500 to-violet-600 bg-clip-text text-5xl font-extrabold text-transparent">
+                <span className="bg-gradient-to-br from-primary to-primary/60 bg-clip-text text-5xl font-extrabold text-transparent">
                   {s.step}
                 </span>
                 <h3 className="mt-4 font-semibold">{s.title}</h3>
@@ -434,7 +434,7 @@ export default function HomePage() {
 
       {/* ------------------------------------------------ CTA */}
       <section className="relative overflow-hidden border-t py-20">
-        <div className="pointer-events-none absolute -top-24 left-1/2 size-96 -translate-x-1/2 rounded-full bg-indigo-500/20 blur-3xl" />
+        <div className="pointer-events-none absolute -top-24 left-1/2 size-96 -translate-x-1/2 rounded-full bg-primary/20 blur-3xl" />
         <div className="relative mx-auto max-w-3xl px-4 text-center sm:px-6">
           <Library className="mx-auto size-10 text-primary" />
           <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
@@ -448,7 +448,7 @@ export default function HomePage() {
             <Button
               size="lg"
               render={<Link href="/login" />}
-              className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-500 hover:to-violet-500"
+              className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
             >
               Sign in to the portal <ArrowRight className="size-4" />
             </Button>
@@ -460,7 +460,7 @@ export default function HomePage() {
       <footer className="border-t bg-muted/30">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm text-muted-foreground sm:flex-row sm:px-6">
           <div className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white">
+            <div className="flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
               <GraduationCap className="size-4" />
             </div>
             <span className="font-medium text-foreground">College Document Portal</span>

@@ -50,8 +50,8 @@ export default function LoginPage() {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
       {/* Decorative gradient blobs */}
-      <div className="pointer-events-none absolute -top-32 -left-32 size-96 rounded-full bg-indigo-500/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-32 -right-32 size-96 rounded-full bg-violet-500/20 blur-3xl" />
+      <div className="pointer-events-none absolute -top-32 -left-32 size-96 rounded-full bg-primary/20 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-32 -right-32 size-96 rounded-full bg-primary/10 blur-3xl" />
       <div className="pointer-events-none absolute top-1/2 left-1/2 size-[40rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/5 blur-3xl" />
 
       <motion.div
@@ -62,8 +62,8 @@ export default function LoginPage() {
       >
         <div className="rounded-2xl border bg-card/80 p-8 shadow-2xl backdrop-blur-xl">
           <div className="mb-8 flex flex-col items-center text-center">
-            <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/30">
-              <GraduationCap className="size-8 text-white" />
+            <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/60 shadow-lg shadow-primary/30">
+              <GraduationCap className="size-8 text-primary-foreground" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight">College Document Portal</h1>
             <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -115,7 +115,7 @@ export default function LoginPage() {
             <Button
               type="submit"
               disabled={submitting}
-              className="h-11 w-full bg-gradient-to-r from-indigo-600 to-violet-600 font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all hover:from-indigo-500 hover:to-violet-500 hover:shadow-indigo-500/40"
+              className="h-11 w-full bg-primary font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
             >
               {submitting ? (
                 <>

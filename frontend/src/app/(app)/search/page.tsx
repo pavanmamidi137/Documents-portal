@@ -84,7 +84,7 @@ function SearchContent() {
             <SearchSection icon={Users} title={`Students (${data.students.length})`}>
               {data.students.map((s) => (
                 <div key={s.id} className="flex items-center gap-3 rounded-xl border bg-card p-3">
-                  <div className="flex size-9 items-center justify-center rounded-full bg-indigo-500/10 text-xs font-bold text-indigo-500">
+                  <div className="flex size-9 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
                     {s.full_name
                       .split(/\s+/)
                       .slice(0, 2)

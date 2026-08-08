@@ -10,7 +10,6 @@ import {
   GraduationCap,
   KeyRound,
   Loader2,
-  LogOut,
   Mail,
   MessageSquareText,
   Pencil,
@@ -218,7 +217,7 @@ function ThemePickerCard() {
 }
 
 export default function ProfilePage() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const {
     register,
@@ -258,10 +257,10 @@ export default function ProfilePage() {
         transition={{ duration: 0.35 }}
         className="relative mb-6 overflow-hidden rounded-2xl border bg-card shadow-sm"
       >
-        <div className="pointer-events-none absolute -top-20 -right-20 size-64 rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 blur-3xl" />
+        <div className="pointer-events-none absolute -top-20 -right-20 size-64 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-3xl" />
         <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:p-8">
           <div className="flex shrink-0 flex-col items-center gap-3 sm:items-start">
-            <div className="flex size-24 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 text-3xl font-bold text-white shadow-lg shadow-indigo-500/30">
+            <div className="flex size-24 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/60 text-3xl font-bold text-primary-foreground shadow-lg shadow-primary/30">
               {initials(user.full_name)}
             </div>
           </div>
@@ -391,25 +390,6 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <LogOut className="size-5 text-destructive" /> Sign out
-              </CardTitle>
-              <CardDescription>
-                End this session and return to the sign-in page.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                variant="outline"
-                className="w-full text-destructive hover:text-destructive"
-                onClick={logout}
-              >
-                <LogOut className="size-4" /> Log out
-              </Button>
-            </CardContent>
-          </Card>
         </motion.div>
       </div>
     </div>

@@ -9,15 +9,16 @@ from .utils import log_audit
 
 # Keys must match the frontend theme registry (frontend/src/lib/site-theme.tsx).
 SITE_THEME_KEY = "site_theme"
-DEFAULT_THEME = "default"
+DEFAULT_THEME = "orange"
 SITE_THEMES = {
-    "default",   # Indigo / Violet
-    "flame",     # Orange
-    "ocean",     # Blue
-    "forest",    # Green
-    "royal",     # Purple
-    "rose",      # Pink / Red
-    "graphite",  # Slate / Black
+    "orange",       # Brand orange #F56D14
+    "purple",       # Purple #9D4ACC
+    "gray",         # Gray
+    "light-green",  # Light green
+    "dark-green",   # Dark green
+    "brown",        # Dark brown
+    "pink",         # Pink
+    "dark-pink",    # Dark pink
 }
 
 

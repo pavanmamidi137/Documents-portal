@@ -15,12 +15,14 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = None  # the bell needs a simple flat list
 
     def get_queryset(self):
-        qs = Notification.objects.filter(user=self.request.user)
+        qs = Notification.objects.filter(user=self.request.user).order_by("-created_at")
         scope = self.request.query_params.get("scope", "").lower()
         if scope == "unread":
             qs = qs.filter(read=False)
-        # The bell only shows the newest notifications - never ship the whole
-        # history to the dropdown.
+        # The bell dropdown only shows the newest notifications, but the full
+        # history page (?scope=all) gets everything.
+        if scope == "all":
+            return qs
         return qs[:50]
 
     @action(detail=False, methods=["get"])

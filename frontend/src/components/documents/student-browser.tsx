@@ -268,7 +268,7 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
               onClick={() => goTo({ level: "category", semester })}
               className="group relative overflow-hidden rounded-2xl border bg-card p-5 text-left shadow-sm transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
             >
-              <div className="absolute -top-10 -right-10 size-28 rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 blur-2xl" />
+              <div className="absolute -top-10 -right-10 size-28 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-2xl" />
               <div className="relative">
                 <div className="flex size-11 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
                   <Layers className="size-5" />

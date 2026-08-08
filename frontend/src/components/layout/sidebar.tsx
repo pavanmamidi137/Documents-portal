@@ -15,6 +15,7 @@ import {
   GraduationCap,
   Layers,
   LayoutDashboard,
+  LogOut,
   Megaphone,
   PanelLeftClose,
   ScrollText,
@@ -56,12 +57,12 @@ const FACULTY_ONLY: NavItem[] = [{ href: "/faculty/resumes", label: "Resumes", i
 
 const ADMIN_ONLY: NavItem[] = [
   { href: "/admin/admins", label: "Admins", icon: ShieldCheck },
+  { href: "/admin/faculty", label: "Faculty", icon: GraduationCap },
+  { href: "/admin/students", label: "Students", icon: Users },
   { href: "/admin/branches", label: "Branches", icon: Building2 },
   { href: "/admin/sections", label: "Sections", icon: Layers },
-  { href: "/admin/students", label: "Students", icon: Users },
-  { href: "/admin/faculty", label: "Faculty", icon: GraduationCap },
-  { href: "/admin/subjects", label: "Subjects", icon: BookOpenText },
   { href: "/admin/semesters", label: "Semesters", icon: Settings2 },
+  { href: "/admin/subjects", label: "Subjects", icon: BookOpenText },
   { href: "/admin/categories", label: "Categories", icon: Tags },
   { href: "/admin/audit-logs", label: "Audit Logs", icon: ScrollText },
 ];
@@ -78,7 +79,7 @@ interface SidebarProps {
 
 export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarProps) {
   const pathname = usePathname();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const isStudent = user?.is_student ?? false;
 
   // Students: track resume status. Shares the cache key with the /resume page
@@ -165,8 +166,8 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
           onClick={onClose}
           className={cn("flex items-center gap-3", compact && "flex-col gap-1.5")}
         >
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-md shadow-indigo-500/30">
-            <GraduationCap className="size-5 text-white" />
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 shadow-md shadow-primary/30">
+            <GraduationCap className="size-5 text-primary-foreground" />
           </div>
           {!compact && (
             <div className="min-w-0">
@@ -251,6 +252,34 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
           </div>
         ))}
       </nav>
+
+      {/* Footer — sign out (moved here from the profile page) */}
+      <div className={cn("shrink-0 border-t p-3", compact && "p-2")}>
+        {compact ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={logout}
+                  className="flex w-full items-center justify-center rounded-lg py-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  aria-label="Sign out"
+                >
+                  <LogOut className="size-4.5 shrink-0" />
+                </button>
+              }
+            />
+            <TooltipContent side="right">Sign out</TooltipContent>
+          </Tooltip>
+        ) : (
+          <button
+            onClick={logout}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          >
+            <LogOut className="size-4.5 shrink-0" />
+            <span>Sign out</span>
+          </button>
+        )}
+      </div>
     </div>
   );
 

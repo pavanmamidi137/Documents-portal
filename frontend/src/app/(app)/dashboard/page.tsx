@@ -38,7 +38,7 @@ import type { DashboardData } from "@/lib/types";
 import { cn, formatBytes, formatDate } from "@/lib/utils";
 
 const STAT_META: Record<string, { label: string; icon: typeof Users; gradient: string }> = {
-  students: { label: "Total Students", icon: Users, gradient: "from-indigo-500 to-violet-600" },
+  students: { label: "Total Students", icon: Users, gradient: "from-primary to-primary/60" },
   crs: { label: "Total CRs", icon: School, gradient: "from-sky-500 to-cyan-600" },
   branches: { label: "Total Branches", icon: Building2, gradient: "from-emerald-500 to-teal-600" },
   sections: { label: "Total Sections", icon: Layers, gradient: "from-amber-500 to-orange-600" },
@@ -51,7 +51,15 @@ const STAT_META: Record<string, { label: string; icon: typeof Users; gradient: s
   pending_resumes: { label: "Pending Resumes", icon: Clock, gradient: "from-amber-500 to-orange-600" },
 };
 
-const CHART_COLORS = ["#6366f1", "#8b5cf6", "#0ea5e9", "#10b981", "#f59e0b", "#f43f5e"];
+// Follow the active portal theme so charts match the site's colors.
+const CHART_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "#f43f5e",
+];
 
 interface FacultyResume {
   id: number;
@@ -139,10 +147,10 @@ export default function DashboardPage() {
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
-          className="mb-6 flex flex-col gap-4 rounded-2xl border border-indigo-500/20 bg-gradient-to-r from-indigo-500/10 via-violet-500/10 to-fuchsia-500/10 p-5 sm:flex-row sm:items-center"
+          className="mb-6 flex flex-col gap-4 rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 via-primary/10 to-primary/5 p-5 sm:flex-row sm:items-center"
         >
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-md shadow-indigo-500/30">
-            <FileUser className="size-5 text-white" />
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 shadow-md shadow-primary/30">
+            <FileUser className="size-5 text-primary-foreground" />
           </div>
           <div className="min-w-0 flex-1">
             <p className="font-semibold">Upload your resume</p>

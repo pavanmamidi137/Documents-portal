@@ -208,7 +208,7 @@ export default function FacultyResumesPage() {
       header: "Student",
       cell: (r) => (
         <div className="flex items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/15 to-violet-500/15 text-xs font-bold text-indigo-600 ring-1 ring-indigo-500/30 dark:text-indigo-400">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary ring-1 ring-primary/30">
             {r.student_name
               .split(/\s+/)
               .slice(0, 2)

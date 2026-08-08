@@ -21,18 +21,22 @@ export interface SiteTheme {
   colors: [string, string];
 }
 
-/** The 7 portal-wide themes (keys must match the backend SITE_THEMES set). */
+/** The 8 portal-wide themes (keys must match the backend SITE_THEMES set). */
 export const SITE_THEMES: SiteTheme[] = [
-  { key: "default", label: "Indigo", description: "Classic indigo & violet", colors: ["#6366f1", "#8b5cf6"] },
-  { key: "flame", label: "Flame", description: "Orange on black & white", colors: ["#f97316", "#ea580c"] },
-  { key: "ocean", label: "Ocean", description: "Blue on black & white", colors: ["#0ea5e9", "#2563eb"] },
-  { key: "forest", label: "Forest", description: "Green & emerald tones", colors: ["#10b981", "#059669"] },
-  { key: "royal", label: "Royal", description: "Purple & violet tones", colors: ["#8b5cf6", "#7c3aed"] },
-  { key: "rose", label: "Rose", description: "Pink & crimson tones", colors: ["#f43f5e", "#e11d48"] },
-  { key: "graphite", label: "Graphite", description: "Slate & black tones", colors: ["#64748b", "#334155"] },
+  { key: "orange", label: "Orange", description: "Brand orange #F56D14", colors: ["#f56d14", "#ff9a4d"] },
+  { key: "purple", label: "Purple", description: "Violet purple #9D4ACC", colors: ["#9d4acc", "#b96fe0"] },
+  { key: "gray", label: "Gray", description: "Neutral slate gray", colors: ["#64748b", "#94a3b8"] },
+  { key: "light-green", label: "Light Green", description: "Fresh lime green", colors: ["#22c55e", "#4ade80"] },
+  { key: "dark-green", label: "Dark Green", description: "Deep forest green", colors: ["#15803d", "#16a34a"] },
+  { key: "brown", label: "Brown", description: "Warm dark brown", colors: ["#7c4a24", "#a16207"] },
+  { key: "pink", label: "Pink", description: "Bright pink", colors: ["#db2777", "#ec4899"] },
+  { key: "dark-pink", label: "Dark Pink", description: "Deep magenta pink", colors: ["#be185d", "#db2777"] },
 ];
 
 const STORAGE_KEY = "portal_site_theme";
+
+/** The theme applied when nothing is stored server-side (matches the base :root CSS). */
+export const DEFAULT_THEME_KEY = "orange";
 
 interface SiteThemeContextValue {
   theme: string;
@@ -46,7 +50,7 @@ const SiteThemeContext = createContext<SiteThemeContextValue | undefined>(undefi
 
 function applyTheme(key: string) {
   const root = document.documentElement;
-  if (key === "default") root.removeAttribute("data-site-theme");
+  if (key === DEFAULT_THEME_KEY) root.removeAttribute("data-site-theme");
   else root.setAttribute("data-site-theme", key);
   try {
     localStorage.setItem(STORAGE_KEY, key);
@@ -56,11 +60,13 @@ function applyTheme(key: string) {
 }
 
 function readCachedTheme(): string {
-  if (typeof window === "undefined") return "default";
+  if (typeof window === "undefined") return DEFAULT_THEME_KEY;
   try {
-    return localStorage.getItem(STORAGE_KEY) || "default";
+    const cached = localStorage.getItem(STORAGE_KEY) || "";
+    // Ignore stale keys from older theme sets (e.g. "flame", "default").
+    return SITE_THEMES.some((t) => t.key === cached) ? cached : DEFAULT_THEME_KEY;
   } catch {
-    return "default";
+    return DEFAULT_THEME_KEY;
   }
 }
 
@@ -78,9 +84,13 @@ export function SiteThemeProvider({ children }: { children: ReactNode }) {
       .get<{ theme: string }>("/site-theme/")
       .then((data) => {
         if (!active || !data.theme) return;
-        appliedRef.current = data.theme;
-        applyTheme(data.theme);
-        setThemeState(data.theme);
+        // The backend already falls back to the default, but guard anyway.
+        const safe = SITE_THEMES.some((t) => t.key === data.theme)
+          ? data.theme
+          : DEFAULT_THEME_KEY;
+        appliedRef.current = safe;
+        applyTheme(safe);
+        setThemeState(safe);
       })
       .catch(() => {
         /* offline — keep cached theme */
