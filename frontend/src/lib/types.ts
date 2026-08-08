@@ -176,6 +176,35 @@ export interface ImportResult {
   skipped_errors: { row: number; roll_number?: string; error: string }[];
 }
 
+export type NotificationKind = "DOCUMENT_UPLOAD" | "RESUME_UPLOAD" | "CONTACT_ADMIN";
+
+export interface Notification {
+  id: number;
+  kind: NotificationKind;
+  kind_label: string;
+  title: string;
+  message: string;
+  link: string;
+  read: boolean;
+  created_at: string;
+}
+
+export type ContactRequestStatus = "PENDING" | "RESOLVED";
+
+export interface ContactRequest {
+  id: number;
+  sender: number;
+  sender_name: string;
+  sender_roll: string;
+  sender_role: string;
+  subject: string;
+  message: string;
+  status: ContactRequestStatus;
+  status_label: string;
+  created_at: string;
+  resolved_at: string | null;
+}
+
 export type ShareRequestStatus = "PENDING" | "ACCEPTED" | "DECLINED";
 
 export interface DocumentShareRequest {

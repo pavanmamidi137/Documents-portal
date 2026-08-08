@@ -5,8 +5,20 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
-import { KeyRound, Loader2, Mail, Pencil, Phone, ShieldCheck } from "lucide-react";
+import {
+  CalendarDays,
+  GraduationCap,
+  KeyRound,
+  Loader2,
+  LogOut,
+  Mail,
+  MessageSquareText,
+  Pencil,
+  Phone,
+  ShieldCheck,
+} from "lucide-react";
 import { toast } from "sonner";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -206,7 +218,7 @@ function ThemePickerCard() {
 }
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const {
     register,
@@ -233,9 +245,74 @@ export default function ProfilePage() {
 
   if (!user) return null;
 
+  const canContactAdmin = user.is_faculty || user.is_cr;
+
   return (
     <div>
       <PageHeader title="My Profile" description="Your account details and security settings." />
+
+      {/* ------------------------------------------------ Hero card */}
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35 }}
+        className="relative mb-6 overflow-hidden rounded-2xl border bg-card shadow-sm"
+      >
+        <div className="pointer-events-none absolute -top-20 -right-20 size-64 rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 blur-3xl" />
+        <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:p-8">
+          <div className="flex shrink-0 flex-col items-center gap-3 sm:items-start">
+            <div className="flex size-24 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 text-3xl font-bold text-white shadow-lg shadow-indigo-500/30">
+              {initials(user.full_name)}
+            </div>
+          </div>
+          <div className="min-w-0 flex-1 text-center sm:text-left">
+            <h2 className="text-2xl font-bold tracking-tight">{user.full_name}</h2>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 sm:justify-start">
+              <Badge variant="outline" className={roleColor(user.role)}>
+                {user.role_label}
+              </Badge>
+              <Badge variant={user.is_active ? "default" : "outline"}>
+                {user.is_active ? "Active" : "Inactive"}
+              </Badge>
+            </div>
+            <div className="mt-4 grid max-w-xl gap-3 text-left sm:grid-cols-2">
+              <div className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2">
+                <ShieldCheck className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-[10px] text-muted-foreground uppercase">Roll Number</p>
+                  <p className="truncate font-mono text-sm font-medium">{user.roll_number}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2">
+                <GraduationCap className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-[10px] text-muted-foreground uppercase">Branch / Section</p>
+                  <p className="truncate text-sm font-medium">
+                    {user.branch_name ?? "—"} {user.section_name ? `/ Sec ${user.section_name}` : ""}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2">
+                <Mail className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-[10px] text-muted-foreground uppercase">Email</p>
+                  <p className="truncate text-sm font-medium">{user.email ?? "—"}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2">
+                <Phone className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-[10px] text-muted-foreground uppercase">Phone</p>
+                  <p className="truncate text-sm font-medium">{user.phone || "—"}</p>
+                </div>
+              </div>
+            </div>
+            <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground sm:justify-start">
+              <CalendarDays className="size-3.5" /> Member since {formatDate(user.date_joined)}
+            </p>
+          </div>
+        </div>
+      </motion.div>
 
       {user.is_super_admin && (
         <div className="mb-6">
@@ -245,69 +322,28 @@ export default function ProfilePage() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
-        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
-          <Card>
-            <CardHeader>
-              <CardTitle>Account Information</CardTitle>
-              <CardDescription>Details associated with your account.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="flex items-center gap-4">
-                <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-xl font-bold text-white shadow-lg">
-                  {initials(user.full_name)}
-                </div>
-                <div>
-                  <p className="text-lg font-bold">{user.full_name}</p>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    <Badge variant="outline" className={roleColor(user.role)}>
-                      {user.role_label}
-                    </Badge>
-                    <Badge variant={user.is_active ? "default" : "outline"}>
-                      {user.is_active ? "Active" : "Inactive"}
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border bg-muted/30 p-3">
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <ShieldCheck className="size-3.5" /> Roll Number
-                  </p>
-                  <p className="mt-1 font-mono text-sm font-medium">{user.roll_number}</p>
-                </div>
-                <div className="rounded-xl border bg-muted/30 p-3">
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Mail className="size-3.5" /> Email
-                  </p>
-                  <p className="mt-1 text-sm font-medium">{user.email ?? "—"}</p>
-                </div>
-                <div className="rounded-xl border bg-muted/30 p-3">
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Phone className="size-3.5" /> Phone
-                  </p>
-                  <p className="mt-1 text-sm font-medium">{user.phone || "—"}</p>
-                </div>
-                <div className="rounded-xl border bg-muted/30 p-3">
-                  <p className="text-xs text-muted-foreground">Branch / Section</p>
-                  <p className="mt-1 text-sm font-medium">
-                    {user.branch_name ?? "—"} {user.section_name ? `/ Sec ${user.section_name}` : ""}
-                  </p>
-                </div>
-              </div>
-
-              <p className="text-xs text-muted-foreground">Joined {formatDate(user.date_joined)}</p>
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.05 }}
-        >
           <EditDetailsCard />
-        </motion.div>
+
+          {canContactAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquareText className="size-5 text-primary" /> Contact Admin
+                </CardTitle>
+                <CardDescription>
+                  Need a subject added, an account fixed or something escalated? Send the admin a
+                  message and track the reply here.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Link href="/contact-admin" className="block">
+                  <Button variant="outline" className="w-full">
+                    <MessageSquareText className="size-4" /> Open Contact Admin
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         <motion.div
@@ -315,6 +351,7 @@ export default function ProfilePage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.1 }}
           id="password"
+          className="space-y-6"
         >
           <Card>
             <CardHeader>
@@ -351,6 +388,26 @@ export default function ProfilePage() {
                   Update Password
                 </Button>
               </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <LogOut className="size-5 text-destructive" /> Sign out
+              </CardTitle>
+              <CardDescription>
+                End this session and return to the sign-in page.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant="outline"
+                className="w-full text-destructive hover:text-destructive"
+                onClick={logout}
+              >
+                <LogOut className="size-4" /> Log out
+              </Button>
             </CardContent>
           </Card>
         </motion.div>

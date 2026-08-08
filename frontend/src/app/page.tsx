@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useTheme } from "next-themes";
 import {
   ArrowRight,
   BarChart3,
@@ -16,10 +17,12 @@ import {
   GraduationCap,
   Layers,
   Library,
+  Moon,
   Search,
   Share2,
   ShieldCheck,
   Sparkles,
+  Sun,
   UploadCloud,
   Users,
 } from "lucide-react";
@@ -131,6 +134,7 @@ const STEPS = [
 
 export default function HomePage() {
   const { user, loading } = useAuth();
+  const { theme, setTheme } = useTheme();
   const router = useRouter();
 
   useEffect(() => {
@@ -170,9 +174,19 @@ export default function HomePage() {
               How it works
             </a>
           </nav>
-          <Button render={<Link href="/login" />} variant="outline">
-            Sign in <ArrowRight className="size-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Toggle light/dark mode"
+              title="Toggle light/dark mode"
+            >
+              {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+            </button>
+            <Button render={<Link href="/login" />} variant="outline">
+              Sign in <ArrowRight className="size-4" />
+            </Button>
+          </div>
         </div>
       </header>
 

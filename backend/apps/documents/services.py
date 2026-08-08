@@ -173,6 +173,27 @@ def signed_raw_url(public_id: str, attachment: bool = False) -> str:
     return url
 
 
+def _notify_section_document(sections, primary):
+    """Fan out "new document" notifications to students+CRs of the sections."""
+    from apps.accounts.models import User
+
+    from apps.core.models import Notification
+    from apps.core.utils import notify
+
+    recipients = User.objects.filter(
+        section_id__in=[s.id for s in sections],
+        role__in=[User.Role.STUDENT, User.Role.CR],
+        is_active=True,
+    )
+    notify(
+        recipients,
+        Notification.Kind.DOCUMENT_UPLOAD,
+        f"New document: {primary.title}",
+        f"{primary.subject.name} · {primary.category.name} ({primary.semester.name}) is now available in your section.",
+        "/documents",
+    )
+
+
 def create_document(data: dict, document_file, actor, request=None):
     """Upload the document once and create one record per target section.
 
@@ -219,6 +240,7 @@ def create_document(data: dict, document_file, actor, request=None):
         },
         request,
     )
+    _notify_section_document(sections, primary)
     return primary
 
 
@@ -263,6 +285,8 @@ def share_document(document, sections, actor, request=None):
         },
         request,
     )
+    if created:
+        _notify_section_document([c.section for c in created], document)
     return created
 
 
@@ -330,6 +354,9 @@ def respond_share_request(share_request, accept: bool, actor, request=None):
         copy = fork_document(
             share_request.document, share_request.to_section, actor, request
         )
+        # Accepting makes the document available in the new section - the
+        # students there hear about it just like a direct upload.
+        _notify_section_document([share_request.to_section], share_request.document)
         new_status = DocumentShareRequest.Status.ACCEPTED
     else:
         new_status = DocumentShareRequest.Status.DECLINED

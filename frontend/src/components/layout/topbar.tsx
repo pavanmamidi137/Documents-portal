@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, LogOut, Menu, Moon, Palette, PanelLeft, Search, Sun, UserRound } from "lucide-react";
+import { Check, Menu, Moon, Palette, PanelLeft, Search, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 
@@ -12,11 +12,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { NotificationsBell } from "@/components/notifications/notifications-bell";
 import { useAuth } from "@/lib/auth";
 import { useSiteTheme } from "@/lib/site-theme";
 import { cn, getErrorMessage, initials } from "@/lib/utils";
@@ -30,7 +30,7 @@ interface TopbarProps {
 }
 
 export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: TopbarProps) {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { theme, setTheme } = useTheme();
   const { theme: siteTheme, themes, setTheme: setSiteTheme } = useSiteTheme();
   const router = useRouter();
@@ -86,6 +86,7 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
       </form>
 
       <div className="ml-auto flex items-center gap-2">
+        <NotificationsBell />
         <ShareRequestBell />
 
         <Button
@@ -148,37 +149,15 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
           </DropdownMenu>
         )}
 
-        {/* Profile button — clicking it offers View Profile and Logout. */}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="outline" size="sm" className="gap-2 px-3" aria-label="Open profile menu">
-                <span className="flex size-5 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-500/30 dark:text-indigo-400">
-                  {initials(user?.full_name ?? "?")}
-                </span>
-                Profile
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel className="px-2 py-3">
-              <p className="truncate text-sm font-semibold">{user?.full_name}</p>
-              <p className="truncate text-xs font-normal text-muted-foreground">
-                {user?.roll_number} · {user?.role_label}
-              </p>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => router.push("/profile")}>
-              <UserRound className="size-4" /> View Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={logout}
-            >
-              <LogOut className="size-4" /> Logout
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* Profile icon — clicking it opens the profile page directly. */}
+        <button
+          onClick={() => router.push("/profile")}
+          className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 transition-transform hover:scale-105 dark:text-indigo-400"
+          aria-label="My Profile"
+          title="My Profile"
+        >
+          {initials(user?.full_name ?? "?")}
+        </button>
       </div>
     </header>
   );

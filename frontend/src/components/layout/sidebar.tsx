@@ -38,19 +38,21 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
 }
 
+interface NavGroup {
+  /** Section label shown above the items (undefined for the first group). */
+  label?: string;
+  items: NavItem[];
+}
+
 const COMMON: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/documents", label: "Documents", icon: FolderKanban },
   { href: "/announcements", label: "Announcements", icon: Megaphone },
 ];
 
-const STUDENT_ONLY: NavItem[] = [
-  { href: "/resume", label: "My Resume", icon: FileUser },
-];
+const STUDENT_ONLY: NavItem[] = [{ href: "/resume", label: "My Resume", icon: FileUser }];
 
-const FACULTY_ONLY: NavItem[] = [
-  { href: "/faculty/resumes", label: "Resumes", icon: FileUser },
-];
+const FACULTY_ONLY: NavItem[] = [{ href: "/faculty/resumes", label: "Resumes", icon: FileUser }];
 
 const ADMIN_ONLY: NavItem[] = [
   { href: "/admin/admins", label: "Admins", icon: ShieldCheck },
@@ -89,15 +91,25 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
   });
   const showResumeDot = isStudent && myResume === null;
 
-  const items: NavItem[] = [];
+  // Navigation is grouped so long lists (admin) read as sections instead of a
+  // wall of links. The first group carries no label - it is the app's main
+  // navigation, the labelled groups are role-specific tools.
+  let groups: NavGroup[] = [];
   if (user?.is_super_admin) {
-    items.push(...COMMON, ...ADMIN_ONLY, { href: "/faculty/resumes", label: "Resumes", icon: FileUser });
+    groups = [
+      { items: [...COMMON] },
+      { label: "Administration", items: ADMIN_ONLY },
+      { label: "Faculty", items: FACULTY_ONLY },
+    ];
   } else if (user?.is_cr) {
-    items.push(COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2]);
+    groups = [{ items: [COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2]] }];
   } else if (user?.is_faculty) {
-    items.push(COMMON[0], ...FACULTY_ONLY, COMMON[2]);
+    groups = [
+      { items: [COMMON[0], COMMON[2]] },
+      { label: "Faculty", items: FACULTY_ONLY },
+    ];
   } else {
-    items.push(...COMMON, ...STUDENT_ONLY);
+    groups = [{ items: [...COMMON] }, { label: "Career", items: STUDENT_ONLY }];
   }
 
   const collapsed = mode === "collapsed";
@@ -144,7 +156,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
       {/* Header */}
       <div
         className={cn(
-          "flex min-h-16 shrink-0 items-center gap-3 border-b px-3",
+          "flex min-h-16 shrink-0 items-center gap-3 border-b px-4",
           compact && "flex-col gap-2 px-1 py-2"
         )}
       >
@@ -176,53 +188,69 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-        {items.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
-          const link = (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={onClose}
-              className={cn(
-                "relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                compact && "justify-center px-0 py-2.5",
-                active ? "text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-            >
-              {active && (
-                <motion.span
-                  layoutId="sidebar-active"
-                  className="absolute inset-0 rounded-lg bg-primary/10 ring-1 ring-primary/20"
-                  transition={{ type: "spring", stiffness: 400, damping: 32 }}
-                />
-              )}
-              <item.icon className="relative z-10 size-4.5 shrink-0" />
-              {!compact && <span className="relative z-10">{item.label}</span>}
-              {item.href === "/resume" && showResumeDot && (
-                <span
+      <nav className="flex-1 space-y-5 overflow-y-auto p-3">
+        {groups.map((group, gi) => (
+          <div key={gi} className="space-y-0.5">
+            {group.label && (
+              compact ? (
+                <div className="mx-auto my-2 h-px w-7 rounded-full bg-border" aria-hidden="true" />
+              ) : (
+                <p className="px-3 pt-1 pb-1.5 text-[10px] font-semibold tracking-widest text-muted-foreground/70 uppercase">
+                  {group.label}
+                </p>
+              )
+            )}
+            {group.items.map((item) => {
+              const active = pathname === item.href || pathname.startsWith(item.href + "/");
+              const link = (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onClose}
                   className={cn(
-                    "absolute top-2 z-10 size-2 rounded-full bg-amber-500 shadow-sm ring-2 ring-amber-500/30",
-                    compact ? "right-1.5" : "right-2.5"
+                    "relative flex items-center gap-3 rounded-lg py-2 text-sm font-medium transition-colors",
+                    compact ? "justify-center px-0" : "px-3",
+                    active
+                      ? "bg-primary/10 font-semibold text-foreground"
+                      : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
                   )}
-                  aria-hidden="true"
-                />
-              )}
-            </Link>
-          );
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="sidebar-active"
+                      className="absolute top-1/2 left-0 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary"
+                      transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                    />
+                  )}
+                  <item.icon
+                    className={cn("relative z-10 size-4.5 shrink-0", active && "text-primary")}
+                  />
+                  {!compact && <span className="relative z-10">{item.label}</span>}
+                  {item.href === "/resume" && showResumeDot && (
+                    <span
+                      className={cn(
+                        "absolute top-1/2 z-10 size-2 -translate-y-1/2 rounded-full bg-amber-500 shadow-sm ring-2 ring-amber-500/30",
+                        compact ? "right-1.5" : "right-3"
+                      )}
+                      aria-hidden="true"
+                    />
+                  )}
+                </Link>
+              );
 
-          if (compact) {
-            return (
-              <Tooltip key={item.href}>
-                <TooltipTrigger render={link} />
-                <TooltipContent side="right">{item.label}</TooltipContent>
-              </Tooltip>
-            );
-          }
-          return link;
-        })}
+              if (compact) {
+                return (
+                  <Tooltip key={item.href}>
+                    <TooltipTrigger render={link} />
+                    <TooltipContent side="right">{item.label}</TooltipContent>
+                  </Tooltip>
+                );
+              }
+              return link;
+            })}
+          </div>
+        ))}
       </nav>
-
     </div>
   );
 
@@ -241,9 +269,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
       )}
 
       {/* Mobile edge swipe handle (drag right to open) */}
-      {!open && (
-        <EdgeSwipeHandle onOpen={onOpen} />
-      )}
+      {!open && <EdgeSwipeHandle onOpen={onOpen} />}
 
       {/* Mobile overlay */}
       <AnimatePresence>

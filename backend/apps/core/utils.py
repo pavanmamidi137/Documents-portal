@@ -7,7 +7,7 @@ import unicodedata
 
 from django.http import HttpResponse
 
-from .models import AuditLog
+from .models import AuditLog, Notification
 
 
 def get_client_ip(request):
@@ -33,6 +33,25 @@ def log_audit(actor, action, target_type="", target_id="", details=None, request
         )
     except Exception:  # pragma: no cover - audit must never break the request
         pass
+
+
+def notify(users, kind, title, message, link=""):
+    """Fan out an in-app notification to a list of users. Never raises."""
+    try:
+        recipients = [u for u in users if u is not None and getattr(u, "is_active", True)]
+        if not recipients:
+            return 0
+        Notification.objects.bulk_create(
+            [
+                Notification(
+                    user=u, kind=kind, title=title, message=message, link=link
+                )
+                for u in recipients
+            ]
+        )
+        return len(recipients)
+    except Exception:  # pragma: no cover - notifications must never break the request
+        return 0
 
 
 def csv_safe(value) -> str:

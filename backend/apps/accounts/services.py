@@ -371,6 +371,22 @@ def upload_resume(student: User, resume_file, request=None) -> Resume:
     # A fresh submission is not a "restored" file - clear any previous badge.
     resume.restored_at = None
     resume.save()
+    # Faculty of the student's branch hear about a NEW resume (a replacement is
+    # just an edit - no need to re-ring the bell).
+    if created and student.branch_id:
+        from apps.core.models import Notification
+        from apps.core.utils import notify
+
+        faculty = User.objects.filter(
+            role=User.Role.FACULTY, branch_id=student.branch_id, is_active=True
+        )
+        notify(
+            faculty,
+            Notification.Kind.RESUME_UPLOAD,
+            f"{student.full_name} uploaded a resume",
+            f"A resume from {student.branch.name} is ready for review.",
+            "/faculty/resumes",
+        )
     log_audit(
         student, "RESUME_UPLOAD" if created else "RESUME_UPDATE", "Resume", resume.id,
         {"roll_number": student.roll_number, "file": resume.file_name},

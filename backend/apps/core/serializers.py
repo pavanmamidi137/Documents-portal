@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import AuditLog
+from .models import AuditLog, ContactRequest, Notification
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -17,3 +17,31 @@ class AuditLogSerializer(serializers.ModelSerializer):
 
     def get_actor_name(self, obj) -> str:
         return obj.actor.full_name if obj.actor else "System"
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+
+    class Meta:
+        model = Notification
+        fields = ["id", "kind", "kind_label", "title", "message", "link", "read", "created_at"]
+        read_only_fields = fields
+
+
+class ContactRequestSerializer(serializers.ModelSerializer):
+    sender_name = serializers.CharField(source="sender.full_name", read_only=True, default="")
+    sender_roll = serializers.CharField(source="sender.roll_number", read_only=True, default="")
+    sender_role = serializers.CharField(source="sender.role_label", read_only=True, default="")
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = ContactRequest
+        fields = [
+            "id", "sender", "sender_name", "sender_roll", "sender_role",
+            "subject", "message", "status", "status_label", "created_at", "resolved_at",
+        ]
+        read_only_fields = [
+            "id", "sender", "sender_name", "sender_roll", "sender_role",
+            "status", "status_label", "created_at", "resolved_at",
+        ]
