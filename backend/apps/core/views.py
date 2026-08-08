@@ -8,6 +8,8 @@ from apps.college.models import Branch, Section, Subject
 from apps.documents.models import Document
 from apps.documents.serializers import DocumentListSerializer
 
+from apps.accounts.models import Resume
+
 
 def health(request):
     """Liveness probe used by Render."""
@@ -23,6 +25,8 @@ class DashboardView(APIView):
             data = self._super_admin_stats()
         elif user.is_cr:
             data = self._cr_stats(user)
+        elif user.is_faculty:
+            data = self._faculty_stats(user)
         else:
             data = self._student_stats(user)
         return Response(data)
@@ -77,6 +81,39 @@ class DashboardView(APIView):
                 "categories": docs.values("category_id").distinct().count(),
             },
             "recent_uploads": DocumentListSerializer(recent, many=True).data,
+        }
+
+    @staticmethod
+    def _faculty_stats(user):
+        """Faculty dashboard: students + resumes across their whole branch."""
+        students = user.branch.students.filter(role="STUDENT") if user.branch else None
+        resumes = (
+            Resume.objects.filter(student__branch_id=user.branch_id)
+            if user.branch_id
+            else Resume.objects.none()
+        )
+        recent = (
+            resumes.select_related("student", "student__section")
+            .order_by("-updated_at")[:8]
+        )
+        return {
+            "role": "FACULTY",
+            "totals": {
+                "students": students.count() if students else 0,
+                "sections": user.branch.sections.count() if user.branch else 0,
+                "resumes": resumes.count(),
+            },
+            "recent_resumes": [
+                {
+                    "id": r.id,
+                    "student_name": r.student.full_name,
+                    "student_roll": r.student.roll_number,
+                    "section_name": r.student.section.name if r.student.section else None,
+                    "file_name": r.file_name,
+                    "updated_at": r.updated_at,
+                }
+                for r in recent
+            ],
         }
 
     @staticmethod

@@ -8,10 +8,11 @@ import io
 
 from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
+from rest_framework.exceptions import ValidationError
 
 from apps.core.utils import log_audit
 
-from .models import User
+from .models import Resume, User
 
 CSV_REQUIRED_COLUMNS = {"roll number", "student name"}
 
@@ -48,6 +49,12 @@ def update_student(student: User, data: dict, actor: User, request=None) -> User
 @transaction.atomic
 def delete_student(student: User, actor: User, request=None) -> None:
     roll = student.roll_number
+    # Remove the student's resume file from Cloudinary before the row cascades.
+    resume = getattr(student, "resume", None)
+    if resume and resume.public_id:
+        from apps.documents.services import delete_document_file
+
+        delete_document_file(resume.public_id)
     student.delete()
     log_audit(actor, "DELETE", "Student", roll, {"roll_number": roll}, request)
 
@@ -301,3 +308,80 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
     log_audit(actor, "CSV_IMPORT", "Student", "",
               {"created": created, "updated": updated, "errors": len(errors)}, request)
     return {"created": created, "updated": updated, "skipped_errors": errors}
+
+
+# ---------------------------------------------------------------------------
+# Resumes
+# ---------------------------------------------------------------------------
+RESUME_EXTENSIONS = {".pdf", ".doc", ".docx"}
+
+
+def _resume_folder(student: User) -> str:
+    """Cloudinary folder: resumes/{branch}/{section}/"""
+    from apps.core.utils import slugify
+
+    branch = slugify(student.branch.name) if student.branch else "no-branch"
+    section = slugify(student.section.name) if student.section else "no-section"
+    return f"resumes/{branch}/{section}"
+
+
+def _validate_resume_file(document_file) -> None:
+    """Reject non-PDF/DOC/DOCX files and files over the size limit."""
+    if not document_file:
+        raise ValidationError({"file": "A resume file is required."})
+    if document_file.size <= 0:
+        raise ValidationError({"file": "The uploaded file is empty."})
+    name = (getattr(document_file, "name", "") or "").lower()
+    ext = f".{name.rpartition('.')[2]}" if "." in name else ""
+    if ext not in RESUME_EXTENSIONS:
+        raise ValidationError({"file": "Only PDF, DOC or DOCX resume files are allowed."})
+    max_bytes = 10 * 1024 * 1024
+    if document_file.size > max_bytes:
+        raise ValidationError({"file": "Resume exceeds the 10MB size limit."})
+
+
+@transaction.atomic
+def upload_resume(student: User, resume_file, request=None) -> Resume:
+    """Upload (or replace) a student's resume on Cloudinary.
+
+    One resume per student: an existing Cloudinary file is removed first, then
+    the new file is uploaded and the Resume row is updated in place.
+    """
+    from apps.documents.services import delete_document_file, upload_document
+
+    _validate_resume_file(resume_file)
+    folder = _resume_folder(student)
+    uploaded = upload_document(resume_file, folder)
+
+    resume, created = Resume.objects.get_or_create(student=student)
+    if not created and resume.public_id and resume.public_id != uploaded["public_id"]:
+        delete_document_file(resume.public_id)
+    resume.file_name = uploaded["file_name"]
+    resume.file_size = uploaded["file_size"]
+    resume.cloudinary_url = uploaded["url"]
+    resume.public_id = uploaded["public_id"]
+    if not created:
+        # A new file is a fresh submission - clear any previous review status.
+        resume.is_reviewed = False
+        resume.reviewed_by = None
+        resume.reviewed_at = None
+    resume.save()
+    log_audit(
+        student, "RESUME_UPLOAD" if created else "RESUME_UPDATE", "Resume", resume.id,
+        {"roll_number": student.roll_number, "file": resume.file_name},
+        request,
+    )
+    return resume
+
+
+@transaction.atomic
+def delete_resume(resume: Resume, actor: User, request=None) -> None:
+    """Delete a resume row and its Cloudinary file."""
+    from apps.documents.services import delete_document_file
+
+    roll = resume.student.roll_number
+    if resume.public_id:
+        delete_document_file(resume.public_id)
+    resume.delete()
+    log_audit(actor, "RESUME_DELETE", "Resume", roll,
+              {"roll_number": roll, "file": resume.file_name}, request)

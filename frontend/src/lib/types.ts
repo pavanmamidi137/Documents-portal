@@ -1,4 +1,4 @@
-export type Role = "SUPER_ADMIN" | "CR" | "STUDENT";
+export type Role = "SUPER_ADMIN" | "CR" | "FACULTY" | "STUDENT";
 
 export interface User {
   id: number;
@@ -15,6 +15,7 @@ export interface User {
   is_active: boolean;
   is_super_admin: boolean;
   is_cr: boolean;
+  is_faculty: boolean;
   is_student: boolean;
   date_joined: string;
 }
@@ -146,6 +147,23 @@ export interface SearchResults {
   students: User[];
   documents: DocumentItem[];
   announcements: Announcement[];
+}
+
+export interface Resume {
+  id: number;
+  student: number;
+  student_roll: string;
+  student_name: string;
+  branch_name: string | null;
+  section_name: string | null;
+  file_name: string;
+  file_size: number;
+  cloudinary_url: string;
+  is_reviewed: boolean;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ImportResult {

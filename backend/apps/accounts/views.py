@@ -1,24 +1,33 @@
 from django.db.models import Q
 from django.conf import settings
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from apps.core.permissions import IsSuperAdmin, IsSuperAdminOrCR
+from apps.core.permissions import (
+    IsStudent,
+    IsSuperAdmin,
+    IsSuperAdminOrCR,
+    IsSuperAdminOrFaculty,
+)
 from apps.core.throttles import LoginRateThrottle
 from apps.core.utils import csv_response, log_audit
 
-from .models import User
+from .models import Resume, User
 from .serializers import (
     ChangePasswordSerializer,
+    FacultyCreateSerializer,
+    FacultyUpdateSerializer,
     LoginSerializer,
     ProfileUpdateSerializer,
     ResetPasswordSerializer,
+    ResumeSerializer,
     StudentCreateSerializer,
     StudentUpdateSerializer,
     UserSerializer,
@@ -255,3 +264,170 @@ class StudentViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         services.reset_password(student, serializer.validated_data["new_password"], request.user, request)
         return Response({"detail": "Password reset successfully."})
+
+
+# ---------------------------------------------------------------------------
+# Faculty management (Super Admin)
+# ---------------------------------------------------------------------------
+class FacultyViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    permission_classes = [IsSuperAdmin]
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        qs = User.objects.select_related("branch", "section").filter(
+            role=User.Role.FACULTY
+        )
+        params = self.request.query_params
+        search = params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(roll_number__icontains=search)
+                | Q(full_name__icontains=search)
+                | Q(email__icontains=search)
+                | Q(phone__icontains=search)
+            )
+        if params.get("branch"):
+            qs = qs.filter(branch_id=params["branch"])
+        return qs.order_by("roll_number")
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        faculty = serializer.save()
+        log_audit(request.user, "CREATE", "Faculty", faculty.id,
+                  {"roll_number": faculty.roll_number, "branch": faculty.branch_id}, request)
+        return Response(UserSerializer(faculty).data, status=status.HTTP_201_CREATED)
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return FacultyCreateSerializer
+        if self.action in ("update", "partial_update"):
+            return FacultyUpdateSerializer
+        return UserSerializer
+
+    def partial_update(self, request, *args, **kwargs):
+        faculty = self.get_object()
+        serializer = self.get_serializer(
+            faculty, data=request.data, partial=True, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+        password = serializer.validated_data.pop("password", None)
+        for field, value in serializer.validated_data.items():
+            setattr(faculty, field, value)
+        if password:
+            faculty.set_password(password)
+        faculty.save()
+        log_audit(request.user, "UPDATE", "Faculty", faculty.id,
+                  {"roll_number": faculty.roll_number}, request)
+        return Response(UserSerializer(faculty).data)
+
+    def destroy(self, request, *args, **kwargs):
+        faculty = self.get_object()
+        roll = faculty.roll_number
+        faculty.delete()
+        log_audit(request.user, "DELETE", "Faculty", roll, {"roll_number": roll}, request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"])
+    def reset_password(self, request, pk=None):
+        faculty = self.get_object()
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.reset_password(faculty, serializer.validated_data["new_password"], request.user, request)
+        return Response({"detail": "Password reset successfully."})
+
+
+# ---------------------------------------------------------------------------
+# Student resumes (students upload; faculty view their whole branch)
+# ---------------------------------------------------------------------------
+class ResumeViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "delete", "head", "options"]
+    serializer_class = ResumeSerializer
+    permission_classes = [IsSuperAdminOrFaculty]
+
+    def get_permissions(self):
+        # Students manage their own resume; faculty/admins browse the list.
+        if self.action in ("create", "mine"):
+            return [IsStudent()]
+        if self.action in ("list", "mark_reviewed"):
+            return [IsSuperAdminOrFaculty()]
+        # destroy: ownership is checked in the body (owner student or admin).
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Resume.objects.select_related(
+            "student", "student__branch", "student__section"
+        )
+        # Faculty see resumes of every section in their branch; admins see all.
+        if user.is_faculty and user.branch_id:
+            qs = qs.filter(student__branch_id=user.branch_id)
+        params = self.request.query_params
+        search = params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(student__roll_number__icontains=search)
+                | Q(student__full_name__icontains=search)
+                | Q(file_name__icontains=search)
+            )
+        if params.get("branch"):
+            qs = qs.filter(student__branch_id=params["branch"])
+        if params.get("section"):
+            qs = qs.filter(student__section_id=params["section"])
+        return qs
+
+    @action(detail=False, methods=["get"])
+    def mine(self, request):
+        """The calling student's own resume (or 404 when none uploaded)."""
+        if not request.user.is_student:
+            raise PermissionDenied("Only students have a personal resume.")
+        resume = Resume.objects.filter(student=request.user).first()
+        if not resume:
+            raise NotFound("You have not uploaded a resume yet.")
+        return Response(ResumeSerializer(resume).data)
+
+    def create(self, request, *args, **kwargs):
+        """Students upload or replace their own resume."""
+        if not request.user.is_student:
+            raise PermissionDenied("Only students can upload a resume.")
+        resume_file = request.FILES.get("file")
+        if not resume_file:
+            raise ValidationError({"file": "A resume file is required."})
+        resume = services.upload_resume(request.user, resume_file, request)
+        return Response(ResumeSerializer(resume).data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        resume = self.get_object()
+        user = request.user
+        if not (user.is_super_admin or (user.is_student and resume.student_id == user.id)):
+            raise PermissionDenied("You can only delete your own resume.")
+        services.delete_resume(resume, user, request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"])
+    def mark_reviewed(self, request, pk=None):
+        """Faculty/admins mark a resume as reviewed (or unmark it).
+
+        The resume must already be visible to the caller (the viewset queryset
+        is branch-scoped for faculty), and review state is reset automatically
+        whenever the student replaces their file.
+        """
+        resume = self.get_object()
+        value = request.data.get("reviewed", True)
+        if isinstance(value, str):
+            value = value.lower() in ("1", "true", "yes", "on")
+        reviewed = bool(value)
+
+        resume.is_reviewed = reviewed
+        resume.reviewed_by = request.user if reviewed else None
+        resume.reviewed_at = timezone.now() if reviewed else None
+        # auto_now bumps updated_at so the faculty table reflects review activity.
+        resume.save(update_fields=["is_reviewed", "reviewed_by", "reviewed_at", "updated_at"])
+        log_audit(
+            request.user, "RESUME_REVIEW" if reviewed else "RESUME_UNREVIEW",
+            "Resume", resume.id,
+            {"roll_number": resume.student.roll_number, "file": resume.file_name},
+            request,
+        )
+        return Response(ResumeSerializer(resume).data)

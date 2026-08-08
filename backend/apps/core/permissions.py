@@ -33,6 +33,24 @@ class IsStudent(permissions.BasePermission):
         return bool(user and user.is_authenticated and user.is_student)
 
 
+class IsFaculty(permissions.BasePermission):
+    """Allow access only to Faculty."""
+
+    def has_permission(self, request, view) -> bool:
+        user = request.user
+        return bool(user and user.is_authenticated and user.is_faculty)
+
+
+class IsSuperAdminOrFaculty(permissions.BasePermission):
+    """Allow access to Super Admins and Faculty."""
+
+    def has_permission(self, request, view) -> bool:
+        user = request.user
+        return bool(
+            user and user.is_authenticated and (user.is_super_admin or user.is_faculty)
+        )
+
+
 class IsSuperAdminForWrite(permissions.BasePermission):
     """Authenticated users may read; only Super Admins may write."""
 

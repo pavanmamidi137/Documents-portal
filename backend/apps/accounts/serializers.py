@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import User
+from .models import Resume, User
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -14,7 +14,8 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             "id", "roll_number", "full_name", "email", "phone", "role", "role_label",
             "branch", "branch_name", "section", "section_name",
-            "is_active", "is_staff", "is_super_admin", "is_cr", "is_student", "date_joined",
+            "is_active", "is_staff", "is_super_admin", "is_cr", "is_faculty",
+            "is_student", "date_joined",
         ]
         read_only_fields = ["id", "date_joined", "is_staff"]
 
@@ -150,3 +151,82 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
             attrs.pop("section", None)
             attrs.pop("is_active", None)
         return attrs
+
+
+class FacultyCreateSerializer(serializers.ModelSerializer):
+    """Admin creates a faculty account (roll number + branch + default password)."""
+
+    password = serializers.CharField(write_only=True, min_length=6, required=False, allow_blank=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id", "roll_number", "full_name", "email", "phone",
+            "branch", "password", "is_active",
+        ]
+        read_only_fields = ["id"]
+
+    def validate_roll_number(self, value):
+        value = value.strip().upper()
+        if User.objects.filter(roll_number=value).exists():
+            raise serializers.ValidationError("A user with this roll number already exists.")
+        return value
+
+    def validate_email(self, value):
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
+    def validate(self, attrs):
+        attrs["role"] = User.Role.FACULTY
+        if not attrs.get("branch"):
+            raise serializers.ValidationError({"branch": "Assign a branch to this faculty member."})
+        return attrs
+
+    def create(self, validated_data):
+        roll_number = validated_data.pop("roll_number")
+        password = validated_data.pop("password", None) or roll_number
+        return User.objects.create_user(roll_number, password, **validated_data)
+
+
+class FacultyUpdateSerializer(serializers.ModelSerializer):
+    """Admin edits a faculty member (identity fields stay fixed)."""
+
+    password = serializers.CharField(write_only=True, min_length=6, required=False, allow_blank=True)
+
+    class Meta:
+        model = User
+        fields = ["id", "full_name", "email", "phone", "branch", "is_active", "password"]
+        read_only_fields = ["id", "role"]
+
+    def validate_email(self, value):
+        value = (value or "").strip().lower()
+        if not value:
+            return None
+        qs = User.objects.filter(email=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("This email is already in use.")
+        return value
+
+
+class ResumeSerializer(serializers.ModelSerializer):
+    student_roll = serializers.CharField(source="student.roll_number", read_only=True)
+    student_name = serializers.CharField(source="student.full_name", read_only=True)
+    branch_name = serializers.CharField(source="student.branch.name", read_only=True, default=None)
+    section_name = serializers.CharField(source="student.section.name", read_only=True, default=None)
+    reviewed_by_name = serializers.CharField(
+        source="reviewed_by.full_name", read_only=True, default=None
+    )
+
+    class Meta:
+        model = Resume
+        fields = [
+            "id", "student", "student_roll", "student_name",
+            "branch_name", "section_name",
+            "file_name", "file_size", "cloudinary_url",
+            "is_reviewed", "reviewed_by_name", "reviewed_at",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = fields

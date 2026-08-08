@@ -2,6 +2,8 @@
 
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 
+import type { Resume } from "@/lib/types";
+
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -107,5 +109,18 @@ export const http = {
     URL.revokeObjectURL(blobUrl);
   },
 };
+
+/**
+ * Fetch the signed-in student's resume, or null when none is uploaded yet
+ * (the backend returns 404 in that case).
+ */
+export async function fetchMyResume(): Promise<Resume | null> {
+  try {
+    return await http.get<Resume>("/resumes/mine/");
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+    throw error;
+  }
+}
 
 export default api;

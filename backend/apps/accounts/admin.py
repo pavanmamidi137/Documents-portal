@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import User
+from .models import Resume, User
 
 
 @admin.register(User)
@@ -24,3 +24,9 @@ class UserAdmin(BaseUserAdmin):
             "fields": ("roll_number", "full_name", "role", "branch", "section", "password1", "password2"),
         }),
     )
+
+
+@admin.register(Resume)
+class ResumeAdmin(admin.ModelAdmin):
+    list_display = ["student", "file_name", "file_size", "updated_at"]
+    search_fields = ["student__roll_number", "student__full_name", "file_name"]

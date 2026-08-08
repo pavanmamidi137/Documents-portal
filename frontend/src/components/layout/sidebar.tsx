@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
@@ -9,6 +10,7 @@ import {
   Building2,
   ChevronsLeft,
   ChevronsRight,
+  FileUser,
   FolderKanban,
   GraduationCap,
   Layers,
@@ -24,6 +26,7 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "@/lib/auth";
+import { fetchMyResume } from "@/lib/api";
 import { cn, initials } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -41,10 +44,19 @@ const COMMON: NavItem[] = [
   { href: "/announcements", label: "Announcements", icon: Megaphone },
 ];
 
+const STUDENT_ONLY: NavItem[] = [
+  { href: "/resume", label: "My Resume", icon: FileUser },
+];
+
+const FACULTY_ONLY: NavItem[] = [
+  { href: "/faculty/resumes", label: "Resumes", icon: FileUser },
+];
+
 const ADMIN_ONLY: NavItem[] = [
   { href: "/admin/branches", label: "Branches", icon: Building2 },
   { href: "/admin/sections", label: "Sections", icon: Layers },
   { href: "/admin/students", label: "Students", icon: Users },
+  { href: "/admin/faculty", label: "Faculty", icon: GraduationCap },
   { href: "/admin/subjects", label: "Subjects", icon: BookOpenText },
   { href: "/admin/semesters", label: "Semesters", icon: Settings2 },
   { href: "/admin/categories", label: "Categories", icon: Tags },
@@ -64,14 +76,27 @@ interface SidebarProps {
 export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const isStudent = user?.is_student ?? false;
+
+  // Students: track resume status. Shares the cache key with the /resume page
+  // and the dashboard, so the amber dot disappears the moment they upload.
+  const { data: myResume } = useQuery({
+    queryKey: ["resume", "mine"],
+    queryFn: fetchMyResume,
+    enabled: isStudent,
+    staleTime: 30_000,
+  });
+  const showResumeDot = isStudent && myResume === null;
 
   const items: NavItem[] = [];
   if (user?.is_super_admin) {
-    items.push(...COMMON, ...ADMIN_ONLY);
+    items.push(...COMMON, ...ADMIN_ONLY, { href: "/faculty/resumes", label: "Resumes", icon: FileUser });
   } else if (user?.is_cr) {
     items.push(COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2]);
+  } else if (user?.is_faculty) {
+    items.push(COMMON[0], ...FACULTY_ONLY, COMMON[2]);
   } else {
-    items.push(...COMMON);
+    items.push(...COMMON, ...STUDENT_ONLY);
   }
 
   const collapsed = mode === "collapsed";
@@ -173,6 +198,15 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
               )}
               <item.icon className="relative z-10 size-4.5 shrink-0" />
               {!compact && <span className="relative z-10">{item.label}</span>}
+              {item.href === "/resume" && showResumeDot && (
+                <span
+                  className={cn(
+                    "absolute top-2 z-10 size-2 rounded-full bg-amber-500 shadow-sm ring-2 ring-amber-500/30",
+                    compact ? "right-1.5" : "right-2.5"
+                  )}
+                  aria-hidden="true"
+                />
+              )}
             </Link>
           );
 

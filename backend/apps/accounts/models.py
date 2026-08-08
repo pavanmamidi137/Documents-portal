@@ -39,6 +39,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
         SUPER_ADMIN = "SUPER_ADMIN", "Super Admin"
         CR = "CR", "CR (Sub Admin)"
+        FACULTY = "FACULTY", "Faculty"
         STUDENT = "STUDENT", "Student"
 
     roll_number = models.CharField(max_length=30, unique=True)
@@ -79,6 +80,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.role == self.Role.CR
 
     @property
+    def is_faculty(self) -> bool:
+        return self.role == self.Role.FACULTY
+
+    @property
     def is_student(self) -> bool:
         return self.role == self.Role.STUDENT
 
@@ -91,3 +96,40 @@ class User(AbstractBaseUser, PermissionsMixin):
         if self.is_super_admin:
             return True
         return bool(self.is_cr and section and self.section_id == section.id)
+
+    def can_manage_branch(self, branch) -> bool:
+        """Super admins manage every branch; faculty only their assigned branch."""
+        if self.is_super_admin:
+            return True
+        return bool(self.is_faculty and branch and self.branch_id == branch.id)
+
+
+class Resume(models.Model):
+    """A student's resume (PDF) stored on Cloudinary.
+
+    One resume per student. Faculty see the resumes of every student in their
+    branch; the owning student can upload, replace and delete their own.
+    """
+
+    student = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="resume"
+    )
+    file_name = models.CharField(max_length=255)
+    file_size = models.PositiveBigIntegerField(default=0)  # bytes
+    cloudinary_url = models.URLField(max_length=500)
+    public_id = models.CharField(max_length=255)
+    # Review state: faculty mark a resume as reviewed so the student can see it.
+    is_reviewed = models.BooleanField(default=False)
+    reviewed_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="reviewed_resumes",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["student__roll_number"]
+
+    def __str__(self) -> str:
+        return f"Resume: {self.student.roll_number}"
