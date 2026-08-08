@@ -148,19 +148,19 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
           </DropdownMenu>
         )}
 
-        {/* Profile — the "right side button" for your account, settings and logout. */}
+        {/* Profile button — clicking it offers View Profile and Logout. */}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <button
-                className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 transition-transform hover:scale-105 dark:text-indigo-400"
-                aria-label="Open profile menu"
-              >
-                {initials(user?.full_name ?? "?")}
-              </button>
+              <Button variant="outline" size="sm" className="gap-2 px-3" aria-label="Open profile menu">
+                <span className="flex size-5 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-500/30 dark:text-indigo-400">
+                  {initials(user?.full_name ?? "?")}
+                </span>
+                Profile
+              </Button>
             }
           />
-          <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuLabel className="px-2 py-3">
               <p className="truncate text-sm font-semibold">{user?.full_name}</p>
               <p className="truncate text-xs font-normal text-muted-foreground">
@@ -169,13 +169,13 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => router.push("/profile")}>
-              <UserRound className="size-4" /> My Profile
+              <UserRound className="size-4" /> View Profile
             </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={logout}
             >
-              <LogOut className="size-4" /> Log out
+              <LogOut className="size-4" /> Logout
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

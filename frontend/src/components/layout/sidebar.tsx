@@ -15,7 +15,6 @@ import {
   GraduationCap,
   Layers,
   LayoutDashboard,
-  LogOut,
   Megaphone,
   PanelLeftClose,
   ScrollText,
@@ -28,7 +27,7 @@ import {
 
 import { useAuth } from "@/lib/auth";
 import { fetchMyResume } from "@/lib/api";
-import { cn, initials } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export type SidebarMode = "expanded" | "collapsed" | "hidden";
@@ -77,7 +76,7 @@ interface SidebarProps {
 
 export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarProps) {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const isStudent = user?.is_student ?? false;
 
   // Students: track resume status. Shares the cache key with the /resume page
@@ -224,55 +223,6 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
         })}
       </nav>
 
-      {/* Footer — profile + logout */}
-      <div className="shrink-0 border-t p-3">
-        <div className={cn("flex items-center gap-3 rounded-lg px-2 py-2", compact && "flex-col gap-2 px-0")}>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Link
-                  href="/profile"
-                  onClick={onClose}
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 transition-transform hover:scale-105 dark:text-indigo-400"
-                  aria-label="Open profile"
-                >
-                  {initials(user?.full_name ?? "?")}
-                </Link>
-              }
-            />
-            <TooltipContent>Profile</TooltipContent>
-          </Tooltip>
-          {!compact && (
-            <Link
-              href="/profile"
-              onClick={onClose}
-              className="min-w-0 flex-1 rounded-md transition-colors hover:text-foreground"
-            >
-              <p className="truncate text-sm font-medium">{user?.full_name}</p>
-              <p className="truncate text-[11px] capitalize text-muted-foreground">
-                {user?.role_label.toLowerCase()}
-              </p>
-            </Link>
-          )}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  onClick={logout}
-                  className={cn(
-                    "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive",
-                    !compact && "ml-auto"
-                  )}
-                  aria-label="Log out"
-                >
-                  <LogOut className="size-4" />
-                </button>
-              }
-            />
-            <TooltipContent>Log out</TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
     </div>
   );
 
