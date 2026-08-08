@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BookOpenText,
+  Briefcase,
   Building2,
   ChevronsLeft,
   ChevronsRight,
@@ -27,9 +28,13 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "@/lib/auth";
-import { fetchMyResume } from "@/lib/api";
+import { fetchMyResume, http } from "@/lib/api";
+import type { Drive } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+// Students: show an amber dot on Placements until they open the page.
+const PLACEMENT_SEEN_KEY = "placement_seen_at";
 
 export type SidebarMode = "expanded" | "collapsed" | "hidden";
 
@@ -49,6 +54,7 @@ const COMMON: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/documents", label: "Documents", icon: FolderKanban },
   { href: "/announcements", label: "Announcements", icon: Megaphone },
+  { href: "/placements", label: "Placements", icon: Briefcase },
 ];
 
 const STUDENT_ONLY: NavItem[] = [{ href: "/resume", label: "My Resume", icon: FileUser }];
@@ -91,6 +97,27 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
     staleTime: 30_000,
   });
   const showResumeDot = isStudent && myResume === null;
+
+  // Students: a new drive (posted after their last visit) shows a dot on the
+  // Placements item. Visiting /placements clears it via localStorage.
+  const { data: drives } = useQuery({
+    queryKey: ["drives", "latest"],
+    queryFn: () => http.get<Drive[]>("/drives/?status=open"),
+    enabled: isStudent,
+    staleTime: 30_000,
+  });
+  const showPlacementsDot = (() => {
+    if (!isStudent || !drives || drives.length === 0) return false;
+    const latest = new Date(drives[0].created_at).getTime();
+    if (Number.isNaN(latest)) return false;
+    let seen = 0;
+    try {
+      seen = Number(localStorage.getItem(PLACEMENT_SEEN_KEY) || 0);
+    } catch {
+      /* private mode */
+    }
+    return latest > seen;
+  })();
 
   // Navigation is grouped so long lists (admin) read as sections instead of a
   // wall of links. The first group carries no label - it is the app's main
@@ -227,7 +254,8 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
                     className={cn("relative z-10 size-4.5 shrink-0", active && "text-primary")}
                   />
                   {!compact && <span className="relative z-10">{item.label}</span>}
-                  {item.href === "/resume" && showResumeDot && (
+                  {(item.href === "/resume" && showResumeDot) ||
+                    (item.href === "/placements" && showPlacementsDot) ? (
                     <span
                       className={cn(
                         "absolute top-1/2 z-10 size-2 -translate-y-1/2 rounded-full bg-amber-500 shadow-sm ring-2 ring-amber-500/30",
@@ -235,7 +263,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
                       )}
                       aria-hidden="true"
                     />
-                  )}
+                  ) : null}
                 </Link>
               );
 

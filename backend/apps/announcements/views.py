@@ -1,11 +1,46 @@
+import re
+
+from django.contrib.auth import get_user_model
 from django.db.models import Q
 from rest_framework import viewsets
 
+from apps.core.models import Notification
 from apps.core.permissions import IsSuperAdminForWrite
-from apps.core.utils import log_audit
+from apps.core.utils import log_audit, notify
 
 from .models import Announcement
 from .serializers import AnnouncementSerializer
+
+User = get_user_model()
+
+
+def _announcement_recipients(instance):
+    """The students & CRs who can see this announcement (never the author)."""
+    qs = User.objects.filter(is_active=True)
+    students_and_crs = Q(role=User.Role.CR) | Q(role=User.Role.STUDENT)
+
+    if instance.visibility == Announcement.Visibility.SECTION:
+        qs = qs.filter(students_and_crs, section_id=instance.section_id)
+    elif instance.visibility == Announcement.Visibility.BRANCH:
+        qs = qs.filter(students_and_crs, branch_id=instance.branch_id)
+    elif instance.visibility == Announcement.Visibility.CR_ONLY:
+        qs = qs.filter(role=User.Role.CR)
+    elif instance.visibility == Announcement.Visibility.STUDENT_ONLY:
+        qs = qs.filter(role=User.Role.STUDENT)
+    else:  # COLLEGE
+        qs = qs.filter(students_and_crs)
+
+    if instance.created_by_id:
+        qs = qs.exclude(pk=instance.created_by_id)
+    return qs
+
+
+def _announcement_preview(instance) -> str:
+    """A short, single-line preview for the notification message."""
+    body = re.sub(r"\s+", " ", (instance.body or "").strip())
+    if body:
+        return body[:140] + ("…" if len(body) > 140 else "")
+    return f"Posted for {instance.visibility_label}."
 
 
 class AnnouncementViewSet(viewsets.ModelViewSet):
@@ -41,6 +76,13 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         instance = serializer.save(created_by=self.request.user)
         log_audit(self.request.user, "CREATE", "Announcement", instance.id,
                   {"title": instance.title, "visibility": instance.visibility}, self.request)
+        notify(
+            _announcement_recipients(instance),
+            Notification.Kind.ANNOUNCEMENT,
+            f"New announcement: {instance.title}",
+            _announcement_preview(instance),
+            "/announcements",
+        )
 
     def perform_update(self, serializer):
         instance = serializer.save()

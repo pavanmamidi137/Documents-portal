@@ -176,7 +176,12 @@ export interface ImportResult {
   skipped_errors: { row: number; roll_number?: string; error: string }[];
 }
 
-export type NotificationKind = "DOCUMENT_UPLOAD" | "RESUME_UPLOAD" | "CONTACT_ADMIN";
+export type NotificationKind =
+  | "DOCUMENT_UPLOAD"
+  | "RESUME_UPLOAD"
+  | "CONTACT_ADMIN"
+  | "ANNOUNCEMENT"
+  | "DRIVE";
 
 export interface Notification {
   id: number;
@@ -206,6 +211,27 @@ export interface ContactRequest {
 }
 
 export type ShareRequestStatus = "PENDING" | "ACCEPTED" | "DECLINED";
+
+export interface Drive {
+  id: number;
+  company_name: string;
+  role: string;
+  location: string;
+  package: string;
+  drive_link: string;
+  description: string;
+  eligibility: string;
+  eligible_roll_numbers: string;
+  last_date_to_apply: string;
+  posted_by: number | null;
+  posted_by_name: string | null;
+  posted_by_role: string | null;
+  status: "OPEN" | "EXPIRED";
+  expires_at: string | null;
+  is_eligible_for_me: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface DocumentShareRequest {
   id: number;

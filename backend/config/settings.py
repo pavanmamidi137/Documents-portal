@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.college",
     "apps.documents",
     "apps.announcements",
+    "apps.placements",
 ]
 
 MIDDLEWARE = [

@@ -4,7 +4,9 @@ from .models import Announcement
 
 
 class AnnouncementSerializer(serializers.ModelSerializer):
-    visibility_label = serializers.CharField(source="visibility_label", read_only=True)
+    # visibility_label is a model property; no source= needed (DRF asserts
+    # against a source that equals the field name).
+    visibility_label = serializers.CharField(read_only=True)
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True, default=None)
 
     class Meta:

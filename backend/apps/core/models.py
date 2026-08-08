@@ -71,6 +71,8 @@ class Notification(models.Model):
         DOCUMENT_UPLOAD = "DOCUMENT_UPLOAD", "Document Upload"
         RESUME_UPLOAD = "RESUME_UPLOAD", "Resume Upload"
         CONTACT_ADMIN = "CONTACT_ADMIN", "Contact Admin"
+        ANNOUNCEMENT = "ANNOUNCEMENT", "Announcement"
+        DRIVE = "DRIVE", "Placement Drive"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

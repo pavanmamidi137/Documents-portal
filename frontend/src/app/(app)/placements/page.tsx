@@ -1,0 +1,310 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { motion } from "framer-motion";
+import {
+  Briefcase,
+  Building2,
+  CalendarDays,
+  CheckCircle2,
+  ExternalLink,
+  MapPin,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/layout/page-header";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { EmptyState } from "@/components/empty-state";
+import { DriveFormDialog } from "@/components/placements/drive-form-dialog";
+import { http } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import type { Drive } from "@/lib/types";
+import { cn, formatDate, getErrorMessage } from "@/lib/utils";
+
+const PLACEMENT_SEEN_KEY = "placement_seen_at";
+
+const ROLE_LABELS: Record<string, string> = {
+  SUPER_ADMIN: "Admin",
+  FACULTY: "Faculty",
+  CR: "CR",
+};
+
+export default function PlacementsPage() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState<"open" | "expired">("open");
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Drive | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Drive | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Visiting the page clears the amber dot on the sidebar nav item.
+  useEffect(() => {
+    try {
+      localStorage.setItem(PLACEMENT_SEEN_KEY, String(Date.now()));
+    } catch {
+      /* private mode */
+    }
+  }, []);
+
+  // Both tabs are fetched so the tab counts stay correct whichever tab is open.
+  const { data: openDrives, isLoading: openLoading } = useQuery({
+    queryKey: ["drives", "open"],
+    queryFn: () => http.get<Drive[]>("/drives/?status=open"),
+  });
+  const { data: expiredDrives, isLoading: expiredLoading } = useQuery({
+    queryKey: ["drives", "expired"],
+    queryFn: () => http.get<Drive[]>("/drives/?status=expired"),
+  });
+  const drives = tab === "open" ? openDrives : expiredDrives;
+  const isLoading = tab === "open" ? openLoading : expiredLoading;
+  const openCount = openDrives?.length;
+  const expiredCount = expiredDrives?.length;
+
+  const canWrite = Boolean(
+    user && (user.is_super_admin || user.is_faculty || user.is_cr)
+  );
+  const canManage = (d: Drive) =>
+    Boolean(user && (user.is_super_admin || d.posted_by === user.id));
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await http.delete(`/drives/${deleteTarget.id}/`);
+      toast.success("Drive deleted.");
+      queryClient.invalidateQueries({ queryKey: ["drives"] });
+      setDeleteTarget(null);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div>
+      <PageHeader
+        title="Placements"
+        description="Company drives & campus placements — check eligibility and apply before the last date."
+      />
+
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as "open" | "expired")}
+          className="w-full sm:w-auto"
+        >
+          <TabsList>
+            <TabsTrigger value="open">
+              Open{openCount !== undefined ? ` (${openCount})` : ""}
+            </TabsTrigger>
+            <TabsTrigger value="expired">
+              Expired{expiredCount !== undefined ? ` (${expiredCount})` : ""}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {canWrite && (
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus className="size-4" /> Post a Drive
+          </Button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-2xl border bg-card p-5">
+              <Skeleton className="mb-3 h-5 w-40" />
+              <Skeleton className="mb-2 h-4 w-64" />
+              <Skeleton className="h-4 w-48" />
+            </div>
+          ))}
+        </div>
+      ) : !drives || drives.length === 0 ? (
+        <EmptyState
+          icon={tab === "open" ? Briefcase : CalendarDays}
+          title={tab === "open" ? "No open drives right now" : "No expired drives yet"}
+          description={
+            tab === "open"
+              ? canWrite
+                ? "Post the first drive — students will be notified instantly."
+                : "New company drives will appear here as soon as they're posted."
+              : "Drives move here after their last date to apply, and are removed 30 days later."
+          }
+        />
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {drives.map((d, i) => (
+            <motion.div
+              key={d.id}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: Math.min(i * 0.04, 0.3) }}
+              className={cn(
+                "group relative flex flex-col rounded-2xl border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg",
+                d.status === "OPEN" ? "hover:border-primary/30" : "opacity-80"
+              )}
+            >
+              {/* Header */}
+              <div className="flex items-start gap-3">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 text-lg font-bold text-primary-foreground shadow-sm shadow-primary/20">
+                  {d.company_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="truncate text-base font-bold">{d.company_name}</h3>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        d.status === "OPEN"
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          : "border-muted-foreground/20 bg-muted text-muted-foreground"
+                      )}
+                    >
+                      {d.status === "OPEN" ? "Open" : "Expired"}
+                    </Badge>
+                    {d.is_eligible_for_me === true && (
+                      <Badge className="border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                        <CheckCircle2 className="size-3" /> Eligible for you
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                    {d.role && (
+                      <span className="flex items-center gap-1">
+                        <Briefcase className="size-3.5" /> {d.role}
+                      </span>
+                    )}
+                    {d.location && (
+                      <span className="flex items-center gap-1">
+                        <MapPin className="size-3.5" /> {d.location}
+                      </span>
+                    )}
+                    {d.package && (
+                      <span className="flex items-center gap-1 font-medium text-foreground">
+                        <Sparkles className="size-3.5 text-primary" /> {d.package}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {canManage(d) && (
+                  <div className="flex shrink-0 gap-1">
+                    <button
+                      onClick={() => {
+                        setEditing(d);
+                        setFormOpen(true);
+                      }}
+                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      aria-label={`Edit ${d.company_name}`}
+                      title="Edit"
+                    >
+                      <Pencil className="size-4" />
+                    </button>
+                    <button
+                      onClick={() => setDeleteTarget(d)}
+                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`Delete ${d.company_name}`}
+                      title="Delete"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Details */}
+              {d.description && (
+                <p className="mt-3 text-sm text-muted-foreground">{d.description}</p>
+              )}
+              {d.eligibility && (
+                <div className="mt-3 rounded-xl border bg-muted/40 p-3">
+                  <p className="text-[10px] font-semibold tracking-widest text-muted-foreground/80 uppercase">
+                    Eligibility
+                  </p>
+                  <p className="mt-1 text-sm">{d.eligibility}</p>
+                </div>
+              )}
+
+              {/* Footer */}
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+                <div className="text-xs text-muted-foreground">
+                  <p
+                    className={cn(
+                      "flex items-center gap-1.5 font-medium",
+                      d.status === "OPEN"
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-destructive"
+                    )}
+                  >
+                    <CalendarDays className="size-3.5" />
+                    {d.status === "OPEN"
+                      ? `Apply by ${formatDate(d.last_date_to_apply)}`
+                      : `Closed on ${formatDate(d.last_date_to_apply)}`}
+                  </p>
+                  {d.status === "EXPIRED" && d.expires_at && (
+                    <p className="mt-0.5 text-[11px] text-muted-foreground/80">
+                      Removed automatically on {formatDate(d.expires_at)}
+                    </p>
+                  )}
+                  <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/80">
+                    <Building2 className="size-3" />
+                    Posted by {d.posted_by_name ?? "Admin"}
+                    {d.posted_by_role ? ` · ${ROLE_LABELS[d.posted_by_role] ?? "Portal"}` : ""} ·{" "}
+                    {formatDate(d.created_at)}
+                  </p>
+                </div>
+                {d.drive_link ? (
+                  <a
+                    href={d.drive_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                      d.status === "OPEN"
+                        ? "bg-primary text-primary-foreground hover:brightness-110"
+                        : "pointer-events-none bg-muted text-muted-foreground"
+                    )}
+                  >
+                    {d.status === "OPEN" ? "Apply" : "Closed"}
+                    <ExternalLink className="size-3.5" />
+                  </a>
+                ) : (
+                  <Badge variant="outline" className="text-muted-foreground">
+                    Contact placement cell
+                  </Badge>
+                )}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+
+      <DriveFormDialog open={formOpen} onOpenChange={setFormOpen} editing={editing} />
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete drive"
+        description={`Delete ${deleteTarget?.company_name}? Students will no longer see it.`}
+        confirmLabel="Delete"
+        destructive
+        loading={deleting}
+        onConfirm={confirmDelete}
+      />
+    </div>
+  );
+}

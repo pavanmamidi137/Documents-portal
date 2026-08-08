@@ -8,6 +8,7 @@ from unittest.mock import patch
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from apps.accounts.models import Resume, User
+from apps.announcements.models import Announcement
 from apps.college.models import Branch, Category, Section, Semester, Subject
 from apps.core.models import AuditLog, ContactRequest, Notification, SiteSetting
 from apps.core.permissions import IsSuperAdmin, IsSuperAdminOrCR, IsStudent
@@ -68,29 +69,29 @@ class SiteThemeTests(TestCase):
         client = APIClient()
         response = client.get("/api/site-theme/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["theme"], "default")
+        self.assertEqual(response.data["theme"], "orange")
 
     def test_admin_can_change_theme(self):
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
         response = client.put(
-            "/api/site-theme/", {"theme": "flame"}, format="json"
+            "/api/site-theme/", {"theme": "purple"}, format="json"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["theme"], "flame")
-        self.assertEqual(get_site_theme(), "flame")
-        self.assertEqual(SiteSetting.objects.get(key="site_theme").value, "flame")
+        self.assertEqual(response.data["theme"], "purple")
+        self.assertEqual(get_site_theme(), "purple")
+        self.assertEqual(SiteSetting.objects.get(key="site_theme").value, "purple")
 
         # A fresh anonymous request now sees the new theme.
         anon = APIClient()
-        self.assertEqual(anon.get("/api/site-theme/").data["theme"], "flame")
+        self.assertEqual(anon.get("/api/site-theme/").data["theme"], "purple")
 
     def test_non_admin_cannot_change_theme(self):
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.cr)}")
-        response = client.put("/api/site-theme/", {"theme": "ocean"}, format="json")
+        response = client.put("/api/site-theme/", {"theme": "gray"}, format="json")
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(get_site_theme(), "default")
+        self.assertEqual(get_site_theme(), "orange")
 
     def test_unknown_theme_rejected(self):
         client = APIClient()
@@ -371,6 +372,77 @@ class NotificationTriggerTests(TestCase):
         notifs = Notification.objects.filter(kind="RESUME_UPLOAD")
         self.assertEqual(set(notifs.values_list("user_id", flat=True)), {self.faculty.id})
         self.assertEqual(notifs.first().link, "/faculty/resumes")
+
+    def _admin_client(self):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(self.admin)}")
+        return client
+
+    def test_college_announcement_notifies_all_students_and_crs(self):
+        response = self._admin_client().post(
+            "/api/announcements/",
+            {"title": "Holiday", "body": "College closed on Friday.", "visibility": "COLLEGE"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        notifs = Notification.objects.filter(kind=Notification.Kind.ANNOUNCEMENT)
+        user_ids = set(notifs.values_list("user_id", flat=True))
+        self.assertEqual(user_ids, {self.student.id, self.other_student.id, self.cr.id})
+        self.assertNotIn(self.faculty.id, user_ids)  # faculty don't see announcements
+        self.assertNotIn(self.admin.id, user_ids)  # the author is never notified
+        self.assertEqual(notifs.first().link, "/announcements")
+
+    def test_section_announcement_notifies_only_that_section(self):
+        response = self._admin_client().post(
+            "/api/announcements/",
+            {
+                "title": "Unit test",
+                "body": "Test on Monday.",
+                "visibility": "SECTION",
+                "section": self.section_a.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        user_ids = set(
+            Notification.objects.filter(kind=Notification.Kind.ANNOUNCEMENT).values_list(
+                "user_id", flat=True
+            )
+        )
+        self.assertEqual(user_ids, {self.student.id, self.cr.id})
+        self.assertNotIn(self.other_student.id, user_ids)
+
+    def test_branch_cr_only_and_student_only_visibilities(self):
+        client = self._admin_client()
+
+        payloads = [
+            # BRANCH -> students & CRs of the branch (section-independent).
+            {"title": "B", "body": "x", "visibility": "BRANCH", "branch": self.branch.id},
+            # CR_ONLY -> every CR (branch/section are cleared by the serializer).
+            {"title": "C", "body": "y", "visibility": "CR_ONLY"},
+            # STUDENT_ONLY -> every student.
+            {"title": "S", "body": "z", "visibility": "STUDENT_ONLY"},
+        ]
+        for payload in payloads:
+            response = client.post("/api/announcements/", payload, format="json")
+            self.assertEqual(response.status_code, 201, response.data)
+
+        by_title = {
+            n.title: set(
+                Notification.objects.filter(
+                    kind=Notification.Kind.ANNOUNCEMENT,
+                    title=f"New announcement: {n.title}",
+                ).values_list("user_id", flat=True)
+            )
+            for n in Announcement.objects.all()
+        }
+        self.assertEqual(
+            by_title["B"], {self.student.id, self.other_student.id, self.cr.id}
+        )
+        self.assertEqual(by_title["C"], {self.cr.id})
+        self.assertEqual(by_title["S"], {self.student.id, self.other_student.id})
 
 
 class ContactRequestTests(TestCase):
