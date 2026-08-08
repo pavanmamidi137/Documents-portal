@@ -40,6 +40,7 @@ export interface Section {
   id: number;
   branch: number;
   branch_name: string;
+  branch_code: string;
   name: string;
   students_count: number;
   created_at: string;
@@ -223,6 +224,12 @@ export interface AiUsageUser {
   total_tokens: number;
 }
 
+export interface AiDailyPoint {
+  date: string;
+  calls: number;
+  tokens: number;
+}
+
 export interface AiUsageData {
   totals: {
     calls: number;
@@ -230,10 +237,25 @@ export interface AiUsageData {
     completion_tokens: number;
     used_tokens: number;
   };
+  daily: AiDailyPoint[];
   per_user: AiUsageUser[];
   budget_tokens: number;
   remaining_tokens: number | null;
   percent_used: number | null;
+}
+
+export interface MyAiUsage {
+  calls: number;
+  used_tokens: number;
+  credits: number;
+  recent: {
+    action: string;
+    action_label: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    created_at: string;
+  }[];
 }
 
 export interface Drive {

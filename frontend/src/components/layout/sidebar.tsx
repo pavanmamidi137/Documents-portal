@@ -19,6 +19,7 @@ import {
   LayoutDashboard,
   LogOut,
   Megaphone,
+  MessageSquareText,
   PanelLeftClose,
   ScrollText,
   Settings2,
@@ -77,6 +78,11 @@ const ADMIN_ONLY: NavItem[] = [
 
 const CR_ONLY: NavItem[] = [{ href: "/cr/students", label: "Students", icon: Users }];
 
+// Faculty & CRs can message the admin from anywhere - not just the profile.
+const SUPPORT_ONLY: NavItem[] = [
+  { href: "/contact-admin", label: "Contact Admin", icon: MessageSquareText },
+];
+
 interface SidebarProps {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
@@ -132,11 +138,15 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
       { label: "Faculty", items: FACULTY_ONLY },
     ];
   } else if (user?.is_cr) {
-    groups = [{ items: [COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2]] }];
+    groups = [
+      { items: [COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2]] },
+      { label: "Support", items: SUPPORT_ONLY },
+    ];
   } else if (user?.is_faculty) {
     groups = [
       { items: [COMMON[0], COMMON[2]] },
       { label: "Faculty", items: FACULTY_ONLY },
+      { label: "Support", items: SUPPORT_ONLY },
     ];
   } else {
     groups = [{ items: [...COMMON] }, { label: "Career", items: STUDENT_ONLY }];
@@ -151,7 +161,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
           render={
             <button
               onClick={() => onModeChange(compact ? "expanded" : "collapsed")}
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               aria-label={compact ? "Expand sidebar" : "Collapse sidebar"}
             >
               {compact ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
@@ -165,7 +175,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
           render={
             <button
               onClick={() => onModeChange("hidden")}
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               aria-label="Hide sidebar"
             >
               <PanelLeftClose className="size-4" />
@@ -210,7 +220,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
         </div>
         <button
           onClick={onClose}
-          className="rounded-md p-1 text-muted-foreground hover:bg-muted lg:hidden"
+          className="rounded-lg p-1 text-muted-foreground hover:bg-muted lg:hidden"
           aria-label="Close sidebar"
         >
           <X className="size-4" />
@@ -238,7 +248,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
                   href={item.href}
                   onClick={onClose}
                   className={cn(
-                    "relative flex items-center gap-3 rounded-lg py-2 text-sm font-medium transition-colors",
+                    "relative flex items-center gap-3 rounded-xl py-2 text-sm font-medium transition-colors",
                     compact ? "justify-center px-0" : "px-3",
                     active
                       ? "bg-primary/10 font-semibold text-foreground"
@@ -321,7 +331,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
           initial={false}
           animate={{ width: collapsed ? 76 : 256 }}
           transition={{ type: "spring", stiffness: 300, damping: 32 }}
-          className="hidden shrink-0 overflow-hidden border-r bg-sidebar lg:block"
+          className="hidden shrink-0 overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar shadow-lg shadow-foreground/5 lg:block lg:m-2.5"
         >
           {nav(collapsed, true)}
         </motion.aside>
@@ -352,7 +362,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
               onDragEnd={(_, info) => {
                 if (info.offset.x < -64 || info.velocity.x < -500) onClose();
               }}
-              className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r bg-sidebar shadow-2xl"
+              className="absolute inset-y-2.5 left-2.5 w-72 max-w-[85vw] rounded-2xl border border-sidebar-border bg-sidebar shadow-2xl"
             >
               {nav(false, false)}
             </motion.aside>

@@ -267,6 +267,25 @@ class DocumentViewSet(viewsets.ModelViewSet):
             "cloudinary_url": signed_raw_url(document.public_id),
         })
 
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
+    def tree(self, request):
+        """Every document visible to the caller, unpaginated (capped at 1000).
+
+        The student browser builds its Subjects → Categories → Units →
+        Documents drill-down locally from this single response, so navigating
+        between levels is instant - no per-level fetches. Students are already
+        scoped to their own branch + section by ``get_queryset``.
+        """
+        base = self.get_queryset()
+        total = base.count()
+        qs = base.order_by("-created_at")[:1000]
+        serializer = DocumentListSerializer(qs, many=True)
+        return Response({
+            "count": len(serializer.data),
+            "total": total,  # lets the UI hint when the cap kicked in
+            "results": serializer.data,
+        })
+
     @action(detail=False, methods=["get"], url_path="check-files", permission_classes=[IsAuthenticated])
     def check_files(self, request):
         """Verify the current view's files still exist on Cloudinary.

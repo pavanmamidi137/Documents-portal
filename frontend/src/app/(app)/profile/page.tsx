@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
 import {
+  BrainCircuit,
   CalendarDays,
   GraduationCap,
   KeyRound,
@@ -29,6 +31,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { useAuth } from "@/lib/auth";
 import { http } from "@/lib/api";
 import { useSiteTheme } from "@/lib/site-theme";
+import type { MyAiUsage } from "@/lib/types";
 import { cn, formatDate, getErrorMessage, initials, roleColor } from "@/lib/utils";
 
 const schema = z
@@ -51,6 +54,79 @@ const editSchema = z.object({
 });
 
 type EditFormValues = z.infer<typeof editSchema>;
+
+function MyAiUsageCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["ai-usage", "mine"],
+    queryFn: () => http.get<MyAiUsage>("/drives/my_ai_usage/"),
+    staleTime: 30_000,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BrainCircuit className="size-5 text-primary" /> My AI Credits
+        </CardTitle>
+        <CardDescription>
+          Credits your account has used on the placement AI tools (1 credit ≈ 1,000 tokens).
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" /> Loading your usage…
+          </div>
+        ) : !data || data.calls === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            You haven&apos;t used any AI credits yet. Try the <span className="font-medium text-foreground">Drive Assistant</span> or{" "}
+            <span className="font-medium text-foreground">Ask AI</span> on the Placements page.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-xl border bg-muted/30 p-3 text-center">
+                <p className="text-xl font-bold tabular-nums">{data.credits}</p>
+                <p className="text-[10px] text-muted-foreground uppercase">Credits</p>
+              </div>
+              <div className="rounded-xl border bg-muted/30 p-3 text-center">
+                <p className="text-xl font-bold tabular-nums">{data.calls}</p>
+                <p className="text-[10px] text-muted-foreground uppercase">Calls</p>
+              </div>
+              <div className="rounded-xl border bg-muted/30 p-3 text-center">
+                <p className="text-xl font-bold tabular-nums">{data.used_tokens.toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground uppercase">Tokens</p>
+              </div>
+            </div>
+            {data.recent.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase">Recent activity</p>
+                {data.recent.slice(0, 5).map((entry, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Badge variant="outline" className="shrink-0">
+                        {entry.action_label}
+                      </Badge>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {formatDate(entry.created_at)}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {entry.total_tokens.toLocaleString()} tokens
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function EditDetailsCard() {
   const { user, refreshUser } = useAuth();
@@ -322,6 +398,7 @@ export default function ProfilePage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           <EditDetailsCard />
+          <MyAiUsageCard />
 
           {canContactAdmin && (
             <Card>

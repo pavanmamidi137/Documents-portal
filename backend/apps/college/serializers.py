@@ -23,11 +23,15 @@ class BranchSerializer(serializers.ModelSerializer):
 
 class SectionSerializer(serializers.ModelSerializer):
     branch_name = serializers.CharField(source="branch.name", read_only=True)
+    branch_code = serializers.CharField(source="branch.code", read_only=True, default="")
     students_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Section
-        fields = ["id", "branch", "branch_name", "name", "students_count", "created_at"]
+        fields = [
+            "id", "branch", "branch_name", "branch_code",
+            "name", "students_count", "created_at",
+        ]
         read_only_fields = ["created_at"]
 
     def validate_name(self, value: str) -> str:

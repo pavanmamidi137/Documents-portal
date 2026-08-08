@@ -13,7 +13,7 @@ export default function DocumentsPage() {
   if (isLoading || !meta) return <LoadingPage />;
 
   if (user?.is_student) {
-    return <StudentBrowser meta={meta} />;
+    return <StudentBrowser />;
   }
   return <DocumentsManagement meta={meta} isCr={user?.is_cr} />;
 }

@@ -2,9 +2,11 @@ import csv
 import io
 import re
 from datetime import timedelta
+from math import ceil
 
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Sum
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.decorators import action
@@ -198,7 +200,7 @@ class DriveViewSet(ModelViewSet):
 
     def get_permissions(self):
         # The AI chat answers eligibility questions for students too.
-        if self.action in ("ai_chat", "ai_ask"):
+        if self.action in ("ai_chat", "ai_ask", "my_ai_usage"):
             return [IsAuthenticated()]
         # Credit usage is admin-only.
         if self.action in ("ai_usage", "ai_budget"):
@@ -394,6 +396,29 @@ class DriveViewSet(ModelViewSet):
                 "total_tokens": user_tokens,
             })
 
+        # Daily breakdown (last 30 days) so the admin sees usage day by day.
+        daily_rows = {
+            row["day"]: row
+            for row in logs.filter(created_at__gte=timezone.now() - timedelta(days=30))
+            .annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(
+                calls=Count("id"),
+                tokens=Sum("prompt_tokens") + Sum("completion_tokens"),
+            )
+            .order_by("day")
+        }
+        today = timezone.localdate()
+        daily = []
+        for i in range(29, -1, -1):
+            day = today - timedelta(days=i)
+            row = daily_rows.get(day)
+            daily.append({
+                "date": day.isoformat(),
+                "calls": row["calls"] if row else 0,
+                "tokens": int(row["tokens"] or 0) if row else 0,
+            })
+
         budget = _ai_budget_tokens()
         return Response({
             "totals": {
@@ -402,10 +427,37 @@ class DriveViewSet(ModelViewSet):
                 "completion_tokens": int(totals["completion_tokens"] or 0),
                 "used_tokens": used_tokens,
             },
+            "daily": daily,
             "per_user": per_user,
             "budget_tokens": budget,
             "remaining_tokens": max(0, budget - used_tokens) if budget else None,
             "percent_used": round(used_tokens / budget * 100, 1) if budget else None,
+        })
+
+    @action(detail=False, methods=["get"])
+    def my_ai_usage(self, request):
+        """Your own AI credit usage - visible to every authenticated user."""
+        logs = AiUsageLog.objects.filter(user=request.user)
+        totals = logs.aggregate(
+            prompt_tokens=Sum("prompt_tokens"), completion_tokens=Sum("completion_tokens"),
+        )
+        used_tokens = int(totals["prompt_tokens"] or 0) + int(totals["completion_tokens"] or 0)
+        recent = [
+            {
+                "action": log.action,
+                "action_label": log.get_action_display(),
+                "prompt_tokens": log.prompt_tokens,
+                "completion_tokens": log.completion_tokens,
+                "total_tokens": log.total_tokens,
+                "created_at": log.created_at.isoformat(),
+            }
+            for log in logs[:20]
+        ]
+        return Response({
+            "calls": logs.count(),
+            "used_tokens": used_tokens,
+            "credits": ceil(used_tokens / 1000),
+            "recent": recent,
         })
 
     @action(detail=False, methods=["post"])

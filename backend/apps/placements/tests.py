@@ -394,6 +394,53 @@ class DriveApiTests(APITestCase):
         self.assertEqual(data["remaining_tokens"], 850)
         self.assertEqual(data["percent_used"], 15.0)
 
+    def test_ai_usage_daily_breakdown_buckets_by_date(self):
+        today = timezone.localdate()
+        AiUsageLog.objects.create(
+            user=self.student, action=AiUsageLog.Action.CHAT,
+            prompt_tokens=100, completion_tokens=50,
+        )
+        old_log = AiUsageLog.objects.create(
+            user=self.student2, action=AiUsageLog.Action.ASK,
+            prompt_tokens=10, completion_tokens=5,
+        )
+        # auto_now_add ignores the value on create() - backdate via update().
+        AiUsageLog.objects.filter(pk=old_log.pk).update(
+            created_at=timezone.now() - timedelta(days=3)
+        )
+
+        data = self._client(self.admin).get("/api/drives/ai_usage/").data
+        daily = data["daily"]
+        self.assertEqual(len(daily), 30)
+        # Today's bucket holds the chat call (100 + 50 tokens).
+        self.assertEqual(daily[-1]["date"], today.isoformat())
+        self.assertEqual(daily[-1]["calls"], 1)
+        self.assertEqual(daily[-1]["tokens"], 150)
+        # The backdated ask call lands in its own day bucket.
+        three_days_ago = daily[26]  # 30-day series: index 26 == today - 3
+        self.assertEqual(
+            three_days_ago["date"], (today - timedelta(days=3)).isoformat()
+        )
+        self.assertEqual(three_days_ago["calls"], 1)
+        self.assertEqual(three_days_ago["tokens"], 15)
+
+    def test_my_ai_usage_shows_only_your_own_usage(self):
+        AiUsageLog.objects.create(
+            user=self.student, action=AiUsageLog.Action.CHAT,
+            prompt_tokens=100, completion_tokens=50,
+        )
+        AiUsageLog.objects.create(
+            user=self.student2, action=AiUsageLog.Action.ASK,
+            prompt_tokens=9000, completion_tokens=1000,
+        )
+        mine = self._client(self.student).get("/api/drives/my_ai_usage/")
+        self.assertEqual(mine.status_code, 200)
+        self.assertEqual(mine.data["calls"], 1)
+        self.assertEqual(mine.data["used_tokens"], 150)
+        self.assertEqual(mine.data["credits"], 1)  # ceil(150 / 1000)
+        self.assertEqual(len(mine.data["recent"]), 1)
+        self.assertEqual(mine.data["recent"][0]["action_label"], "AI Chat")
+
     def test_gemini_429_is_retried_then_succeeds(self):
         import urllib.error
 
@@ -417,6 +464,20 @@ class DriveApiTests(APITestCase):
             result = ai_json("system", "user text", usage_callback=lambda p, c: None)
         self.assertEqual(result, {"ok": True})
 
+    @patch("apps.placements.views.ai_plain_text", return_value="It closed last week.")
+    def test_ai_ask_works_for_expired_drives(self, mock_ai):
+        drive = Drive.objects.create(
+            company_name="OldCo", last_date_to_apply=self.today - timedelta(days=2),
+            posted_by=self.admin,
+        )
+        response = self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "Is this drive still open?"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["answer"], "It closed last week.")
+
 
 class _FakeResponse:
     """Minimal file-like stand-in for urlopen's response object."""
@@ -432,17 +493,3 @@ class _FakeResponse:
 
     def read(self):
         return self._body
-
-    @patch("apps.placements.views.ai_plain_text", return_value="It closed last week.")
-    def test_ai_ask_works_for_expired_drives(self, mock_ai):
-        drive = Drive.objects.create(
-            company_name="OldCo", last_date_to_apply=self.today - timedelta(days=2),
-            posted_by=self.admin,
-        )
-        response = self._client(self.student).post(
-            f"/api/drives/{drive.id}/ai_ask/",
-            {"question": "Is this drive still open?"},
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["answer"], "It closed last week.")

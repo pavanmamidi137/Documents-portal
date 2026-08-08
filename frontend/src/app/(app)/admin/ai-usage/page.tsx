@@ -2,7 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BrainCircuit, Coins, Loader2, Save } from "lucide-react";
+import { BrainCircuit, CalendarRange, Coins, Loader2, Save } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { toast } from "sonner";
 
 import { RoleGuard } from "@/components/role-guard";
@@ -25,6 +34,43 @@ import {
 import { http } from "@/lib/api";
 import type { AiUsageData } from "@/lib/types";
 import { cn, getErrorMessage } from "@/lib/utils";
+
+interface DailyTooltipEntry {
+  dataKey?: string | number;
+  value?: number | string | (number | string)[];
+}
+
+function DailyTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: DailyTooltipEntry[];
+  label?: React.ReactNode;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const day = new Date(`${String(label)}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  return (
+    <div className="rounded-xl border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg">
+      <p className="mb-1 font-semibold">{day}</p>
+      {payload.map((entry) => {
+        const raw = entry.value;
+        const value = Array.isArray(raw) ? raw[0] : raw;
+        return (
+          <p key={String(entry.dataKey ?? "")} className="flex items-center gap-2 tabular-nums">
+            <span className="size-2 rounded-full bg-primary" />
+            {entry.dataKey === "tokens" ? "Tokens" : "Calls"}: {Number(value ?? 0).toLocaleString()}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function AiUsagePage() {
   const queryClient = useQueryClient();
@@ -109,6 +155,56 @@ export default function AiUsagePage() {
                 icon={Coins}
                 gradient="from-emerald-500 to-teal-600"
               />
+            </div>
+
+            {/* ------------------------------------------------ Daily usage chart */}
+            <div className="mt-6 rounded-2xl border bg-card p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="flex items-center gap-2 font-semibold">
+                    <CalendarRange className="size-4 text-primary" /> Daily usage
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Tokens consumed per day over the last 30 days.
+                  </p>
+                </div>
+                <Badge variant="outline" className="tabular-nums">
+                  {(data?.daily ?? []).reduce((sum, d) => sum + d.tokens, 0).toLocaleString()} tokens
+                </Badge>
+              </div>
+              {!data?.daily || data.daily.every((d) => d.tokens === 0) ? (
+                <div className="flex h-56 items-center justify-center rounded-xl border border-dashed">
+                  <p className="text-sm text-muted-foreground">No AI usage in the last 30 days yet.</p>
+                </div>
+              ) : (
+                <div className="h-56 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={data.daily} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(value: string) => {
+                          const d = new Date(`${value}T00:00:00`);
+                          return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                        }}
+                        tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                        tickLine={false}
+                        axisLine={false}
+                        minTickGap={24}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                        tickLine={false}
+                        axisLine={false}
+                        allowDecimals={false}
+                      />
+                      <Tooltip cursor={{ fill: "var(--muted)", opacity: 0.5 }} content={<DailyTooltip />} />
+                      <Bar dataKey="calls" fill="var(--primary)" opacity={0.35} radius={[6, 6, 0, 0]} stackId="usage" />
+                      <Bar dataKey="tokens" fill="var(--primary)" radius={[6, 6, 0, 0]} stackId="usage" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
 
             {/* ------------------------------------------------ Budget + bar */}

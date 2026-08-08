@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -21,21 +21,59 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { http } from "@/lib/api";
 import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
-import type { Category, DocumentItem, MetaData, Semester, Subject } from "@/lib/types";
+import { getUnitLabel } from "@/lib/document-types";
+import type { DocumentItem } from "@/lib/types";
 import { DocumentCard } from "./document-card";
 import { EmptyState } from "@/components/empty-state";
 import { getErrorMessage } from "@/lib/utils";
 
-type Step =
-  | { level: "semester" }
-  | { level: "category"; semester: Semester }
-  | { level: "subjects"; semester: Semester; category: Category }
-  | { level: "subject"; semester: Semester; category: Category; subject: Subject };
+interface UnitNode {
+  label: string;
+  documents: DocumentItem[];
+}
 
-export function StudentBrowser({ meta }: { meta: MetaData }) {
-  const queryClient = useQueryClient();
-  const [step, setStep] = useState<Step>({ level: "semester" });
-  const [search, setSearch] = useState("");
+interface CategoryNode {
+  id: number;
+  name: string;
+  units: UnitNode[];
+}
+
+interface SubjectNode {
+  id: number;
+  name: string;
+  semester_name: string;
+  categories: CategoryNode[];
+}
+
+// Steps store ids/labels (not node objects) so the current level always
+// resolves against the freshest tree, even after a background refetch.
+type Step =
+  | { level: "subjects" }
+  | { level: "categories"; subjectId: number }
+  | { level: "units"; subjectId: number; categoryId: number }
+  | { level: "documents"; subjectId: number; categoryId: number; unitLabel: string };
+
+// One fetch powers every level: Subjects → Categories → Units → Documents.
+// The response shape matches the Cloudinary check hook ({count, results}).
+const LIST_KEY = ["student-documents", "tree"] as const;
+
+function subjectCount(subject: SubjectNode): number {
+  return subject.categories.reduce(
+    (n, c) => n + c.units.reduce((m, u) => m + u.documents.length, 0),
+    0
+  );
+}
+
+/** Numeric units (Unit 1, 2, …) sort first; "General" and others go last. */
+function unitSortKey(label: string): [number, number] {
+  const match = /^Unit (\d+)$/.exec(label);
+  return match ? [0, Number(match[1])] : [1, 0];
+}
+
+export function StudentBrowser() {
+  const [step, setStep] = useState<Step>({ level: "subjects" });
+  const [subjectSearch, setSubjectSearch] = useState("");
+  const [docSearch, setDocSearch] = useState("");
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [downloading, setDownloading] = useState(false);
@@ -46,6 +84,96 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
     setSelecting(false);
     setStep(next);
   };
+
+  const { data, isLoading } = useQuery({
+    queryKey: LIST_KEY,
+    queryFn: () =>
+      http.get<{ count: number; total: number; results: DocumentItem[] }>("/documents/tree/"),
+    // The whole tree is cached for a while - reopening Documents feels instant.
+    staleTime: 30_000,
+  });
+
+  // Files deleted directly in Cloudinary are dropped from the tree instantly.
+  useCloudinaryCheck<DocumentItem>({
+    url: "/documents/check-files/",
+    params: {},
+    queryKey: LIST_KEY,
+    kind: "document",
+  });
+
+  const documents = useMemo(() => data?.results ?? [], [data]);
+
+  // Build Subjects → Categories → Units from the flat list once.
+  const subjects = useMemo(() => {
+    const map = new Map<number, SubjectNode>();
+    for (const doc of documents) {
+      let subject = map.get(doc.subject);
+      if (!subject) {
+        subject = {
+          id: doc.subject,
+          name: doc.subject_name,
+          semester_name: doc.semester_name,
+          categories: [],
+        };
+        map.set(doc.subject, subject);
+      }
+      let category = subject.categories.find((c) => c.id === doc.category);
+      if (!category) {
+        category = { id: doc.category, name: doc.category_name, units: [] };
+        subject.categories.push(category);
+      }
+      const label = getUnitLabel(doc.title);
+      let unit = category.units.find((u) => u.label === label);
+      if (!unit) {
+        unit = { label, documents: [] };
+        category.units.push(unit);
+      }
+      unit.documents.push(doc);
+    }
+    for (const subject of map.values()) {
+      subject.categories.sort((a, b) => a.name.localeCompare(b.name));
+      for (const category of subject.categories) {
+        category.units.sort((a, b) => {
+          const [ka, kb] = [unitSortKey(a.label), unitSortKey(b.label)];
+          return ka[0] - kb[0] || ka[1] - kb[1] || a.label.localeCompare(b.label);
+        });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [documents]);
+
+  const filteredSubjects = useMemo(() => {
+    const q = subjectSearch.trim().toLowerCase();
+    if (!q) return subjects;
+    return subjects.filter((s) => s.name.toLowerCase().includes(q));
+  }, [subjects, subjectSearch]);
+
+  // Resolve the current level's nodes against the live tree every render.
+  const currentNodes = useMemo(() => {
+    if (step.level === "subjects") {
+      return { subject: null as SubjectNode | null, category: null as CategoryNode | null, unit: null as UnitNode | null, unitDocs: [] as DocumentItem[] };
+    }
+    const subject = subjects.find((s) => s.id === step.subjectId) ?? null;
+    if (step.level === "categories") {
+      return { subject, category: null, unit: null, unitDocs: [] };
+    }
+    const category = subject?.categories.find((c) => c.id === step.categoryId) ?? null;
+    if (step.level === "units") {
+      return { subject, category, unit: null, unitDocs: [] };
+    }
+    const unit = category?.units.find((u) => u.label === step.unitLabel) ?? null;
+    return { subject, category, unit, unitDocs: unit?.documents ?? [] };
+  }, [subjects, step]);
+  const { subject: currentSubject, category: currentCategory, unit: currentUnit, unitDocs } = currentNodes;
+
+  // Documents within the current unit, filtered by the in-unit search box.
+  const filteredDocs = useMemo(() => {
+    const q = docSearch.trim().toLowerCase();
+    if (!q) return unitDocs;
+    return unitDocs.filter(
+      (d) => d.title.toLowerCase().includes(q) || d.file_name.toLowerCase().includes(q)
+    );
+  }, [unitDocs, docSearch]);
 
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => {
@@ -87,7 +215,6 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
   };
 
   const downloadSelected = async (docs: DocumentItem[]) => {
-    // Only the checked documents are downloaded, not the whole visible list.
     const targets = docs.filter((d) => selectedIds.has(d.id));
     if (targets.length === 0) return;
     setDownloading(true);
@@ -141,248 +268,151 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
     );
   };
 
-  const listQueryKey = [
-    "student-documents",
-    "semester" in step ? step.semester.id : undefined,
-    "category" in step ? step.category.id : undefined,
-    "subject" in step ? step.subject.id : undefined,
-  ] as const;
-
-  // Files deleted directly in Cloudinary are removed from this view instantly.
-  useCloudinaryCheck<DocumentItem>({
-    url: "/documents/check-files/",
-    params: {
-      ...("semester" in step ? { semester: step.semester.id } : {}),
-      ...("category" in step ? { category: step.category.id } : {}),
-      ...("subject" in step ? { subject: step.subject.id } : {}),
-    },
-    queryKey: listQueryKey,
-    kind: "document",
-  });
-
-  const { data, isLoading } = useQuery({
-    queryKey: listQueryKey,
-    queryFn: async () => {
-      const params: Record<string, unknown> = {};
-      if ("semester" in step) params.semester = step.semester.id;
-      if ("category" in step) params.category = step.category.id;
-      if ("subject" in step) params.subject = step.subject.id;
-      return http.get<{ results: DocumentItem[] }>("/documents/", { ...params, page_size: 100 });
-    },
-    // Browsing semester → category → subject keeps the previous grid visible
-    // while the next level loads, so navigation feels instant.
-    placeholderData: keepPreviousData,
-  });
-
-  // Warm the cache for a deeper level before the user clicks through to it.
-  // Uses the exact same query key + params as the useQuery above, so hovering
-  // a card makes the next screen render instantly.
-  const prefetchLevel = (semester?: number, category?: number, subject?: number) => {
-    const params: Record<string, unknown> = {};
-    if (semester) params.semester = semester;
-    if (category) params.category = category;
-    if (subject) params.subject = subject;
-    void queryClient.prefetchQuery({
-      queryKey: ["student-documents", semester, category, subject],
-      queryFn: () =>
-        http.get<{ results: DocumentItem[] }>("/documents/", { ...params, page_size: 100 }),
-      staleTime: 30_000,
-    });
-  };
-
-  const documents = useMemo(() => data?.results ?? [], [data]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return documents;
-    return documents.filter(
-      (d) =>
-        d.title.toLowerCase().includes(q) ||
-        d.subject_name.toLowerCase().includes(q) ||
-        d.category_name.toLowerCase().includes(q)
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-24">
+        <Loader2 className="size-7 animate-spin text-primary" />
+      </div>
     );
-  }, [documents, search]);
+  }
 
-  // Which semesters actually have documents
-  const semestersWithDocs = useMemo(() => {
-    const ids = new Set(documents.map((d) => d.semester));
-    return meta.semesters.filter((s) => ids.has(s.id));
-  }, [documents, meta.semesters]);
+  const resetToSubjects = () => goTo({ level: "subjects" });
 
-  const reset = () => goTo({ level: "semester" });
+  const breadcrumb = (
+    <button
+      onClick={resetToSubjects}
+      className="mb-5 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+    >
+      <ArrowLeft className="size-4" /> All subjects
+    </button>
+  );
 
-  if (step.level === "semester") {
+  // A background refetch can remove the node the student was viewing.
+  const missingNode =
+    (step.level === "categories" && !currentSubject) ||
+    (step.level === "units" && (!currentSubject || !currentCategory)) ||
+    (step.level === "documents" && (!currentSubject || !currentCategory || !currentUnit));
+
+  if (missingNode) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={BookOpen}
+          title="These documents were just removed"
+          description="The folder you were viewing no longer has files here. Go back and pick another subject."
+        />
+        <div className="flex justify-center">
+          <Button variant="outline" onClick={resetToSubjects}>
+            <ArrowLeft className="size-4" /> Back to subjects
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------ Subjects */
+  if (step.level === "subjects") {
     return (
       <div className="space-y-6">
         <div className="relative max-w-md">
           <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search your documents…"
+            value={subjectSearch}
+            onChange={(e) => setSubjectSearch(e.target.value)}
+            placeholder="Search subjects…"
             className="bg-muted/50 pl-9"
           />
         </div>
 
-        {semestersWithDocs.length === 0 && !search && (
+        {data && data.total > data.results.length && (
+          <p className="text-xs text-muted-foreground">
+            Showing the latest {data.results.length} of {data.total} documents — older ones were
+            trimmed for speed.
+          </p>
+        )}
+
+        {subjects.length === 0 ? (
           <EmptyState
             icon={BookOpen}
             title="No documents yet"
             description="Documents uploaded for your branch & section will appear here."
           />
-        )}
-
-        {search ? (
-          <>
-            {selectionToolbar(filtered)}
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {filtered.map((doc, i) => (
-                <DocumentCard
-                  key={doc.id}
-                  document={doc}
-                  index={i}
-                  selecting={selecting}
-                  selected={selectedIds.has(doc.id)}
-                  onToggleSelect={toggleSelect}
-                />
-              ))}
-              {filtered.length === 0 && (
-                <div className="sm:col-span-2 xl:col-span-3">
-                  <EmptyState title="No matches" description="Try a different search term." />
-                </div>
-              )}
-            </div>
-          </>
+        ) : filteredSubjects.length === 0 ? (
+          <EmptyState
+            icon={Search}
+            title="No subjects match"
+            description="Try a different search term."
+          />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {semestersWithDocs.map((semester, i) => {
-          const count = documents.filter((d) => d.semester === semester.id).length;
-          return (
-            <motion.button
-              key={semester.id}
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.35, delay: i * 0.06 }}
-              onMouseEnter={() => prefetchLevel(semester.id)}
-              onFocus={() => prefetchLevel(semester.id)}
-              onClick={() => goTo({ level: "category", semester })}
-              className="group relative overflow-hidden rounded-2xl border bg-card p-5 text-left shadow-sm transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
-            >
-              <div className="absolute -top-10 -right-10 size-28 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-2xl" />
-              <div className="relative">
-                <div className="flex size-11 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
-                  <Layers className="size-5" />
-                </div>
-                <p className="mt-4 text-xl font-bold">Semester {semester.name}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {count} document{count === 1 ? "" : "s"} available
-                </p>
-                <p className="mt-3 text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
-                  Browse categories →
-                </p>
-              </div>
-            </motion.button>
-          );
-        })}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {filteredSubjects.map((subject, i) => {
+              const count = subjectCount(subject);
+              return (
+                <motion.button
+                  key={subject.id}
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, delay: i * 0.04 }}
+                  onClick={() => goTo({ level: "categories", subjectId: subject.id })}
+                  className="group relative overflow-hidden rounded-2xl border bg-card p-5 text-left shadow-sm transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
+                >
+                  <div className="absolute -top-10 -right-10 size-28 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-2xl" />
+                  <div className="relative">
+                    <div className="flex size-11 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
+                      <BookOpen className="size-5" />
+                    </div>
+                    <p className="mt-4 text-lg leading-tight font-bold">{subject.name}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {count} document{count === 1 ? "" : "s"}
+                    </p>
+                    <Badge variant="secondary" className="mt-2">
+                      {subject.semester_name}
+                    </Badge>
+                    <p className="mt-3 text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
+                      Browse categories →
+                    </p>
+                  </div>
+                </motion.button>
+              );
+            })}
           </div>
         )}
       </div>
     );
   }
 
-  const breadcrumb = (
-    <button onClick={reset} className="mb-5 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-      <ArrowLeft className="size-4" /> All semesters
-    </button>
-  );
-
-  if (step.level === "category") {
-    const categories = meta.categories.filter((c) =>
-      documents.some((d) => d.category === c.id)
-    );
+  /* ------------------------------------------------ Categories */
+  if (step.level === "categories" && currentSubject) {
     return (
       <div>
         {breadcrumb}
-        <h2 className="mb-5 text-xl font-bold">Semester {step.semester.name}</h2>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {categories.map((category, i) => (
-            <motion.button
-              key={category.id}
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: i * 0.05 }}
-              onMouseEnter={() => prefetchLevel(step.semester.id, category.id)}
-              onFocus={() => prefetchLevel(step.semester.id, category.id)}
-              onClick={() => goTo({ level: "subjects", semester: step.semester, category })}
-              className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
-            >
-              <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Tag className="size-5" />
-              </div>
-              <div>
-                <p className="font-semibold">{category.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {documents.filter((d) => d.category === category.id).length} documents
-                </p>
-              </div>
-            </motion.button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (step.level === "subjects") {
-    const subjectIds = new Set(documents.map((d) => d.subject));
-    const subjects = meta.subjects.filter(
-      (s) => s.semester === step.semester.id && subjectIds.has(s.id)
-    );
-    return (
-      <div>
-        {breadcrumb}
-        <button
-          onClick={() => goTo({ level: "category", semester: step.semester })}
-          className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-4" /> {step.category.name}
-        </button>
         <h2 className="mb-5 text-xl font-bold">
-          {step.category.name}
+          {currentSubject.name}
           <Badge variant="secondary" className="ml-2">
-            {step.semester.name}
+            {currentSubject.semester_name}
           </Badge>
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {subjects.map((subject, i) => {
-            const count = documents.filter((d) => d.subject === subject.id).length;
+          {currentSubject.categories.map((category, i) => {
+            const count = category.units.reduce((n, u) => n + u.documents.length, 0);
             return (
               <motion.button
-                key={subject.id}
-                initial={{ opacity: 0, y: 12 }}
+                key={category.id}
+                initial={{ opacity: 0, y: 14 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: i * 0.04 }}
-                onMouseEnter={() =>
-                  prefetchLevel(step.semester.id, step.category.id, subject.id)
-                }
-                onFocus={() =>
-                  prefetchLevel(step.semester.id, step.category.id, subject.id)
-                }
-                onClick={() => goTo({ level: "subject", semester: step.semester, category: step.category, subject })}
+                transition={{ duration: 0.3, delay: i * 0.05 }}
+                onClick={() => goTo({ level: "units", subjectId: currentSubject.id, categoryId: category.id })}
                 className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
               >
-                <div className="flex size-10 items-center justify-center rounded-lg bg-violet-500/10 text-violet-500">
-                  <BookOpen className="size-5" />
+                <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Tag className="size-5" />
                 </div>
-                <div>
-                  <p className="font-semibold">
-                    {subject.name}
-                    {subject.code && (
-                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                        ({subject.code})
-                      </span>
-                    )}
+                <div className="min-w-0">
+                  <p className="truncate font-semibold">{category.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {count} document{count === 1 ? "" : "s"} · {category.units.length} unit
+                    {category.units.length === 1 ? "" : "s"}
                   </p>
-                  <p className="text-xs text-muted-foreground">{count} documents</p>
                 </div>
               </motion.button>
             );
@@ -392,45 +422,117 @@ export function StudentBrowser({ meta }: { meta: MetaData }) {
     );
   }
 
-  const subjectDocs = documents.filter((d) => d.subject === step.subject.id);
-  return (
-    <div>
-      {breadcrumb}
-      <button
-        onClick={() => goTo({ level: "subjects", semester: step.semester, category: step.category })}
-        className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" /> {step.category.name}
-      </button>
-      <h2 className="mb-1 text-xl font-bold">
-        {step.subject.name}
-        <Badge variant="secondary" className="ml-2">
-          {step.semester.name}
-        </Badge>
-      </h2>
-      <p className="mb-5 text-sm text-muted-foreground">{subjectDocs.length} documents</p>
-
-      {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="size-7 animate-spin text-primary" />
+  /* ------------------------------------------------ Units */
+  if (step.level === "units" && currentSubject && currentCategory) {
+    return (
+      <div>
+        {breadcrumb}
+        <button
+          onClick={() => goTo({ level: "categories", subjectId: currentSubject.id })}
+          className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" /> {currentCategory.name}
+        </button>
+        <h2 className="mb-5 text-xl font-bold">
+          {currentSubject.name}
+          <Badge variant="secondary" className="ml-2">
+            {currentCategory.name}
+          </Badge>
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {currentCategory.units.map((unit, i) => (
+            <motion.button
+              key={unit.label}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: i * 0.04 }}
+              onClick={() =>
+                goTo({
+                  level: "documents",
+                  subjectId: currentSubject.id,
+                  categoryId: currentCategory.id,
+                  unitLabel: unit.label,
+                })
+              }
+              className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+            >
+              <div className="flex size-10 items-center justify-center rounded-lg bg-violet-500/10 text-violet-500">
+                <Layers className="size-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{unit.label}</p>
+                <p className="text-xs text-muted-foreground">
+                  {unit.documents.length} document{unit.documents.length === 1 ? "" : "s"}
+                </p>
+              </div>
+            </motion.button>
+          ))}
         </div>
-      ) : (
-        <>
-          {selectionToolbar(subjectDocs)}
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {subjectDocs.map((doc, i) => (
-              <DocumentCard
-                key={doc.id}
-                document={doc}
-                index={i}
-                selecting={selecting}
-                selected={selectedIds.has(doc.id)}
-                onToggleSelect={toggleSelect}
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------ Documents */
+  if (step.level === "documents" && currentSubject && currentCategory && currentUnit) {
+    return (
+      <div>
+        {breadcrumb}
+        <button
+          onClick={() =>
+            goTo({
+              level: "units",
+              subjectId: currentSubject.id,
+              categoryId: currentCategory.id,
+            })
+          }
+          className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" /> {currentCategory.name}
+        </button>
+        <h2 className="mb-1 text-xl font-bold">
+          {currentSubject.name} · {currentUnit.label}
+          <Badge variant="secondary" className="ml-2">
+            {currentCategory.name}
+          </Badge>
+        </h2>
+        <p className="mb-5 text-sm text-muted-foreground">{unitDocs.length} documents</p>
+
+        <div className="relative mb-4 max-w-md">
+          <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={docSearch}
+            onChange={(e) => setDocSearch(e.target.value)}
+            placeholder="Search in this unit…"
+            className="bg-muted/50 pl-9"
+          />
+        </div>
+
+        {selectionToolbar(filteredDocs)}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredDocs.map((doc, i) => (
+            <DocumentCard
+              key={doc.id}
+              document={doc}
+              index={i}
+              selecting={selecting}
+              selected={selectedIds.has(doc.id)}
+              onToggleSelect={toggleSelect}
+            />
+          ))}
+          {filteredDocs.length === 0 && (
+            <div className="sm:col-span-2 xl:col-span-3">
+              <EmptyState
+                icon={BookOpen}
+                title="No documents here"
+                description="Try another unit or category."
               />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Should never happen (missingNode guard above) - keep TS happy.
+  return null;
 }

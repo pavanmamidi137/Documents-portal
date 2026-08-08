@@ -15,6 +15,18 @@ export const MAX_DOCUMENT_SIZE_MB = 20;
 /** Unit choices shown in the upload dialog; the chosen unit fills the title. */
 export const UPLOAD_UNITS = ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"] as const;
 
+/**
+ * Extracts the unit label from a document title (e.g. "DBMS - Unit 1" →
+ * "Unit 1", "UNIT-2 notes" → "Unit 2", "Unit III" → "Unit III").
+ * Documents without a unit in the title fall into "General".
+ */
+export function getUnitLabel(title: string): string {
+  const match = /\bunit\s*[-–:.]?\s*([0-9]+|[ivxlcdm]+)\b/i.exec(title ?? "");
+  if (!match) return "General";
+  const raw = match[1];
+  return /^\d+$/.test(raw) ? `Unit ${raw}` : `Unit ${raw.toUpperCase()}`;
+}
+
 export function getDocumentExt(fileName: string): string {
   const match = /\.([a-zA-Z0-9]+)$/.exec(fileName ?? "");
   return match ? match[1].toLowerCase() : "";

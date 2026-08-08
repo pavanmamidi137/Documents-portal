@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, Inbox, Loader2, Send, Share2, X } from "lucide-react";
+import { ArrowLeftRight, Check, Inbox, Loader2, Send, Share2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -74,7 +74,7 @@ export function ShareDocumentDialog({ open, onOpenChange, document, meta, onShar
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Share2 className="size-5 text-primary" /> Share Document
@@ -87,15 +87,20 @@ export function ShareDocumentDialog({ open, onOpenChange, document, meta, onShar
 
         <div className="space-y-2">
           <Label>Share with sections</Label>
-          <div className="grid max-h-52 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border p-3">
+          <div className="grid max-h-52 grid-cols-1 gap-1.5 overflow-y-auto rounded-xl border p-3 sm:grid-cols-2">
             {candidates.map((s) => (
               <label
                 key={s.id}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
+                className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
               >
                 <Checkbox checked={selected.includes(s.id)} onCheckedChange={(v) => toggle(s.id, v === true)} />
-                <span className="truncate">
-                  {s.branch_name} - Sec {s.name}
+                <span className="min-w-0 truncate">
+                  <span className="font-medium">
+                    {s.branch_code || s.branch_name} · Sec {s.name}
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {s.students_count} student{s.students_count === 1 ? "" : "s"}
+                  </span>
                 </span>
               </label>
             ))}
@@ -171,7 +176,7 @@ export function ShareRequestDialog({ open, onOpenChange, document, meta, onReque
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Send className="size-5 text-primary" /> Request Share
@@ -185,15 +190,20 @@ export function ShareRequestDialog({ open, onOpenChange, document, meta, onReque
 
         <div className="space-y-2">
           <Label>Request with sections</Label>
-          <div className="grid max-h-52 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border p-3">
+          <div className="grid max-h-52 grid-cols-1 gap-1.5 overflow-y-auto rounded-xl border p-3 sm:grid-cols-2">
             {candidates.map((s) => (
               <label
                 key={s.id}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
+                className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
               >
                 <Checkbox checked={selected.includes(s.id)} onCheckedChange={(v) => toggle(s.id, v === true)} />
-                <span className="truncate">
-                  {s.branch_name} - Sec {s.name}
+                <span className="min-w-0 truncate">
+                  <span className="font-medium">
+                    {s.branch_code || s.branch_name} · Sec {s.name}
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {s.students_count} student{s.students_count === 1 ? "" : "s"}
+                  </span>
                 </span>
               </label>
             ))}
@@ -304,7 +314,7 @@ export function ShareRequestsDialog({ open, onOpenChange, onResponded }: ShareRe
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Bell className="size-5 text-primary" /> Share Requests
+            <ArrowLeftRight className="size-5 text-primary" /> Share Requests
           </DialogTitle>
           <DialogDescription>
             Accept documents other CRs sent you, or track the status of the requests you sent.

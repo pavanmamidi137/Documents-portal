@@ -876,3 +876,65 @@ class ShareRequestTests(TestCase):
         self.assertEqual(resp.status_code, 204)
         self.assertEqual(DocumentShareRequest.objects.count(), 0)
 
+
+class DocumentTreeTests(TestCase):
+    """The student browser's single-request data source (Subjects → Units)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE", code="CS")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.semester = Semester.objects.create(name="3-1", order=5)
+        self.category = Category.objects.create(name="Notes")
+        self.subject = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.semester, branch=self.branch
+        )
+        self.student_a = User.objects.create_user(
+            roll_number="st1", password="x", full_name="Student A",
+            branch=self.branch, section=self.section_a,
+        )
+        self.doc_in_a = Document.objects.create(
+            title="DBMS - Unit 1", description="",
+            file_name="dbms.pdf", file_size=1024,
+            cloudinary_url="https://x.example/dbms.pdf",
+            public_id="pid-a", branch=self.branch, section=self.section_a,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.admin,
+        )
+        # Same document in section B - must not leak into A's tree.
+        Document.objects.create(
+            title="DBMS - Unit 1", description="",
+            file_name="dbms-b.pdf", file_size=1024,
+            cloudinary_url="https://x.example/dbms-b.pdf",
+            public_id="pid-b", branch=self.branch, section=self.section_b,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.admin,
+        )
+        # A file deleted in Cloudinary must be hidden from the tree.
+        Document.objects.create(
+            title="DBMS - Unit 2", description="",
+            file_name="missing.pdf", file_size=1024,
+            cloudinary_url="https://x.example/missing.pdf",
+            public_id="pid-missing", branch=self.branch, section=self.section_a,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.admin,
+            is_missing=True,
+        )
+
+    def _client(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
+        return client
+
+    def test_tree_scopes_to_own_section_and_hides_missing(self):
+        response = self._client(self.student_a).get("/api/documents/tree/")
+        self.assertEqual(response.status_code, 200)
+        data = response.data
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["id"], self.doc_in_a.id)
+
