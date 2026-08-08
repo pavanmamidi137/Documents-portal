@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { FileSpreadsheet, Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { http } from "@/lib/api";
 import type { Drive } from "@/lib/types";
-import { getErrorMessage } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 
 const schema = z.object({
   company_name: z.string().min(1, "Company name is required"),
@@ -59,16 +59,23 @@ const EMPTY: FormValues = {
 export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
   const queryClient = useQueryClient();
   const [saving, setSaving] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [extracting, setExtracting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const {
     register,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: EMPTY });
 
   // Prefill when editing; clear when opening for a new drive.
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: clear the paste box each time the dialog opens
+    setPasteText("");
     reset(
       editing
         ? {
@@ -85,6 +92,66 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
         : EMPTY
     );
   }, [open, editing, reset]);
+
+  /** Paste the WhatsApp forward and let Gemini fill the form. */
+  const extractWithAi = async () => {
+    if (pasteText.trim().length < 10) {
+      toast.error("Paste the drive message first (at least a few lines).");
+      return;
+    }
+    setExtracting(true);
+    try {
+      const data = await http.post<Partial<FormValues>>("/drives/ai_extract/", {
+        text: pasteText,
+      });
+      // Fill only the fields the AI returned with content - never wipe what
+      // the user already typed.
+      let filled = 0;
+      (Object.keys(data) as (keyof FormValues)[]).forEach((key) => {
+        const value = data[key];
+        if (typeof value === "string" && value.trim()) {
+          setValue(key, value, { shouldDirty: true });
+          filled += 1;
+        }
+      });
+      toast.success(
+        filled > 0
+          ? "AI filled the form — review the details and save."
+          : "The AI didn't find any details to fill — try a longer paste."
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  /** Upload the college's Excel/CSV and auto-fill roll numbers + eligibility. */
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const data = await http.upload<{
+        roll_numbers: string;
+        count: number;
+        eligibility: string;
+        detail?: string;
+      }>("/drives/parse_eligibility/", form);
+      if (!data.roll_numbers) {
+        toast.warning(data.detail ?? "No roll numbers found in that file.");
+        return;
+      }
+      if (data.roll_numbers) setValue("eligible_roll_numbers", data.roll_numbers, { shouldDirty: true });
+      if (data.eligibility) setValue("eligibility", data.eligibility, { shouldDirty: true });
+      toast.success(`Imported ${data.count} roll number${data.count === 1 ? "" : "s"}.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
 
   const onSubmit = async (values: FormValues) => {
     setSaving(true);
@@ -118,17 +185,44 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{editing ? "Edit Drive" : "Post a Drive"}</DialogTitle>
           <DialogDescription>
             {editing
               ? "Update the drive details."
-              : "Add a placement/company drive. Students are notified instantly and it stays open until the last date to apply."}
+              : "Paste the WhatsApp message and let AI fill it, or type it manually."}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          {/* ------------------------------------------------ AI extract */}
+          <div className="rounded-xl border border-primary/25 bg-primary/5 p-3">
+            <Label className="flex items-center gap-1.5 text-sm font-semibold">
+              <Sparkles className="size-4 text-primary" /> Paste &amp; Auto-fill
+            </Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Paste the whole WhatsApp/college forward below — AI will fill the form for you to review.
+            </p>
+            <Textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={3}
+              placeholder={'e.g. "TCS is hiring! Software Engineer, Hyderabad, 6-8 LPA. Last date: 15 Aug. Eligibility: B.Tech CSE, 60% aggregate. Apply: https://…"'}
+              className="mt-2 bg-background"
+            />
+            <Button
+              type="button"
+              size="sm"
+              className="mt-2"
+              onClick={extractWithAi}
+              disabled={extracting}
+            >
+              {extracting ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              {extracting ? "Extracting…" : "Extract with AI"}
+            </Button>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="company">Company Name *</Label>
             <Input id="company" placeholder="e.g. TCS, Infosys, Wipro" {...register("company_name")} />
@@ -195,14 +289,40 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
             />
           </div>
 
+          {/* ------------------------------------------------ Roll numbers */}
           <div className="space-y-2">
             <Label htmlFor="rolls">Eligible Roll Numbers (optional)</Label>
             <Textarea
               id="rolls"
               rows={2}
-              placeholder="Paste the roll numbers from the college's Excel sheet, separated by commas or new lines. Students in the list get an 'Eligible for you' tag."
+              placeholder="Or upload the college's Excel/CSV sheet →"
               {...register("eligible_roll_numbers")}
             />
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadFile(file);
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className={cn("gap-2", uploading && "opacity-70")}
+            >
+              {uploading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="size-4 text-primary" />
+              )}
+              {uploading ? "Reading sheet…" : "Upload Excel / CSV"}
+            </Button>
           </div>
 
           <DialogFooter>

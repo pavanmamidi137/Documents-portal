@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
+  Bot,
   Briefcase,
   Building2,
   CalendarDays,
@@ -24,6 +25,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { DriveAssistant } from "@/components/placements/ai-assistant";
+import { DriveAskDialog } from "@/components/placements/drive-ask-dialog";
 import { DriveFormDialog } from "@/components/placements/drive-form-dialog";
 import { http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -46,6 +49,7 @@ export default function PlacementsPage() {
   const [editing, setEditing] = useState<Drive | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Drive | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [askDrive, setAskDrive] = useState<Drive | null>(null);
 
   // Visiting the page clears the amber dot on the sidebar nav item.
   useEffect(() => {
@@ -202,29 +206,39 @@ export default function PlacementsPage() {
                     )}
                   </div>
                 </div>
-                {canManage(d) && (
-                  <div className="flex shrink-0 gap-1">
-                    <button
-                      onClick={() => {
-                        setEditing(d);
-                        setFormOpen(true);
-                      }}
-                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      aria-label={`Edit ${d.company_name}`}
-                      title="Edit"
-                    >
-                      <Pencil className="size-4" />
-                    </button>
-                    <button
-                      onClick={() => setDeleteTarget(d)}
-                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                      aria-label={`Delete ${d.company_name}`}
-                      title="Delete"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                )}
+                <div className="flex shrink-0 gap-1">
+                  <button
+                    onClick={() => setAskDrive(d)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                    aria-label={`Ask AI about ${d.company_name}`}
+                    title="Ask AI about this drive"
+                  >
+                    <Bot className="size-4" />
+                  </button>
+                  {canManage(d) && (
+                    <>
+                      <button
+                        onClick={() => {
+                          setEditing(d);
+                          setFormOpen(true);
+                        }}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label={`Edit ${d.company_name}`}
+                        title="Edit"
+                      >
+                        <Pencil className="size-4" />
+                      </button>
+                      <button
+                        onClick={() => setDeleteTarget(d)}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={`Delete ${d.company_name}`}
+                        title="Delete"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Details */}
@@ -295,6 +309,13 @@ export default function PlacementsPage() {
       )}
 
       <DriveFormDialog open={formOpen} onOpenChange={setFormOpen} editing={editing} />
+      <DriveAskDialog
+        drive={askDrive}
+        open={Boolean(askDrive)}
+        onOpenChange={(open) => !open && setAskDrive(null)}
+      />
+
+      <DriveAssistant />
       <ConfirmDialog
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => !open && setDeleteTarget(null)}

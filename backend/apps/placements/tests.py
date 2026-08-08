@@ -1,12 +1,17 @@
+import io
+import json
 from datetime import timedelta
+from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
 from apps.accounts.models import User
 from apps.core.models import Notification
 
-from .models import Drive
+from .ai import AiError
+from .models import AiUsageLog, Drive
 
 
 class DriveApiTests(APITestCase):
@@ -196,3 +201,248 @@ class DriveApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         # Only new posts notify - edits must not spam every student.
         self.assertEqual(Notification.objects.filter(kind=Notification.Kind.DRIVE).count(), 0)
+
+    # ---- AI helpers ----
+
+    @patch("apps.placements.views.ai_json", return_value={"company_name": "TCS", "package": "7 LPA"})
+    def test_ai_extract_fills_fields_for_writers(self, mock_ai):
+        response = self._client(self.cr).post(
+            "/api/drives/ai_extract/",
+            {"text": "TCS hiring! Software Engineer, Hyderabad, 7 LPA. Last date 15 Aug."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["company_name"], "TCS")
+        mock_ai.assert_called_once()
+
+    def test_ai_extract_rejects_short_text(self):
+        response = self._client(self.faculty).post(
+            "/api/drives/ai_extract/", {"text": "hi"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_ai_extract_needs_write_role(self):
+        response = self._client(self.student).post(
+            "/api/drives/ai_extract/",
+            {"text": "Some long text about a company drive for the test."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    @patch("apps.placements.views.ai_json", side_effect=AiError("key missing"))
+    def test_ai_extract_handles_ai_error(self, mock_ai):
+        response = self._client(self.admin).post(
+            "/api/drives/ai_extract/",
+            {"text": "Some long text about a company drive for the test."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("key missing", response.data["detail"])
+
+    def test_parse_eligibility_xlsx(self):
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Roll Number", "Eligibility"])
+        ws.append(["21CSE01", "B.Tech CSE"])
+        ws.append(["21cse02", "B.Tech CSE"])  # lowercase - should be normalized
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        file = SimpleUploadedFile("eligibility.xlsx", buffer.getvalue())
+        response = self._client(self.faculty).post(
+            "/api/drives/parse_eligibility/", {"file": file}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 2)
+        self.assertIn("21CSE01", response.data["roll_numbers"])
+        self.assertIn("21CSE02", response.data["roll_numbers"])
+        self.assertIn("B.Tech CSE", response.data["eligibility"])
+
+    def test_parse_eligibility_csv_without_header(self):
+        csv_bytes = b"21CSE10,21CSE11\n21CSE12,21CSE13\n"
+        file = SimpleUploadedFile("rolls.csv", csv_bytes)
+        response = self._client(self.admin).post(
+            "/api/drives/parse_eligibility/", {"file": file}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 4)
+
+    def test_parse_eligibility_rejects_unknown_format(self):
+        file = SimpleUploadedFile("notes.txt", b"hello")
+        response = self._client(self.admin).post(
+            "/api/drives/parse_eligibility/", {"file": file}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_parse_eligibility_rejects_files_over_5mb(self):
+        file = SimpleUploadedFile("huge.xlsx", b"x" * (5 * 1024 * 1024 + 1))
+        response = self._client(self.admin).post(
+            "/api/drives/parse_eligibility/", {"file": file}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("too large", response.data["detail"])
+
+    @patch("apps.placements.views.ai_plain_text", return_value="Yes, you qualify for TCS.")
+    def test_ai_chat_allowed_for_students(self, mock_ai):
+        response = self._client(self.student).post(
+            "/api/drives/ai_chat/", {"question": "Am I eligible for TCS?"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["answer"], "Yes, you qualify for TCS.")
+
+    def test_ai_chat_rejects_empty_question(self):
+        response = self._client(self.student).post(
+            "/api/drives/ai_chat/", {"question": ""}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @patch("apps.placements.views.ai_plain_text", return_value="The last date is 15 August.")
+    def test_ai_ask_about_a_specific_drive(self, mock_ai):
+        drive = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
+            posted_by=self.admin,
+        )
+        response = self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "When is the last date?"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["answer"], "The last date is 15 August.")
+        # The drive is the only context given to the AI.
+        self.assertIn("TCS", mock_ai.call_args.args[0])
+
+    def test_ai_ask_rejects_empty_question(self):
+        drive = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
+            posted_by=self.admin,
+        )
+        response = self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/", {"question": ""}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    # ---- AI credits / usage tracking ----
+
+    def test_ai_usage_is_logged_per_call(self):
+        def fake_ai(prompt, text, max_tokens=1024, usage_callback=None):
+            if usage_callback:
+                usage_callback(120, 40)
+            return {"company_name": "TCS"}
+
+        with patch("apps.placements.views.ai_json", side_effect=fake_ai):
+            response = self._client(self.cr).post(
+                "/api/drives/ai_extract/",
+                {"text": "TCS hiring freshers, last date 15 Aug, eligibility CSE."},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        log = AiUsageLog.objects.get()
+        self.assertEqual(log.action, AiUsageLog.Action.EXTRACT)
+        self.assertEqual(log.user_id, self.cr.id)
+        self.assertEqual(log.total_tokens, 160)
+
+    def test_ai_usage_endpoint_is_admin_only(self):
+        self.assertEqual(
+            self._client(self.student).get("/api/drives/ai_usage/").status_code, 403
+        )
+        self.assertEqual(
+            self._client(self.cr).get("/api/drives/ai_usage/").status_code, 403
+        )
+
+    def test_ai_usage_endpoint_returns_totals_and_per_user(self):
+        AiUsageLog.objects.create(
+            user=self.student, action=AiUsageLog.Action.CHAT,
+            prompt_tokens=100, completion_tokens=50,
+        )
+        AiUsageLog.objects.create(
+            user=self.student, action=AiUsageLog.Action.ASK,
+            prompt_tokens=80, completion_tokens=20,
+        )
+        AiUsageLog.objects.create(
+            user=self.student2, action=AiUsageLog.Action.CHAT,
+            prompt_tokens=40, completion_tokens=10,
+        )
+        response = self._client(self.admin).get("/api/drives/ai_usage/")
+        self.assertEqual(response.status_code, 200)
+        data = response.data
+        self.assertEqual(data["totals"]["calls"], 3)
+        self.assertEqual(data["totals"]["used_tokens"], 300)
+        by_user = {u["roll_number"]: u for u in data["per_user"]}
+        self.assertEqual(by_user["21CSE01"]["total_tokens"], 250)
+        self.assertEqual(by_user["21CSE02"]["total_tokens"], 50)
+
+    def test_ai_budget_set_and_percent_used(self):
+        AiUsageLog.objects.create(
+            user=self.student, action=AiUsageLog.Action.CHAT,
+            prompt_tokens=100, completion_tokens=50,
+        )
+        # Student can't set the budget.
+        self.assertEqual(
+            self._client(self.student).post(
+                "/api/drives/ai_budget/", {"budget_tokens": 1000}, format="json"
+            ).status_code,
+            403,
+        )
+        response = self._client(self.admin).post(
+            "/api/drives/ai_budget/", {"budget_tokens": 1000}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        data = self._client(self.admin).get("/api/drives/ai_usage/").data
+        self.assertEqual(data["budget_tokens"], 1000)
+        self.assertEqual(data["remaining_tokens"], 850)
+        self.assertEqual(data["percent_used"], 15.0)
+
+    def test_gemini_429_is_retried_then_succeeds(self):
+        import urllib.error
+
+        def fake_urlopen(req, timeout=45):
+            # First call: transient 429. Second call: success with usage.
+            if not fake_urlopen.called:
+                fake_urlopen.called = True
+                raise urllib.error.HTTPError(
+                    req.full_url, 429, "quota", {}, io.BytesIO(b"{}")
+                )
+            payload = {
+                "candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}],
+                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5},
+            }
+            return _FakeResponse(json.dumps(payload))
+
+        fake_urlopen.called = False
+        with patch("apps.placements.ai.urllib.request.urlopen", side_effect=fake_urlopen):
+            from apps.placements.ai import ai_json
+
+            result = ai_json("system", "user text", usage_callback=lambda p, c: None)
+        self.assertEqual(result, {"ok": True})
+
+
+class _FakeResponse:
+    """Minimal file-like stand-in for urlopen's response object."""
+
+    def __init__(self, body: str):
+        self._body = body.encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self._body
+
+    @patch("apps.placements.views.ai_plain_text", return_value="It closed last week.")
+    def test_ai_ask_works_for_expired_drives(self, mock_ai):
+        drive = Drive.objects.create(
+            company_name="OldCo", last_date_to_apply=self.today - timedelta(days=2),
+            posted_by=self.admin,
+        )
+        response = self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "Is this drive still open?"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["answer"], "It closed last week.")

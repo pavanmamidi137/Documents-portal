@@ -212,6 +212,30 @@ export interface ContactRequest {
 
 export type ShareRequestStatus = "PENDING" | "ACCEPTED" | "DECLINED";
 
+export interface AiUsageUser {
+  user_id: number;
+  name: string;
+  roll_number: string;
+  role: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface AiUsageData {
+  totals: {
+    calls: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    used_tokens: number;
+  };
+  per_user: AiUsageUser[];
+  budget_tokens: number;
+  remaining_tokens: number | null;
+  percent_used: number | null;
+}
+
 export interface Drive {
   id: number;
   company_name: string;

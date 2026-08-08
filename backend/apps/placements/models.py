@@ -76,3 +76,33 @@ class Drive(models.Model):
             for r in re.split(r"[,\s;]+", self.eligible_roll_numbers)
             if r.strip()
         }
+
+
+class AiUsageLog(models.Model):
+    """One row per Gemini call, so the super admin can see who uses how many
+    AI credits (tokens)."""
+
+    class Action(models.TextChoices):
+        EXTRACT = "AI_EXTRACT", "AI Extract"
+        CHAT = "AI_CHAT", "AI Chat"
+        ASK = "AI_ASK", "AI Ask"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="ai_usage_logs",
+    )
+    action = models.CharField(max_length=20, choices=Action.choices)
+    prompt_tokens = models.PositiveIntegerField(default=0)
+    completion_tokens = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+    def __str__(self) -> str:
+        return f"[{self.action}] {self.user_id} {self.total_tokens}t"

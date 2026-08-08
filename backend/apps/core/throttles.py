@@ -11,3 +11,10 @@ class BurstRateThrottle(UserRateThrottle):
     """Generous per-user ceiling for normal API usage."""
 
     scope = "user"
+
+
+class AiRateThrottle(UserRateThrottle):
+    """Per-user ceiling for the AI endpoints so one student can't burn the
+    whole Gemini quota."""
+
+    scope = "ai"

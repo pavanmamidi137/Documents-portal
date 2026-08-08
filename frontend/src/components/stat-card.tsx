@@ -13,7 +13,7 @@ export function StatCard({
   delay = 0,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   icon: LucideIcon;
   gradient: string;
   delay?: number;

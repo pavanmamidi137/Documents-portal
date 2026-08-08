@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BookOpenText,
+  BrainCircuit,
   Briefcase,
   Building2,
   ChevronsLeft,
@@ -63,6 +64,7 @@ const FACULTY_ONLY: NavItem[] = [{ href: "/faculty/resumes", label: "Resumes", i
 
 const ADMIN_ONLY: NavItem[] = [
   { href: "/admin/admins", label: "Admins", icon: ShieldCheck },
+  { href: "/admin/ai-usage", label: "AI Usage", icon: BrainCircuit },
   { href: "/admin/faculty", label: "Faculty", icon: GraduationCap },
   { href: "/admin/students", label: "Students", icon: Users },
   { href: "/admin/branches", label: "Branches", icon: Building2 },

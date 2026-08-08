@@ -154,6 +154,7 @@ REST_FRAMEWORK = {
         "login": os.getenv("THROTTLE_LOGIN_RATE", "10/min"),
         "user": os.getenv("THROTTLE_USER_RATE", "300/min"),
         "anon": os.getenv("THROTTLE_ANON_RATE", "30/min"),
+        "ai": os.getenv("THROTTLE_AI_RATE", "20/min"),
     },
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%S%z",
 }
