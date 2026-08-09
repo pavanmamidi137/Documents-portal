@@ -16,6 +16,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.core.permissions import (
     IsStudent,
+    IsStudentOrCR,
     IsSuperAdmin,
     IsSuperAdminOrCR,
     IsSuperAdminOrFaculty,
@@ -601,9 +602,10 @@ class ResumeViewSet(viewsets.ModelViewSet):
     permission_classes = [IsSuperAdminOrFaculty]
 
     def get_permissions(self):
-        # Students manage their own resume; faculty/admins browse the list.
+        # Students (and CRs - they are students too) manage their own resume;
+        # faculty/admins browse the list.
         if self.action in ("create", "mine"):
-            return [IsStudent()]
+            return [IsStudentOrCR()]
         if self.action in ("list", "mark_reviewed", "mark_all_reviewed", "download_zip"):
             return [IsSuperAdminOrFaculty()]
         # destroy/preview: ownership is checked in the body (owner student or admin).
@@ -643,7 +645,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def mine(self, request):
         """The calling student's own resume (or 404 when none uploaded)."""
-        if not request.user.is_student:
+        if not request.user.is_student_or_cr:
             raise PermissionDenied("Only students have a personal resume.")
         resume = Resume.objects.filter(student=request.user).first()
         if not resume:
@@ -660,8 +662,8 @@ class ResumeViewSet(viewsets.ModelViewSet):
         return Response(data)
 
     def create(self, request, *args, **kwargs):
-        """Students upload or replace their own resume."""
-        if not request.user.is_student:
+        """Students (and CRs) upload or replace their own resume."""
+        if not request.user.is_student_or_cr:
             raise PermissionDenied("Only students can upload a resume.")
         resume_file = request.FILES.get("file")
         if not resume_file:
@@ -679,7 +681,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         resume = self.get_object()
         user = request.user
-        if not (user.is_super_admin or (user.is_student and resume.student_id == user.id)):
+        if not (user.is_super_admin or (user.is_student_or_cr and resume.student_id == user.id)):
             raise PermissionDenied("You can only delete your own resume.")
         services.delete_resume(resume, user, request)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -730,7 +732,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
         user = request.user
         if user.is_faculty and user.branch_id and resume.student.branch_id != user.branch_id:
             raise NotFound("Resume not found.")
-        if user.is_student and resume.student_id != user.id:
+        if user.is_student_or_cr and resume.student_id != user.id:
             raise PermissionDenied("You can only check your own resume.")
         exists = cloudinary_file_exists(resume.public_id)
         now = timezone.now()
@@ -895,11 +897,11 @@ class ResumeViewSet(viewsets.ModelViewSet):
         if not resume:
             raise NotFound("Resume not found.")
         user = request.user
-        # Only students (own resume), branch-scoped faculty and admins may run
-        # the analysis - a CR has no resume access anywhere else in the portal.
-        if not (user.is_super_admin or user.is_faculty or user.is_student):
+        # Only students/CRs (own resume), branch-scoped faculty and admins may
+        # run the analysis.
+        if not (user.is_super_admin or user.is_faculty or user.is_student_or_cr):
             raise PermissionDenied("Only students, faculty and admins can analyze resumes.")
-        if user.is_student and resume.student_id != user.id:
+        if user.is_student_or_cr and resume.student_id != user.id:
             raise PermissionDenied("You can only analyze your own resume.")
         if user.is_faculty and user.branch_id and resume.student.branch_id != user.branch_id:
             raise NotFound("Resume not found.")
@@ -907,10 +909,10 @@ class ResumeViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": "This resume's file was deleted from storage. Re-upload it first."}
             )
-        # Students have a per-day AI request budget (default 5, admin-adjustable
-        # per roll number; "unlimited" bypasses it). Faculty/admin reviews are
-        # not limited - they review on behalf of the college.
-        if user.is_student:
+        # Students/CRs have a per-day AI request budget (default 5, admin-
+        # adjustable per roll number; "unlimited" bypasses it). Faculty/admin
+        # reviews are not limited - they review on behalf of the college.
+        if user.is_student_or_cr:
             limits = services._effective_ai_limits(user)
             if not limits["unlimited_ai"] and \
                     services._ai_requests_used_today(user) >= limits["daily_ai_requests"]:
@@ -988,8 +990,10 @@ class ResumeViewSet(viewsets.ModelViewSet):
         user = request.user
         if user.is_faculty and not user.has_resume_portal:
             raise PermissionDenied("Your faculty access does not include the resume portal.")
+        # CRs are students too (they just carry the CR responsibility), so the
+        # faculty can see their resume upload status as well.
         students = User.objects.select_related("branch", "section", "resume").filter(
-            role=User.Role.STUDENT
+            role__in=[User.Role.STUDENT, User.Role.CR]
         )
         if user.is_faculty and user.branch_id:
             students = students.filter(branch_id=user.branch_id)
@@ -1013,6 +1017,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
                 "student_id": s.id,
                 "roll_number": s.roll_number,
                 "full_name": s.full_name,
+                "role": s.role,
                 "branch_name": s.branch.name if s.branch else None,
                 "section_name": s.section.name if s.section else None,
                 "passout_year": s.passout_year,
@@ -1045,7 +1050,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
         user = request.user
         if user.is_faculty and user.branch_id and resume.student.branch_id != user.branch_id:
             raise NotFound("Resume not found.")
-        if user.is_student and resume.student_id != user.id:
+        if user.is_student_or_cr and resume.student_id != user.id:
             raise PermissionDenied("You can only preview your own resume.")
         if resume.is_missing:
             raise NotFound(

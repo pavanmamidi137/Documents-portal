@@ -232,6 +232,7 @@ export interface StudentStatusRow {
   student_id: number;
   roll_number: string;
   full_name: string;
+  role?: string;
   branch_name: string | null;
   section_name: string | null;
   passout_year: number | null;

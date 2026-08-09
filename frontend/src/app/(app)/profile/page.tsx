@@ -502,7 +502,7 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {user.is_student && (
+      {(user.is_student || user.is_cr) && (
         <div className="mb-6 rounded-2xl border bg-card p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

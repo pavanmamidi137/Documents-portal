@@ -128,16 +128,16 @@ export function DocumentCard({
         )}
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{formatBytes(document.file_size)}</span>
-        <span>{formatDate(document.created_at)}</span>
+      <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="shrink-0">{formatBytes(document.file_size)}</span>
+        <span className="truncate text-right">{formatDate(document.created_at)}</span>
       </div>
 
-      <div className="mt-4 flex items-center gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button
           size="sm"
           variant="outline"
-          className="flex-1"
+          className="min-w-28 flex-1 whitespace-nowrap"
           onClick={(e) => {
             e.stopPropagation();
             window.open(document.cloudinary_url, "_blank", "noopener");
@@ -147,7 +147,7 @@ export function DocumentCard({
         </Button>
         <Button
           size="sm"
-          className="flex-1"
+          className="min-w-28 flex-1 whitespace-nowrap"
           onClick={(e) => {
             e.stopPropagation();
             handleDownload();
@@ -159,7 +159,7 @@ export function DocumentCard({
           <Button
             size="sm"
             variant="ghost"
-            className="text-destructive hover:text-destructive"
+            className="size-8 shrink-0 text-destructive hover:text-destructive"
             onClick={(e) => {
               e.stopPropagation();
               handleDelete();

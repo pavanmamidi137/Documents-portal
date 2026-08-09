@@ -237,7 +237,7 @@ def _quick_drive_answer(drive, user, question):
         )
     if _QUICK_ELIGIBLE_RE.search(q):
         if (
-            user.is_student
+            user.is_student_or_cr
             and user.roll_number
             and user.roll_number.strip().upper() in drive.eligible_rolls()
         ):
@@ -273,8 +273,13 @@ def _student_line(user) -> str:
 
 
 def _drive_recipients():
-    """All active students - they are the ones applying to drives."""
-    return User.objects.filter(is_active=True, role=User.Role.STUDENT)
+    """All active students & CRs - they are the ones applying to drives.
+
+    CRs are students too, so they get the same drive notifications.
+    """
+    return User.objects.filter(
+        is_active=True, role__in=[User.Role.STUDENT, User.Role.CR]
+    )
 
 
 def _log_ai_usage(user, action):
@@ -407,7 +412,7 @@ class DriveViewSet(ModelViewSet):
         context = super().get_serializer_context()
         user = self.request.user
         resume_match = {}
-        if user and user.is_authenticated and user.is_student:
+        if user and user.is_authenticated and user.is_student_or_cr:
             resume = getattr(user, "resume", None)
             if resume and isinstance(resume.ai_match, dict):
                 resume_match = resume.ai_match

@@ -66,7 +66,7 @@ export function DriveAssistant() {
             <Sparkles className="size-4 text-primary" /> Ask the Placement AI
           </p>
           <p className="text-xs text-muted-foreground">
-            {user?.is_student
+            {user?.is_student || user?.is_cr
               ? `I know you're ${user.full_name} (${user.roll_number}) · ${user.branch_name ?? "—"} — ask anything about eligibility.`
               : "Ask about any open drive — eligibility, deadlines, details."}
           </p>

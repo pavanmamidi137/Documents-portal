@@ -290,7 +290,12 @@ function DriveDetailChat({
   user,
 }: {
   drive: Drive;
-  user: { is_student?: boolean; roll_number?: string; branch_name?: string | null } | null;
+  user: {
+    is_student?: boolean;
+    is_cr?: boolean;
+    roll_number?: string;
+    branch_name?: string | null;
+  } | null;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
@@ -332,7 +337,7 @@ function DriveDetailChat({
         <div className="min-w-0 flex-1">
           <p className="font-semibold">Ask about this drive</p>
           <p className="text-xs text-muted-foreground">
-            {user?.is_student
+            {user?.is_student || user?.is_cr
               ? `I know you're ${user.roll_number} · ${user.branch_name ?? "—"} — ask anything about eligibility.`
               : "Eligibility, package, selection process — ask away."}
           </p>

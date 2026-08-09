@@ -386,11 +386,9 @@ export function StudentBrowser() {
     return (
       <div>
         {breadcrumb}
-        <h2 className="mb-5 text-xl font-bold">
-          {currentSubject.name}
-          <Badge variant="secondary" className="ml-2">
-            {currentSubject.semester_name}
-          </Badge>
+        <h2 className="mb-5 flex flex-wrap items-center gap-2 text-xl font-bold">
+          <span className="min-w-0 break-words">{currentSubject.name}</span>
+          <Badge variant="secondary">{currentSubject.semester_name}</Badge>
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {currentSubject.categories.map((category, i) => {
@@ -433,11 +431,9 @@ export function StudentBrowser() {
         >
           <ArrowLeft className="size-4" /> {currentCategory.name}
         </button>
-        <h2 className="mb-5 text-xl font-bold">
-          {currentSubject.name}
-          <Badge variant="secondary" className="ml-2">
-            {currentCategory.name}
-          </Badge>
+        <h2 className="mb-5 flex flex-wrap items-center gap-2 text-xl font-bold">
+          <span className="min-w-0 break-words">{currentSubject.name}</span>
+          <Badge variant="secondary">{currentCategory.name}</Badge>
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {currentCategory.units.map((unit, i) => (
@@ -489,11 +485,10 @@ export function StudentBrowser() {
         >
           <ArrowLeft className="size-4" /> {currentCategory.name}
         </button>
-        <h2 className="mb-1 text-xl font-bold">
-          {currentSubject.name} · {currentUnit.label}
-          <Badge variant="secondary" className="ml-2">
-            {currentCategory.name}
-          </Badge>
+        <h2 className="mb-1 flex flex-wrap items-center gap-2 text-xl font-bold">
+          <span className="min-w-0 break-words">{currentSubject.name}</span>
+          <span className="text-muted-foreground">· {currentUnit.label}</span>
+          <Badge variant="secondary">{currentCategory.name}</Badge>
         </h2>
         <p className="mb-5 text-sm text-muted-foreground">{unitDocs.length} documents</p>
 

@@ -353,32 +353,38 @@ export function ShareRequestsDialog({ open, onOpenChange, onResponded }: ShareRe
                 pending.map((req) => (
                   <div
                     key={req.id}
-                    className="flex items-start gap-3 rounded-xl border bg-card p-3 transition-colors hover:border-primary/30"
+                    className="flex flex-col gap-3 rounded-xl border bg-card p-3 transition-colors hover:border-primary/30 sm:flex-row sm:items-start"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{req.document_title}</p>
                       <p className="truncate text-xs text-muted-foreground">
                         {req.subject_name} · {req.from_branch_name} Sec {req.from_section_name}
                       </p>
-                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <Badge variant="outline" className="text-[10px]">
                           {req.category_name}
                         </Badge>
-                        <span>
+                        <span className="min-w-0 truncate">
                           by {req.requested_by_name ?? "System"} · {formatDate(req.created_at)}
                         </span>
                       </p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
                       <Button
                         size="sm"
                         variant="outline"
+                        className="flex-1 sm:flex-none"
                         onClick={() => respond(req, false)}
                         disabled={respondingId === req.id}
                       >
                         <X className="size-3.5" /> Decline
                       </Button>
-                      <Button size="sm" onClick={() => respond(req, true)} disabled={respondingId === req.id}>
+                      <Button
+                        size="sm"
+                        className="flex-1 sm:flex-none"
+                        onClick={() => respond(req, true)}
+                        disabled={respondingId === req.id}
+                      >
                         {respondingId === req.id ? (
                           <Loader2 className="size-3.5 animate-spin" />
                         ) : (
@@ -411,19 +417,21 @@ export function ShareRequestsDialog({ open, onOpenChange, onResponded }: ShareRe
                 outgoing.map((req) => (
                   <div
                     key={req.id}
-                    className="flex items-start gap-3 rounded-xl border bg-card p-3 transition-colors hover:border-primary/30"
+                    className="flex flex-col gap-3 rounded-xl border bg-card p-3 transition-colors hover:border-primary/30 sm:flex-row sm:items-start"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{req.document_title}</p>
                       <p className="truncate text-xs text-muted-foreground">
                         {req.subject_name} · Sent to {req.from_branch_name} Sec {req.to_section_name}
                       </p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {formatDate(req.created_at)}
-                        {req.responded_at && ` · responded ${formatDate(req.responded_at)}`}
+                      <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                        <span>{formatDate(req.created_at)}</span>
+                        {req.responded_at && (
+                          <span>· responded {formatDate(req.responded_at)}</span>
+                        )}
                       </p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
                       <Badge variant="outline" className={STATUS_CLASSES[req.status]}>
                         {req.status_label}
                       </Badge>

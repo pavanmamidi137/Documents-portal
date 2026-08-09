@@ -986,6 +986,47 @@ class ResumeTests(TestCase):
         response = client.get("/api/resumes/mine/")
         self.assertEqual(response.status_code, 404)
 
+    # -- CRs are students too ------------------------------------------------
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_cr_uploads_and_reads_own_resume(self, mock_upload):
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/cr.pdf",
+            "public_id": "resumes/it/a/cr.pdf",
+        }
+        cr = User.objects.create_user(
+            roll_number="CR01", password="x", full_name="Class Rep",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        client = self._client(cr)
+        response = client.post(
+            "/api/resumes/", {"file": self._resume_file("cr.pdf")}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Resume.objects.get(student=cr).file_name, "cr.pdf")
+        # The CR can read their own resume back via mine.
+        mine = client.get("/api/resumes/mine/")
+        self.assertEqual(mine.status_code, 200)
+        self.assertEqual(mine.data["student_roll"], "CR01")
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_faculty_student_status_includes_crs(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        cr = User.objects.create_user(
+            roll_number="CR01", password="x", full_name="Class Rep",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        client = self._client(self.faculty)
+        response = client.get("/api/resumes/student_status/")
+        self.assertEqual(response.status_code, 200)
+        rows = {row["roll_number"]: row for row in response.data["results"]}
+        self.assertIn("21IT01", rows)
+        self.assertIn("CR01", rows)
+        self.assertEqual(rows["CR01"]["role"], "CR")
+        # The CR hasn't uploaded yet - faculty see that status too.
+        self.assertFalse(rows["CR01"]["has_resume"])
+
     # -- review workflow -----------------------------------------------------
 
     @patch("apps.documents.services.cloudinary.uploader.upload")

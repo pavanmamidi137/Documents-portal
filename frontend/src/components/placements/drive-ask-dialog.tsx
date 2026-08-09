@@ -151,7 +151,7 @@ function DriveAskChat({ drive }: { drive: Drive }) {
           <Send className="size-4" />
         </Button>
       </div>
-      {user?.is_student && (
+      {(user?.is_student || user?.is_cr) && (
         <p className="text-[11px] text-muted-foreground">
           The AI knows you&apos;re {user.roll_number} · {user.branch_name ?? "—"}.
         </p>

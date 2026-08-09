@@ -15,6 +15,7 @@ import {
   FileUser,
   FolderKanban,
   GraduationCap,
+  Handshake,
   Layers,
   LayoutDashboard,
   LogOut,
@@ -104,7 +105,8 @@ interface SidebarProps {
 export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
-  const isStudent = user?.is_student ?? false;
+  // CRs are students too - they get the same resume/placement dots.
+  const isStudent = user?.is_student ?? user?.is_cr ?? false;
 
   // Students: track resume status. Shares the cache key with the /resume page
   // and the dashboard, so the amber dot disappears the moment they upload.
@@ -150,6 +152,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
   } else if (user?.is_cr) {
     groups = [
       { items: [COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2], COMMON[3]] },
+      { label: "Career", items: STUDENT_ONLY },
       { label: "Support", items: SUPPORT_ONLY },
     ];
   } else if (user?.is_faculty) {
@@ -219,7 +222,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
           className={cn("flex items-center gap-3", compact && "flex-col gap-1.5")}
         >
           <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 shadow-md shadow-primary/30">
-            <GraduationCap className="size-5 text-primary-foreground" />
+            <Handshake className="size-5 text-primary-foreground" />
           </div>
           {!compact && (
             <div className="min-w-0">

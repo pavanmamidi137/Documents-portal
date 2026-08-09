@@ -115,7 +115,8 @@ export default function DashboardPage() {
 
   const isAdmin = user?.is_super_admin ?? false;
   const isFaculty = user?.is_faculty ?? false;
-  const isStudent = user?.is_student ?? false;
+  // CRs are students too - the resume reminder applies to them as well.
+  const isStudent = user?.is_student ?? user?.is_cr ?? false;
 
   // Students: check whether they've uploaded a resume yet. Shares the cache
   // key with the /resume page, so the banner disappears the moment they upload.

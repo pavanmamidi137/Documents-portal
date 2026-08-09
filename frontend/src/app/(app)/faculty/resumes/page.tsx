@@ -236,7 +236,14 @@ export default function FacultyResumesPage() {
               .toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="truncate font-medium">{s.full_name}</p>
+            <p className="flex items-center gap-1.5 truncate font-medium">
+              {s.full_name}
+              {s.role === "CR" && (
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                  CR
+                </Badge>
+              )}
+            </p>
             <p className="truncate text-xs text-muted-foreground">{s.roll_number}</p>
           </div>
         </div>

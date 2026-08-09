@@ -130,6 +130,11 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.role == self.Role.STUDENT
 
     @property
+    def is_student_or_cr(self) -> bool:
+        """CRs are students too - they just carry the CR responsibility."""
+        return self.role in (self.Role.STUDENT, self.Role.CR)
+
+    @property
     def role_label(self) -> str:
         return self.Role(self.role).label if self.role in self.Role.values else self.role
 

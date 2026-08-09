@@ -29,13 +29,13 @@ class DriveSerializer(serializers.ModelSerializer):
     def get_posted_by_name(self, obj):
         """Students don't need to see who posted each drive."""
         user = self.context["request"].user
-        if user and user.is_student:
+        if user and user.is_student_or_cr:
             return None
         return obj.posted_by.full_name if obj.posted_by else None
 
     def get_is_eligible_for_me(self, obj):
         user = self.context["request"].user
-        if user and user.is_student and user.roll_number:
+        if user and user.is_student_or_cr and user.roll_number:
             return user.roll_number.strip().upper() in obj.eligible_rolls()
         return None
 

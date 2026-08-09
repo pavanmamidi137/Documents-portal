@@ -33,6 +33,14 @@ class IsStudent(permissions.BasePermission):
         return bool(user and user.is_authenticated and user.is_student)
 
 
+class IsStudentOrCR(permissions.BasePermission):
+    """Allow access to Students and CRs (CRs are students with a role)."""
+
+    def has_permission(self, request, view) -> bool:
+        user = request.user
+        return bool(user and user.is_authenticated and user.is_student_or_cr)
+
+
 class IsFaculty(permissions.BasePermission):
     """Allow access only to Faculty."""
 

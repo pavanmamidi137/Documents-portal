@@ -180,12 +180,13 @@ class DriveApiTests(APITestCase):
 
     # ---- Notifications ----
 
-    def test_new_drive_notifies_all_students(self):
+    def test_new_drive_notifies_all_students_and_crs(self):
+        """CRs are students too - they get the same drive notification."""
         self._client(self.admin).post("/api/drives/", self._payload(), format="json")
         notifs = Notification.objects.filter(kind=Notification.Kind.DRIVE)
         self.assertEqual(
             set(notifs.values_list("user_id", flat=True)),
-            {self.student.id, self.student2.id},
+            {self.student.id, self.student2.id, self.cr.id},
         )
         # The notification deep-links to the drive detail page.
         self.assertTrue(notifs.first().link.startswith("/placements/"))
