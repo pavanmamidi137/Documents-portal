@@ -83,8 +83,10 @@ api.interceptors.response.use(
         return api(original);
       }
       if (typeof window !== "undefined") {
+        // Session expired - land on the public home page (with its login
+        // button) instead of forcing users onto the login form.
         // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- axios interceptor, not a component
-        window.location.assign("/login");
+        window.location.assign("/");
       }
     }
     return Promise.reject(error);

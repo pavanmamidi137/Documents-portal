@@ -281,6 +281,7 @@ class FacultyUpdateSerializer(serializers.ModelSerializer):
 class ResumeSerializer(serializers.ModelSerializer):
     student_roll = serializers.CharField(source="student.roll_number", read_only=True)
     student_name = serializers.CharField(source="student.full_name", read_only=True)
+    student_avatar_url = serializers.CharField(source="student.avatar_url", read_only=True)
     branch_name = serializers.CharField(source="student.branch.name", read_only=True, default=None)
     section_name = serializers.CharField(source="student.section.name", read_only=True, default=None)
     reviewed_by_name = serializers.CharField(
@@ -291,7 +292,7 @@ class ResumeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Resume
         fields = [
-            "id", "student", "student_roll", "student_name",
+            "id", "student", "student_roll", "student_name", "student_avatar_url",
             "branch_name", "section_name",
             "file_name", "file_size", "cloudinary_url",
             "is_reviewed", "reviewed_by_name", "reviewed_at",

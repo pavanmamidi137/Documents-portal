@@ -29,6 +29,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -303,14 +304,17 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       header: "Student",
       cell: (s) => (
         <div className="flex items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/15 to-violet-500/15 text-xs font-bold text-indigo-600 ring-1 ring-indigo-500/30 dark:text-indigo-400">
-            {s.full_name
-              .split(/\s+/)
-              .slice(0, 2)
-              .map((p) => p[0])
-              .join("")
-              .toUpperCase()}
-          </div>
+          <Avatar className="size-9 shrink-0 ring-1 ring-indigo-500/30">
+            {s.avatar_url ? <AvatarImage src={s.avatar_url} alt={s.full_name} /> : null}
+            <AvatarFallback className="bg-gradient-to-br from-indigo-500/15 to-violet-500/15 text-xs font-bold text-indigo-600 dark:text-indigo-400">
+              {s.full_name
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((p) => p[0])
+                .join("")
+                .toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
           <div className="min-w-0">
             <p className="truncate font-medium">{s.full_name}</p>
             <p className="truncate text-xs text-muted-foreground">{s.roll_number}</p>
@@ -592,6 +596,19 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         onSelectionChange={(keys) => {
           // Ticking an individual row leaves all-pages mode.
           if (keys.length > 0) setSelectAllMatching(false);
+        }}
+        onDeleteKey={(selected, clear) => {
+          // Keyboard Delete = same confirm flow as the Delete button, which
+          // drops the visual selection while the dialog works from the
+          // captured targets (Esc dismisses without deleting).
+          if (selectAllMatching) {
+            setBulkTargets([]);
+            setPendingBulk({ type: "delete", doneLabel: "deleted" });
+          } else if (selected.length > 0) {
+            clear();
+            setBulkTargets(selected);
+            setPendingBulk({ type: "delete", doneLabel: "deleted" });
+          }
         }}
         selectionBar={(selected, clear, selectAllOnPage) => {
           const matchingCount = data?.count ?? 0;

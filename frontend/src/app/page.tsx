@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useTheme } from "next-themes";
@@ -17,6 +16,7 @@ import {
   GraduationCap,
   Handshake,
   Layers,
+  LayoutDashboard,
   Moon,
   Rocket,
   Search,
@@ -170,21 +170,11 @@ function InstallAppButton() {
 }
 
 export default function HomePage() {
-  const { user, loading } = useAuth();
+  const { user } = useAuth();
   const { theme, setTheme } = useTheme();
-  const router = useRouter();
 
-  useEffect(() => {
-    if (!loading && user) router.replace("/dashboard");
-  }, [loading, user, router]);
-
-  if (loading || user) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <Handshake className="size-8 animate-pulse text-primary" />
-      </div>
-    );
-  }
+  // Logged-in visitors can browse the public page too - they get a "Profile"
+  // button (leading to their dashboard) instead of the Sign in button.
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-background">
@@ -220,9 +210,15 @@ export default function HomePage() {
             >
               {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
             </button>
-            <Button render={<Link href="/login" />} variant="outline">
-              Sign in <ArrowRight className="size-4" />
-            </Button>
+            {user ? (
+              <Button render={<Link href="/dashboard" />}>
+                <LayoutDashboard className="size-4" /> Profile
+              </Button>
+            ) : (
+              <Button render={<Link href="/login" />} variant="outline">
+                Sign in <ArrowRight className="size-4" />
+              </Button>
+            )}
           </div>
         </div>
       </header>
@@ -266,13 +262,23 @@ export default function HomePage() {
             transition={{ duration: 0.5, delay: 0.24 }}
             className="mt-9 flex flex-wrap items-center justify-center gap-3"
           >
-            <Button
-              size="lg"
-              render={<Link href="/login" />}
-              className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
-            >
-              Get started <ArrowRight className="size-4" />
-            </Button>
+            {user ? (
+              <Button
+                size="lg"
+                render={<Link href="/dashboard" />}
+                className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+              >
+                <LayoutDashboard className="size-4" /> Go to dashboard
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                render={<Link href="/login" />}
+                className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+              >
+                Get started <ArrowRight className="size-4" />
+              </Button>
+            )}
             <Button size="lg" variant="outline" render={<a href="#features" />}>
               Explore features
             </Button>
@@ -526,13 +532,23 @@ export default function HomePage() {
             is your roll number — change it after your first login.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <Button
-              size="lg"
-              render={<Link href="/login" />}
-              className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
-            >
-              Sign in to PlaceMate <ArrowRight className="size-4" />
-            </Button>
+            {user ? (
+              <Button
+                size="lg"
+                render={<Link href="/dashboard" />}
+                className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+              >
+                <LayoutDashboard className="size-4" /> Go to dashboard
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                render={<Link href="/login" />}
+                className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+              >
+                Sign in to PlaceMate <ArrowRight className="size-4" />
+              </Button>
+            )}
           </div>
         </div>
       </section>

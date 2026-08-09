@@ -10,5 +10,5 @@ from .models import Resume
 
 @receiver([post_save, post_delete], sender=Resume)
 def _invalidate_resume_caches(*args, **kwargs):
-    """Faculty dashboards list recent resumes - keep them fresh."""
-    invalidate_portal_caches("dash")
+    """Faculty dashboards and resume lists - keep them fresh."""
+    invalidate_portal_caches("dash", "list:resumes", "list:status")

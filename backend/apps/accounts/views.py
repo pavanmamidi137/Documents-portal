@@ -22,7 +22,12 @@ from apps.core.permissions import (
     IsSuperAdminOrFaculty,
 )
 from apps.core.throttles import AiRateThrottle, LoginRateThrottle
-from apps.core.utils import build_zip_response, csv_response, log_audit
+from apps.core.utils import (
+    build_zip_response,
+    csv_response,
+    invalidate_portal_caches,
+    log_audit,
+)
 
 from .models import AiAccessConfig, Resume, User
 from .serializers import (
@@ -196,6 +201,23 @@ class StudentViewSet(viewsets.ModelViewSet):
             return [IsSuperAdmin()]
         return [IsSuperAdminOrCR()]
 
+    def list(self, request, *args, **kwargs):
+        """Paginated student list, cached ~5s per user + filters.
+
+        Every student write path invalidates the cache, so the admin/CR
+        tables always show fresh rows while repeated filtering stays fast.
+        """
+        from apps.core.utils import get_or_set_list_cache
+
+        data = get_or_set_list_cache(
+            "list:students",
+            request.user,
+            request.query_params,
+            5,
+            lambda: super(StudentViewSet, self).list(request, *args, **kwargs).data,
+        )
+        return Response(data)
+
     def get_queryset(self):
         user = self.request.user
         qs = User.objects.select_related("branch", "section").filter(
@@ -235,6 +257,7 @@ class StudentViewSet(viewsets.ModelViewSet):
         student = services.create_student(
             serializer.validated_data, request.user, request=request
         )
+        invalidate_portal_caches("list:students", "list:status")
         return Response(UserSerializer(student).data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
@@ -242,6 +265,7 @@ class StudentViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(student, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         student = services.update_student(student, serializer.validated_data, request.user, request)
+        invalidate_portal_caches("list:students", "list:status")
         return Response(UserSerializer(student).data)
 
     def destroy(self, request, *args, **kwargs):
@@ -249,6 +273,7 @@ class StudentViewSet(viewsets.ModelViewSet):
         if student.is_super_admin:
             raise ValidationError("Cannot delete a Super Admin.")
         services.delete_student(student, request.user, request)
+        invalidate_portal_caches("list:students", "list:status")
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     # -- bulk import / export -----------------------------------------------
@@ -272,6 +297,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             )
         except ValueError as exc:
             raise ValidationError({"file": str(exc)})
+        invalidate_portal_caches("list:students", "list:status")
         return Response(result)
 
     @action(detail=False, methods=["post"], permission_classes=[IsSuperAdminOrCR])
@@ -330,6 +356,7 @@ class StudentViewSet(viewsets.ModelViewSet):
         count = len(ids_to_delete)
         log_audit(request.user, "BULK_DELETE", "Student", "",
                   {"count": count, "all_matching": all_matching}, request)
+        invalidate_portal_caches("list:students", "list:status")
         return Response({"deleted": count})
 
     @action(detail=False, methods=["get"], permission_classes=[IsSuperAdminOrCR])
@@ -357,6 +384,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             services.promote_to_cr(student, request.user, request)
         except ValueError as exc:
             raise ValidationError({"detail": str(exc)})
+        invalidate_portal_caches("list:students", "list:status")
         return Response(UserSerializer(student).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsSuperAdmin])
@@ -366,12 +394,14 @@ class StudentViewSet(viewsets.ModelViewSet):
             services.demote_to_student(student, request.user, request)
         except ValueError as exc:
             raise ValidationError({"detail": str(exc)})
+        invalidate_portal_caches("list:students", "list:status")
         return Response(UserSerializer(student).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsSuperAdmin])
     def activate(self, request, pk=None):
         student = self._get_student_or_404(pk)
         services.set_active(student, True, request.user, request)
+        invalidate_portal_caches("list:students", "list:status")
         return Response(UserSerializer(student).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsSuperAdmin])
@@ -381,6 +411,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             services.set_active(student, False, request.user, request)
         except ValueError as exc:
             raise ValidationError({"detail": str(exc)})
+        invalidate_portal_caches("list:students", "list:status")
         return Response(UserSerializer(student).data)
 
     @action(detail=True, methods=["post"])
@@ -601,6 +632,24 @@ class ResumeViewSet(viewsets.ModelViewSet):
     serializer_class = ResumeSerializer
     permission_classes = [IsSuperAdminOrFaculty]
 
+    def list(self, request, *args, **kwargs):
+        """Paginated resume list, cached ~5s per user + filters.
+
+        Resume serialization includes AI data, so filtering/reviewing is the
+        heaviest list on the site. Resume writes (incl. review toggles)
+        invalidate the cache so badges stay current.
+        """
+        from apps.core.utils import get_or_set_list_cache
+
+        data = get_or_set_list_cache(
+            "list:resumes",
+            request.user,
+            request.query_params,
+            5,
+            lambda: super(ResumeViewSet, self).list(request, *args, **kwargs).data,
+        )
+        return Response(data)
+
     def get_permissions(self):
         # Students (and CRs - they are students too) manage their own resume;
         # faculty/admins browse the list.
@@ -702,6 +751,8 @@ class ResumeViewSet(viewsets.ModelViewSet):
 
         resume.is_reviewed = reviewed
         resume.reviewed_by = request.user if reviewed else None
+        # Resume list caching: the review badge must flip instantly everywhere.
+        invalidate_portal_caches("list:resumes", "list:status")
         resume.reviewed_at = timezone.now() if reviewed else None
         # auto_now bumps updated_at so the faculty table reflects review activity.
         resume.save(update_fields=["is_reviewed", "reviewed_by", "reviewed_at", "updated_at"])
@@ -872,6 +923,8 @@ class ResumeViewSet(viewsets.ModelViewSet):
             # .update() skips auto_now, so set updated_at explicitly.
             updated_at=now,
         )
+        # .update() skips signals - invalidate the resume list caches directly.
+        invalidate_portal_caches("list:resumes", "list:status")
         log_audit(
             request.user, "RESUME_REVIEW_ALL", "Resume", "",
             {"updated": count},
@@ -1010,25 +1063,33 @@ class ResumeViewSet(viewsets.ModelViewSet):
         if params.get("section"):
             students = students.filter(section_id=params["section"])
 
-        rows = []
-        for s in students.iterator():
-            resume = getattr(s, "resume", None)
-            rows.append({
-                "student_id": s.id,
-                "roll_number": s.roll_number,
-                "full_name": s.full_name,
-                "role": s.role,
-                "branch_name": s.branch.name if s.branch else None,
-                "section_name": s.section.name if s.section else None,
-                "passout_year": s.passout_year,
-                "has_resume": bool(resume and not resume.is_missing),
-                "is_reviewed": bool(resume and resume.is_reviewed),
-                "resume_id": resume.id if resume else None,
-                "file_name": resume.file_name if resume else None,
-                "updated_at": resume.updated_at if resume else None,
-                "ai_status": resume.ai_status if resume else None,
-            })
-        return Response({"results": rows})
+        from apps.core.utils import get_or_set_list_cache
+
+        # The All-Students table iterates every student of the branch - cache
+        # the built rows ~5s per user + filters so repeated tab loads are free.
+        def build_rows():
+            rows = []
+            for s in students.iterator():
+                resume = getattr(s, "resume", None)
+                rows.append({
+                    "student_id": s.id,
+                    "roll_number": s.roll_number,
+                    "full_name": s.full_name,
+                    "role": s.role,
+                    "avatar_url": s.avatar_url,
+                    "branch_name": s.branch.name if s.branch else None,
+                    "section_name": s.section.name if s.section else None,
+                    "passout_year": s.passout_year,
+                    "has_resume": bool(resume and not resume.is_missing),
+                    "is_reviewed": bool(resume and resume.is_reviewed),
+                    "resume_id": resume.id if resume else None,
+                    "file_name": resume.file_name if resume else None,
+                    "updated_at": resume.updated_at if resume else None,
+                    "ai_status": resume.ai_status if resume else None,
+                })
+            return {"results": rows}
+
+        return Response(get_or_set_list_cache("list:status", user, params, 5, build_rows))
 
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, pk=None):

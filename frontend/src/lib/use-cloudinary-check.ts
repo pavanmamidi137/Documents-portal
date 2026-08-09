@@ -21,9 +21,12 @@ interface CheckFilesResponse {
  * Cloudinary) are refetched so they reappear, and a "Restored" marker is
  * returned by the API so the UI can badge them.
  *
- * Runs once per (list query key), so filter changes and pagination trigger a
- * fresh check but re-renders do not.
+ * Throttled to once per minute (the backend only re-checks files that have
+ * not been verified for 60s anyway), so rapid filter/search/pagination
+ * changes do not fire a Cloudinary API round-trip on every keystroke.
  */
+const THROTTLE_MS = 60_000;
+
 export function useCloudinaryCheck<T extends { id: number }>({
   url,
   params,
@@ -36,12 +39,13 @@ export function useCloudinaryCheck<T extends { id: number }>({
   kind: string;
 }) {
   const queryClient = useQueryClient();
-  const checkedRef = useRef<string>("");
+  const lastRunRef = useRef(0);
   const key = JSON.stringify(queryKey);
 
   useEffect(() => {
-    if (checkedRef.current === key) return;
-    checkedRef.current = key;
+    const now = Date.now();
+    if (now - lastRunRef.current < THROTTLE_MS) return;
+    lastRunRef.current = now;
     let cancelled = false;
 
     (async () => {

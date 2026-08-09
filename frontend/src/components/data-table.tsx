@@ -65,6 +65,14 @@ interface DataTableProps<T> {
    * prefetch it (e.g. via queryClient.prefetchQuery) and make paging instant.
    */
   prefetchNextPage?: (page: number) => void;
+  /**
+   * Pressing Delete/Backspace while rows are selected fires this with the
+   * rows ticked on the current page (may be empty in select-all-matching
+   * mode) plus a `clearSelection` helper so the consumer can drop the visual
+   * selection exactly like its Delete button does. Ignored while typing in
+   * inputs or when a dialog/menu/select is open.
+   */
+  onDeleteKey?: (selected: T[], clearSelection: () => void) => void;
 }
 
 export function DataTable<T>({
@@ -87,6 +95,7 @@ export function DataTable<T>({
   selectionActive = false,
   selectionBar,
   prefetchNextPage,
+  onDeleteKey,
 }: DataTableProps<T>) {
   const [selected, setSelected] = useState<Set<string | number>>(new Set());
 
@@ -145,6 +154,44 @@ export function DataTable<T>({
     () => data.filter((row) => selected.has(rowKey(row))),
     [data, selected, rowKey]
   );
+
+  // Delete/Backspace with rows selected opens the consumer's bulk-delete
+  // confirm dialog (Esc dismisses it - dialogs close on Escape by default).
+  // Callbacks are kept in refs so the listener never re-subscribes on render.
+  const onDeleteKeyRef = useRef(onDeleteKey);
+  useEffect(() => {
+    onDeleteKeyRef.current = onDeleteKey;
+  });
+  const selectedRowsRef = useRef(selectedRows);
+  useEffect(() => {
+    selectedRowsRef.current = selectedRows;
+  });
+  const clearSelectionRef = useRef(clearSelection);
+  useEffect(() => {
+    clearSelectionRef.current = clearSelection;
+  });
+  useEffect(() => {
+    if (!selectable || !onDeleteKeyRef.current) return;
+    if (selected.size === 0 && !selectionActive) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (e.repeat) return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // Never hijack keys while typing or when a dialog/menu/select is open
+      // (popups render in portals, so closest() still sees them via the tree).
+      if (
+        target.closest(
+          "input, textarea, select, [contenteditable='true'], [role='dialog'], [role='menu'], [role='listbox'], [role='combobox']"
+        )
+      )
+        return;
+      e.preventDefault();
+      onDeleteKeyRef.current?.(selectedRowsRef.current, clearSelectionRef.current);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectable, selected.size, selectionActive]);
 
   const handleRowClick = (e: React.MouseEvent, row: T) => {
     // Only ctrl/cmd+click selects, so plain clicks keep row actions working.

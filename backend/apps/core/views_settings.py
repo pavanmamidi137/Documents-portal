@@ -1,3 +1,5 @@
+import re
+
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -7,7 +9,7 @@ from .models import SiteSetting
 from .permissions import IsSuperAdmin
 from .utils import log_audit
 
-# Keys must match the frontend theme registry (frontend/src/lib/site-theme.tsx).
+# Preset keys must match the frontend theme registry (frontend/src/lib/site-theme.tsx).
 SITE_THEME_KEY = "site_theme"
 DEFAULT_THEME = "orange"
 SITE_THEMES = {
@@ -21,12 +23,26 @@ SITE_THEMES = {
     "dark-pink",    # Dark pink
 }
 
+# A theme can also be any color the admin picks in the color picker, stored as
+# ``custom:#RRGGBB``. The frontend derives the full palette from that hex.
+CUSTOM_THEME_PREFIX = "custom:"
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _is_valid_theme(value: str) -> bool:
+    """Accept a preset key or a fully custom color like ``custom:#f56d14``."""
+    if value in SITE_THEMES:
+        return True
+    return value.startswith(CUSTOM_THEME_PREFIX) and bool(
+        _HEX_RE.match(value[len(CUSTOM_THEME_PREFIX):])
+    )
+
 
 def get_site_theme() -> str:
     """Read the persisted site theme (falling back to the default)."""
     try:
         setting = SiteSetting.objects.filter(key=SITE_THEME_KEY).first()
-        if setting and setting.value in SITE_THEMES:
+        if setting and _is_valid_theme(setting.value):
             return setting.value
     except Exception:
         pass
@@ -52,9 +68,9 @@ class SiteThemeView(APIView):
 
     def put(self, request):
         theme = (request.data.get("theme") or "").strip().lower()
-        if theme not in SITE_THEMES:
+        if not _is_valid_theme(theme):
             raise ValidationError(
-                {"theme": f"Unknown theme. Choose one of: {', '.join(sorted(SITE_THEMES))}."}
+                {"theme": "Choose a preset theme or a custom color like custom:#f56d14."}
             )
         SiteSetting.objects.update_or_create(
             key=SITE_THEME_KEY, defaults={"value": theme}

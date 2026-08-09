@@ -345,4 +345,32 @@
   html {
     @apply font-sans;
   }
+
+  /* Hand cursor on everything clickable — Tailwind v4 preflight uses the
+     default arrow for buttons/links, which feels dead. Restore the pointer. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  [role="menuitem"]:not(:disabled),
+  [role="option"]:not(:disabled),
+  [role="checkbox"]:not(:disabled),
+  [role="radio"]:not(:disabled),
+  [role="switch"]:not(:disabled),
+  [role="tab"]:not(:disabled),
+  [role="combobox"]:not(:disabled),
+  a,
+  summary,
+  label[for],
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="color"]:not(:disabled),
+  input[type="range"]:not(:disabled),
+  input[type="file"]:not(:disabled),
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+  *:disabled,
+  [disabled],
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
 }

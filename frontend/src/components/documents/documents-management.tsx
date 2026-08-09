@@ -521,6 +521,12 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
           // Ticking an individual row leaves all-pages mode.
           if (keys.length > 0) setSelectAllMatching(false);
         }}
+        onDeleteKey={(selected, clear) => {
+          // Keyboard Delete opens the same bulk-delete confirmation as the
+          // Delete button (selection cleared, Esc dismisses without deleting).
+          clear();
+          setBulkDeleteTargets(selectAllMatching ? [] : selected);
+        }}
         selectionBar={(selected, clear, selectAllOnPage) => {
           const matchingCount = data?.count ?? 0;
           return (

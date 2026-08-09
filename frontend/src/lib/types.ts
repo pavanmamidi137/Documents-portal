@@ -188,6 +188,7 @@ export interface Resume {
   student: number;
   student_roll: string;
   student_name: string;
+  student_avatar_url?: string;
   branch_name: string | null;
   section_name: string | null;
   file_name: string;
@@ -233,6 +234,7 @@ export interface StudentStatusRow {
   roll_number: string;
   full_name: string;
   role?: string;
+  avatar_url?: string;
   branch_name: string | null;
   section_name: string | null;
   passout_year: number | null;

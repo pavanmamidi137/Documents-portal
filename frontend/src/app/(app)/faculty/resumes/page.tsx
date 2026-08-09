@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { RoleGuard } from "@/components/role-guard";
 import { DataTable, type Column } from "@/components/data-table";
 import { PageHeader } from "@/components/layout/page-header";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -227,14 +228,17 @@ export default function FacultyResumesPage() {
       header: "Student",
       cell: (s) => (
         <div className="flex items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary ring-1 ring-primary/30">
-            {s.full_name
-              .split(/\s+/)
-              .slice(0, 2)
-              .map((p) => p[0])
-              .join("")
-              .toUpperCase()}
-          </div>
+          <Avatar className="size-9 shrink-0 ring-1 ring-primary/30">
+            {s.avatar_url ? <AvatarImage src={s.avatar_url} alt={s.full_name} /> : null}
+            <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">
+              {s.full_name
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((p) => p[0])
+                .join("")
+                .toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate font-medium">
               {s.full_name}
@@ -318,14 +322,19 @@ export default function FacultyResumesPage() {
       header: "Student",
       cell: (r) => (
         <div className="flex items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary ring-1 ring-primary/30">
-            {r.student_name
-              .split(/\s+/)
-              .slice(0, 2)
-              .map((p) => p[0])
-              .join("")
-              .toUpperCase()}
-          </div>
+          <Avatar className="size-9 shrink-0 ring-1 ring-primary/30">
+            {r.student_avatar_url ? (
+              <AvatarImage src={r.student_avatar_url} alt={r.student_name} />
+            ) : null}
+            <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">
+              {r.student_name
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((p) => p[0])
+                .join("")
+                .toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
           <div className="min-w-0">
             <p className="truncate font-medium">{r.student_name}</p>
             <p className="truncate text-xs text-muted-foreground">{r.student_roll}</p>

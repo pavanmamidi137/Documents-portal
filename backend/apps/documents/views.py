@@ -33,6 +33,25 @@ class DocumentViewSet(viewsets.ModelViewSet):
     serializer_class = DocumentListSerializer
     permission_classes = [IsAuthenticated]
 
+    def list(self, request, *args, **kwargs):
+        """Paginated document list, cached ~5s per user + filters.
+
+        Everyone using the same filters gets the same rows, so repeated page
+        loads (across many users) skip the SQL + serialization entirely.
+        Document writes bump the generation, so new uploads/deletes show up
+        right away.
+        """
+        from apps.core.utils import get_or_set_list_cache
+
+        data = get_or_set_list_cache(
+            "list:docs",
+            request.user,
+            request.query_params,
+            5,
+            lambda: super(DocumentViewSet, self).list(request, *args, **kwargs).data,
+        )
+        return Response(data)
+
     def get_queryset(self):
         user = self.request.user
         # Files deleted directly in Cloudinary are hidden from every list until

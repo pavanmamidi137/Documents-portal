@@ -10,5 +10,5 @@ from .models import Document
 
 @receiver([post_save, post_delete], sender=Document)
 def _invalidate_document_caches(*args, **kwargs):
-    """Uploads/deletions must show up in trees and dashboards right away."""
-    invalidate_portal_caches("tree", "dash")
+    """Uploads/deletions must show up in trees, dashboards and lists right away."""
+    invalidate_portal_caches("tree", "dash", "list:docs")

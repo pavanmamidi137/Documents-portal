@@ -81,7 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     clearTokens();
     setUser(null);
-    router.replace("/login");
+    // Land on the public home page (it shows the login button) rather than
+    // dumping users straight onto the login form.
+    router.replace("/");
   }, [router]);
 
   const refreshUser = useCallback(async () => {

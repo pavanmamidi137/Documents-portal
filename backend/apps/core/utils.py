@@ -50,6 +50,42 @@ def invalidate_portal_caches(*groups: str) -> None:
         pass
 
 
+def portal_list_cache_key(group: str, user, params) -> str:
+    """Stable cache key for a paginated list: user + exact query params.
+
+    Includes the group's generation token so writes (which bump it) turn old
+    keys into misses immediately. ``params`` is the request query dict.
+    """
+    import hashlib
+
+    qp = sorted(
+        (k, str(v)) for k, v in (params or {}).items() if k not in ("format",)
+    )
+    digest = hashlib.md5(repr(qp).encode("utf-8")).hexdigest()[:12]
+    return f"{group}:{portal_version(group)}:{user.pk}:{digest}"
+
+
+def get_or_set_list_cache(group, user, params, ttl, factory):
+    """Serve a paginated list response from the portal cache when possible.
+
+    ``factory`` is a zero-arg callable returning the response data dict (e.g.
+    ``super().list(...).data``). Caching is skipped entirely while running the
+    test suite so assertions always see freshly-written rows.
+    """
+    if not portal_caching_enabled():
+        return factory()
+    from django.core.cache import caches
+
+    cache = caches["portal"]
+    key = portal_list_cache_key(group, user, params)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    data = factory()
+    cache.set(key, data, ttl)
+    return data
+
+
 def get_client_ip(request):
     """Best-effort client IP extraction (respecting common proxies)."""
     fwd = request.META.get("HTTP_X_FORWARDED_FOR")

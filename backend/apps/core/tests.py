@@ -99,6 +99,27 @@ class SiteThemeTests(TestCase):
         response = client.put("/api/site-theme/", {"theme": "neon"}, format="json")
         self.assertEqual(response.status_code, 400)
 
+    def test_admin_can_set_custom_color(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.put(
+            "/api/site-theme/", {"theme": "custom:#ff5500"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["theme"], "custom:#ff5500")
+        self.assertEqual(get_site_theme(), "custom:#ff5500")
+        # A fresh anonymous request sees the custom color too.
+        anon = APIClient()
+        self.assertEqual(anon.get("/api/site-theme/").data["theme"], "custom:#ff5500")
+
+    def test_invalid_custom_color_rejected(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        for bad in ("custom:red", "custom:#fff", "custom:", "#ff5500"):
+            response = client.put("/api/site-theme/", {"theme": bad}, format="json")
+            self.assertEqual(response.status_code, 400, msg=f"theme={bad}")
+        self.assertEqual(get_site_theme(), "orange")
+
 
 class AuditLogClearTests(TestCase):
     def setUp(self):

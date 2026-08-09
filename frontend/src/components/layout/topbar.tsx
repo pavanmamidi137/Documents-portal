@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
 import { useAuth } from "@/lib/auth";
-import { useSiteTheme } from "@/lib/site-theme";
+import { customThemeHex, isCustomTheme, useSiteTheme } from "@/lib/site-theme";
 import { cn, getErrorMessage, initials } from "@/lib/utils";
 import { ShareRequestBell } from "@/components/documents/share-request-bell";
 import type { SidebarMode } from "./sidebar";
@@ -47,7 +47,21 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
   const applyTheme = async (key: string) => {
     try {
       await setSiteTheme(key);
-      toast.success(`Portal theme changed to ${themes.find((t) => t.key === key)?.label}.`);
+      toast.success(
+        `Portal theme changed to ${themes.find((t) => t.key === key)?.label ?? "custom color"}.`
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  // Color picker: any color becomes a site-wide theme (custom:#RRGGBB).
+  const customHex = customThemeHex(siteTheme) ?? "#f56d14";
+  const isCustom = isCustomTheme(siteTheme);
+  const applyCustomColor = async (hex: string) => {
+    try {
+      await setSiteTheme(`custom:${hex}`);
+      toast.success("Portal theme changed to your custom color.");
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -145,18 +159,56 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
                   );
                 })}
               </div>
+
+              <DropdownMenuSeparator />
+              {/* Color picker — pick ANY color and the whole portal updates. */}
+              <div className="p-2 pt-1">
+                <p className="px-1 pb-1.5 text-xs font-semibold text-muted-foreground">
+                  Custom color
+                </p>
+                <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border p-2 transition-colors hover:bg-muted">
+                  <input
+                    type="color"
+                    value={customHex}
+                    onChange={(e) => applyCustomColor(e.target.value)}
+                    className="size-8 shrink-0 cursor-pointer appearance-none rounded-full border-0 bg-transparent p-0"
+                    aria-label="Pick a custom portal color"
+                    title="Pick any color — it applies everywhere"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">
+                      {customHex.toUpperCase()}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      Any color, applied everywhere.
+                    </span>
+                  </span>
+                  {isCustom && <Check className="size-3.5 shrink-0 text-primary" />}
+                </label>
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
 
-        {/* Profile icon — clicking it opens the profile page directly. */}
+        {/* Profile icon — shows the uploaded picture, else initials. Clicking it opens the profile page directly. */}
         <button
           onClick={() => router.push("/profile")}
-          className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 ring-1 ring-indigo-500/30 transition-transform hover:scale-105 dark:text-indigo-400"
+          className="flex size-9 items-center justify-center overflow-hidden rounded-full ring-1 ring-indigo-500/30 transition-transform hover:scale-105"
           aria-label="My Profile"
           title="My Profile"
         >
-          {initials(user?.full_name ?? "?")}
+          {user?.avatar_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={user.avatar_url}
+              alt={user?.full_name ?? "My Profile"}
+              className="size-full object-cover"
+            />
+          ) : (
+            <span className="flex size-full items-center justify-center bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 dark:text-indigo-400">
+              {initials(user?.full_name ?? "?")}
+            </span>
+          )}
         </button>
       </div>
     </header>

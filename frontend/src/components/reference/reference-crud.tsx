@@ -220,6 +220,11 @@ export function ReferenceCrud<T extends { id: number }>({
         rowKey={(row) => row.id}
         prefetchNextPage={prefetchNextPage}
         selectable
+        onDeleteKey={(selected, clear) => {
+          // Keyboard Delete mirrors the Delete Selected button (Esc cancels).
+          clear();
+          setBulkDeleteTargets(selected);
+        }}
         selectionBar={(selected, clear) => (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm font-medium">

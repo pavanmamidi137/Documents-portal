@@ -216,8 +216,9 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
           compact && "flex-col gap-2 px-1 py-2"
         )}
       >
+        {/* Logo — clicking it returns to the public home page. */}
         <Link
-          href="/dashboard"
+          href="/"
           onClick={onClose}
           className={cn("flex items-center gap-3", compact && "flex-col gap-1.5")}
         >
