@@ -231,6 +231,12 @@ MAX_DOCUMENT_SIZE_MB = int(
 # AI usage limits (per student, admin-adjustable via AiAccessConfig)
 # ---------------------------------------------------------------------------
 # How many AI resume reviews/asks a student can run per day.
+# Provider API keys are encrypted at rest in the database with AES-GCM. The
+# encryption key MUST be stable across deploys (Render generates a new
+# SECRET_KEY per deploy, so set AI_ENCRYPTION_KEY explicitly in the Render env
+# or stored keys become undecryptable after a redeploy).
+AI_ENCRYPTION_KEY = os.getenv("AI_ENCRYPTION_KEY", "")
+
 AI_DAILY_REQUEST_LIMIT = int(os.getenv("AI_DAILY_REQUEST_LIMIT", "5"))
 # How often the full ATS report may be opened (days).
 ATS_VIEW_INTERVAL_DAYS = int(os.getenv("ATS_VIEW_INTERVAL_DAYS", "10"))

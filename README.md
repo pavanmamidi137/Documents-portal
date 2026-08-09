@@ -98,7 +98,10 @@ Default super admin after `seed_data`: **roll number `admin` / password `Admin@1
 | `ATS_VIEW_INTERVAL_DAYS` | ATS report refresh interval (default 10) |
 | `RESUME_DAILY_UPLOAD_LIMIT` | Resume uploads per day per student (default 2) |
 | `AI_AUTO_ANALYZE_ON_UPLOAD` | Auto-analyze resumes after upload (default 1) |
+| `AI_ENCRYPTION_KEY` | **Required in production** - encrypts AI provider API keys at rest (AES-GCM). Must be stable across deploys; Render's `DJANGO_SECRET_KEY` changes per deploy and is never used. |
 | `ADMIN_ROLL_NUMBER/ADMIN_PASSWORD/...` | Seed-data super admin |
+
+**AI health report** (`python manage.py daily_ai_report`): summarizes the last 24h of AI provider usage (calls, errors, uptime %, fallbacks, token usage and an estimated cost at `ai_cost_per_million_tokens` - a site setting, default $0.50 per 1M tokens) and notifies every Super Admin in-app. Schedule it once a day, e.g. via Render's Cron Jobs running `manage.py daily_ai_report`, or add an admin cron: `0 8 * * * cd /path/to/backend && .venv/bin/python manage.py daily_ai_report`. The same report is shown live on the Admin → AI Management → Usage tab, which also has a **Send report now** button.
 
 **Frontend (`frontend/.env.local`)**:
 

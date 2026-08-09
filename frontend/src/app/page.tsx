@@ -30,6 +30,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
+import { initials } from "@/lib/utils";
 
 const fadeUp = {
   initial: { opacity: 0, y: 20 },
@@ -211,9 +212,24 @@ export default function HomePage() {
               {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
             </button>
             {user ? (
-              <Button render={<Link href="/dashboard" />}>
-                <LayoutDashboard className="size-4" /> Profile
-              </Button>
+              <Link
+                href="/dashboard"
+                title={user?.full_name ?? "Go to dashboard"}
+                className="group relative size-9 overflow-hidden rounded-full ring-2 ring-primary/40 transition-all hover:ring-primary hover:shadow-md hover:shadow-primary/20"
+              >
+                {user?.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={user.avatar_url}
+                    alt={user?.full_name ?? "Profile"}
+                    className="size-full object-cover"
+                  />
+                ) : (
+                  <span className="flex size-full items-center justify-center bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-bold text-indigo-600 dark:text-indigo-400 transition-colors group-hover:from-primary/25 group-hover:to-primary/10 group-hover:text-primary">
+                    {initials(user?.full_name ?? "?")}
+                  </span>
+                )}
+              </Link>
             ) : (
               <Button render={<Link href="/login" />} variant="outline">
                 Sign in <ArrowRight className="size-4" />

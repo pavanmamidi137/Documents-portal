@@ -334,6 +334,158 @@ export interface MyAiUsage {
   }[];
 }
 
+export type AiProviderType =
+  | "OPENAI_COMPATIBLE"
+  | "GEMINI"
+  | "NVIDIA"
+  | "GROQ"
+  | "CEREBRAS";
+
+export type AiHealthStatus =
+  | "HEALTHY"
+  | "DEGRADED"
+  | "RATE_LIMITED"
+  | "UNAVAILABLE"
+  | "DISABLED"
+  | "UNKNOWN";
+
+export interface AiProvider {
+  id: number;
+  name: string;
+  provider_type: AiProviderType;
+  provider_type_label: string;
+  model: string;
+  base_url: string;
+  api_key_masked: string;
+  extra_keys: { id: number; masked: string; note: string }[];
+  priority: number;
+  enabled: boolean;
+  timeout_seconds: number;
+  max_retries: number;
+  purpose: string;
+  health: AiHealthStatus;
+  health_label: string;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_error_type: string;
+  consecutive_failures: number;
+  total_requests: number;
+  total_errors: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AiProviderPayload {
+  name?: string;
+  provider_type?: AiProviderType;
+  model?: string;
+  base_url?: string;
+  api_key?: string;
+  priority?: number;
+  enabled?: boolean;
+  timeout_seconds?: number;
+  max_retries?: number;
+  purpose?: string;
+}
+
+export interface AiTaskConfig {
+  id: number;
+  task: string;
+  task_label: string;
+  primary: number | null;
+  primary_name: string;
+  fallback_1: number | null;
+  fallback_1_name: string;
+  fallback_2: number | null;
+  fallback_2_name: string;
+  fallback_3: number | null;
+  fallback_3_name: string;
+  updated_at: string;
+}
+
+export interface AiSettings {
+  enable_ai: boolean;
+  enable_fallback: boolean;
+  enable_caching: boolean;
+  enable_web_research: boolean;
+  default_timeout_seconds: number;
+  default_max_retries: number;
+  maintenance_mode: boolean;
+  updated_at: string;
+}
+
+export interface AiProviderHealth {
+  id: number;
+  provider: number;
+  provider_name: string;
+  provider_type: string;
+  status: AiHealthStatus;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_error_type: string;
+  failure_count: number;
+  success_count: number;
+  last_used_at: string | null;
+  updated_at: string;
+}
+
+export interface AiRequestLogRow {
+  id: number;
+  provider_used: string;
+  primary_provider: string;
+  task: string;
+  user_name: string;
+  user_roll: string;
+  status: "SUCCESS" | "FAILED";
+  status_label: string;
+  fallback_used: boolean;
+  error_type: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  latency_ms: number;
+  created_at: string;
+}
+
+export interface AiUsageStats {
+  totals: {
+    calls: number;
+    success: number;
+    errors: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    fallback_used: number;
+  };
+  by_provider: { provider_used: string; calls: number; errors: number }[];
+  recent: AiRequestLogRow[];
+}
+
+export interface AiHealthReport {
+  window_days: number;
+  totals: {
+    calls: number;
+    success: number;
+    errors: number;
+    fallbacks: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    estimated_cost: number;
+  };
+  top_error_types: { type: string; count: number }[];
+  providers: Record<
+    string,
+    {
+      calls: number;
+      success: number;
+      errors: number;
+      uptime_pct: number;
+      prompt_tokens: number;
+      completion_tokens: number;
+      estimated_cost: number;
+    }
+  >;
+  empty?: boolean;
+}
+
 export interface Drive {
   id: number;
   company_name: string;

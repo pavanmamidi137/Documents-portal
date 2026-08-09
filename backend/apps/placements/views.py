@@ -485,6 +485,7 @@ class DriveViewSet(ModelViewSet):
                 _EXTRACT_PROMPT, text, max_tokens=2048,
                 reasoning_budget=REASONING_BUDGETS["extract"],
                 usage_callback=_log_ai_usage(request.user, AiUsageLog.Action.EXTRACT),
+                task="DRIVE_EXTRACTION",
             )
         except AiError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
@@ -563,6 +564,7 @@ class DriveViewSet(ModelViewSet):
                 reasoning_budget=REASONING_BUDGETS["chat"],
                 usage_callback=_log_ai_usage(request.user, AiUsageLog.Action.ASK),
                 documents=documents,
+                task="STUDENT_CHAT",
             )
 
         try:
@@ -628,6 +630,7 @@ class DriveViewSet(ModelViewSet):
                 reasoning_budget=REASONING_BUDGETS["chat"],
                 usage_callback=_log_ai_usage(request.user, AiUsageLog.Action.CHAT),
                 documents=documents,
+                task="STUDENT_CHAT",
             )
 
         try:

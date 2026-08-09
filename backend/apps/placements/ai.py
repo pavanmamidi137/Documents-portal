@@ -38,6 +38,20 @@ from openai import (
 
 logger = logging.getLogger(__name__)
 
+# The AI Router (configured providers) takes over as soon as an admin has
+# configured at least one provider; until then this module keeps using the
+# environment-configured NVIDIA client so nothing breaks out of the box.
+from .ai_router import AIService, AIServiceUnavailable, generate_text  # noqa: E402
+from .ai_models import AIProvider  # noqa: E402
+
+
+def _router_enabled() -> bool:
+    """True once at least one AI provider has been configured by the admin."""
+    try:
+        return AIProvider.objects.filter(enabled=True).exists()
+    except Exception:  # pragma: no cover - table may not exist yet
+        return False
+
 BASE_URL = os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
 DEFAULT_MODEL = os.environ.get("NVIDIA_MODEL", "nvidia/nemotron-3-nano-30b-a3b")
 FALLBACK_MODELS = [
@@ -95,7 +109,7 @@ def _chat_completion_inner(
     model: str | None = None,
     api_key: str | None = None,
 ) -> str:
-    """One raw chat-completion call through the OpenAI SDK.
+    """Legacy NVIDIA path used only when no providers are configured.
 
     ``documents`` (a list of dicts, e.g. [{"content": "..."}]) is sent to the
     RAG NIM as grounding. ``model``/``api_key`` override the defaults (used by
@@ -201,15 +215,35 @@ def _chat_completion(
     reasoning_budget: int = 0,
     temperature: float = 0.3,
     documents: list[str] | None = None,
+    task: str = "GENERAL",
 ) -> str:
-    """Call the AI and return the answer text (RAG-aware).
+    """Route through the AI Router when providers are configured, otherwise
+    the legacy NVIDIA client (RAG-aware).
 
-    When ``documents`` (plain strings) are provided AND a separate
-    ``NVIDIA_RAG_API_KEY`` is configured, the hosted RAG NIM grounds the answer
-    on those documents. If the RAG service is unavailable or misconfigured, the
-    same documents are injected into the prompt of the regular 30B model, so
-    the answer is always grounded in the provided material.
+    ``task`` selects the provider chain in the router (STUDENT_CHAT,
+    DRIVE_EXTRACTION, RESUME_ANALYSIS...). When ``documents`` (plain strings)
+    are provided AND a separate ``NVIDIA_RAG_API_KEY`` is configured, the
+    hosted RAG NIM grounds the answer on those documents. If the RAG service is
+    unavailable or misconfigured, the same documents are injected into the
+    prompt of the regular 30B model, so the answer is always grounded in the
+    provided material.
     """
+    if _router_enabled():
+        try:
+            return generate_text(
+                task=task,
+                system_prompt=system_prompt,
+                user_text=user_text,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                reasoning_budget=reasoning_budget,
+                documents=documents,
+                user=None,
+                usage_callback=usage_callback,
+            )
+        except AIServiceUnavailable as exc:
+            raise AiError(str(exc)) from exc
+
     rag_key = os.environ.get("NVIDIA_RAG_API_KEY") if documents else None
     if rag_key:
         try:
@@ -282,11 +316,13 @@ def ai_json(
     usage_callback=None,
     reasoning_budget: int = 0,
     documents: list[str] | None = None,
+    task: str = "GENERAL",
 ) -> dict:
     """Ask the AI for a JSON object. Returns the parsed dict (never raises).
 
     ``documents`` (optional) grounds the answer on the given material via the
-    RAG service (or prompt injection when RAG is not configured).
+    RAG service (or prompt injection when RAG is not configured). ``task``
+    selects the provider chain (DRIVE_EXTRACTION, RESUME_ANALYSIS, ...).
     """
     raw = _chat_completion(
         system_prompt,
@@ -296,6 +332,7 @@ def ai_json(
         reasoning_budget=reasoning_budget,
         temperature=0.3,
         documents=documents,
+        task=task,
     )
     return _extract_json_object(raw)
 
@@ -307,11 +344,13 @@ def ai_plain_text(
     usage_callback=None,
     reasoning_budget: int = 0,
     documents: list[str] | None = None,
+    task: str = "GENERAL",
 ) -> str:
     """Ask the AI for a plain-text answer (chat assistant).
 
     ``documents`` (optional) grounds the answer on the given material via the
-    RAG service (or prompt injection when RAG is not configured).
+    RAG service (or prompt injection when RAG is not configured). ``task``
+    selects the provider chain (STUDENT_CHAT, DRIVE_SUMMARY, ...).
     """
     return _chat_completion(
         system_prompt,
@@ -321,4 +360,5 @@ def ai_plain_text(
         reasoning_budget=reasoning_budget,
         temperature=0.7,
         documents=documents,
+        task=task,
     )

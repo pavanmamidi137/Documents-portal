@@ -74,6 +74,7 @@ class Notification(models.Model):
         ANNOUNCEMENT = "ANNOUNCEMENT", "Announcement"
         DRIVE = "DRIVE", "Placement Drive"
         AI_RESUME = "AI_RESUME", "AI Resume Review"
+        AI_REPORT = "AI_REPORT", "AI Health Report"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

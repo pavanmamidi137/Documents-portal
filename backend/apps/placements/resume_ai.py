@@ -161,6 +161,7 @@ def refresh_matches_for_drive(drive, actor=None, limit=None) -> int:
                 "Score this resume against this drive.", max_tokens=400,
                 usage_callback=usage,
                 documents=[_drive_brief(drive)],
+                task="RESUME_ANALYSIS",
             )
         except AiError:
             continue  # best-effort - one failure doesn't stop the refresh
@@ -272,6 +273,7 @@ def refresh_all_matches(actor=None, limit=None) -> int:
                 "Score this resume against each drive.", max_tokens=1600,
                 usage_callback=usage,
                 documents=[drives_brief],
+                task="RESUME_ANALYSIS",
             )
         except AiError:
             continue
@@ -363,7 +365,8 @@ def analyze_resume(resume, actor) -> dict:
 
     try:
         quality = ai_json(
-            _QUALITY_PROMPT, brief, max_tokens=1400, usage_callback=usage
+            _QUALITY_PROMPT, brief, max_tokens=1400, usage_callback=usage,
+            task="RESUME_ANALYSIS",
         )
     except AiError:
         raise
@@ -398,6 +401,7 @@ def analyze_resume(resume, actor) -> dict:
                     "Score this resume against each drive.", max_tokens=1600,
                     usage_callback=usage,
                     documents=[drives_brief],
+                    task="RESUME_ANALYSIS",
                 )
             except AiError:
                 raise
