@@ -119,8 +119,8 @@ class AvatarView(APIView):
         image = request.FILES.get("file")
         if not image:
             raise ValidationError({"file": "A profile picture is required."})
-        if image.size > 5 * 1024 * 1024:
-            raise ValidationError({"file": "Profile picture exceeds the 5MB size limit."})
+        if image.size > 2 * 1024 * 1024:
+            raise ValidationError({"file": "Profile picture exceeds the 2MB size limit."})
         name = (image.name or "").lower()
         ext = f".{name.rpartition('.')[2]}" if "." in name else ""
         if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:

@@ -633,6 +633,25 @@ class ProfileUpdateTests(TestCase):
         self.assertIn("branch_code", me.data)
         self.assertEqual(me.data["branch_name"], "IT")
 
+    @patch("cloudinary.uploader.upload")
+    def test_avatar_rejects_files_over_2mb(self, mock_upload):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        mock_upload.return_value = {"secure_url": "https://x.example/a.jpg"}
+        client = self._client()
+        big = SimpleUploadedFile(
+            "pic.jpg", b"x" * (2 * 1024 * 1024 + 1), content_type="image/jpeg"
+        )
+        response = client.post("/api/auth/me/avatar/", {"file": big}, format="multipart")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("2MB", str(response.data))
+        mock_upload.assert_not_called()
+        # Small files upload fine (mocked) and store the returned URL.
+        small = SimpleUploadedFile("pic.jpg", b"tiny", content_type="image/jpeg")
+        response = client.post("/api/auth/me/avatar/", {"file": small}, format="multipart")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["avatar_url"], "https://x.example/a.jpg")
+
 
 class LoginTests(TestCase):
     def setUp(self):

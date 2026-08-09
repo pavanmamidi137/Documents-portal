@@ -328,6 +328,8 @@ function ThemePickerCard() {
   );
 }
 
+const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
+
 function AvatarCard() {
   const { user, refreshUser } = useAuth();
   const [uploading, setUploading] = useState(false);
@@ -340,6 +342,11 @@ function AvatarCard() {
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
+    if (file.size > MAX_AVATAR_SIZE) {
+      toast.error("Profile picture must be 2MB or smaller.");
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     setUploading(true);
     try {
       const form = new FormData();
@@ -375,6 +382,7 @@ function AvatarCard() {
         type="file"
         accept=".jpg,.jpeg,.png,.webp,.gif"
         className="hidden"
+        title="Max 2MB"
         onChange={(e) => upload(e.target.files?.[0])}
       />
       <div className="group relative">
