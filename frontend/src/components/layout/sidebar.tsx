@@ -362,7 +362,13 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
       {/* Mobile overlay */}
       <AnimatePresence>
         {open && (
-          <div className="fixed inset-0 z-50 lg:hidden">
+          // No data-sidebar-swipe on the backdrop container: swipes starting
+          // on the backdrop are handled by the global hook (swipe left closes).
+          // Only the panel below opts out so framer-motion's own drag handles it.
+          <div
+            className="fixed inset-0 z-50 lg:hidden"
+            style={{ touchAction: "pan-y" }}
+          >
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -371,6 +377,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
               onClick={onClose}
             />
             <motion.aside
+              data-sidebar-swipe
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}

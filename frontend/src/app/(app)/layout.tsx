@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import { Sidebar, type SidebarMode } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { useAuth } from "@/lib/auth";
+import { useSwipe } from "@/lib/use-swipe";
 
 const SIDEBAR_STORAGE_KEY = "portal_sidebar_mode";
 
@@ -41,6 +42,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       /* ignore */
     }
   };
+
+  // Mobile swipe gestures (touch only): drag right from the left edge to open
+  // the sidebar; when it is open, drag left over the content to close it.
+  useSwipe({
+    onSwipeRight: () => setSidebarOpen(true),
+    onSwipeLeft: () => sidebarOpen && setSidebarOpen(false),
+    edgeOnlyLeft: !sidebarOpen,
+    edgeWidth: 44,
+  });
 
   if (loading || !user) {
     return (
