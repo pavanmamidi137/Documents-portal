@@ -10,10 +10,12 @@ import cloudinary
 import cloudinary.api
 import cloudinary.uploader
 from django.conf import settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.core.utils import log_audit, slugify
+from .compress import compress_file
 
 # Configure the SDK once at import time (env values are loaded by settings).
 cloudinary.config(
@@ -88,10 +90,12 @@ def validate_document(document_file) -> None:
                 {"file": f"The file is not a valid {ext.upper().lstrip('.')} document."}
             )
 
-    max_bytes = settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024
-    if document_file.size > max_bytes:
+    # The input ceiling is above the post-compression cap so large files still
+    # get a chance to be compressed down to size in ``upload_document``.
+    input_ceiling = settings.DOCUMENT_MAX_INPUT_MB * 1024 * 1024
+    if document_file.size > input_ceiling:
         raise ValidationError(
-            {"file": f"File exceeds the {settings.MAX_DOCUMENT_SIZE_MB}MB size limit."}
+            {"file": f"File exceeds the {settings.DOCUMENT_MAX_INPUT_MB}MB upload ceiling."}
         )
 
 
@@ -108,9 +112,49 @@ def build_folder(branch, section, semester, category, subject) -> str:
     return "/".join(parts)
 
 
-def upload_document(document_file, folder: str) -> dict:
-    """Upload a validated document to Cloudinary and return its references."""
+def upload_document(document_file, folder: str, target_bytes: int | None = None) -> dict:
+    """Upload a validated document to Cloudinary and return its references.
+
+    Large PDFs and Office files are compressed automatically before upload.
+    When ``target_bytes`` is set (resumes: 500KB), the file is rejected after
+    compression if it still exceeds that cap.
+    """
     validate_document(document_file)
+    # Documents compress when larger than the general threshold; resumes (which
+    # pass a smaller ``target_bytes``) are compressed as soon as they exceed it.
+    compress_over = settings.DOCUMENT_COMPRESS_AFTER_BYTES
+    if target_bytes:
+        compress_over = min(compress_over, target_bytes)
+    if document_file.size > compress_over:
+        compressed = compress_file(document_file)
+        if compressed is not None:
+            document_file = SimpleUploadedFile(
+                document_file.name,
+                compressed,
+                content_type=getattr(document_file, "content_type", "") or "",
+            )
+    # Post-compression size cap: resumes must fit their 500KB target;
+    # documents must fit the regular size limit.
+    cap_bytes = (
+        target_bytes
+        if target_bytes is not None
+        else settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024
+    )
+    if document_file.size > cap_bytes:
+        if target_bytes is not None:
+            raise ValidationError({
+                "file": (
+                    f"The file is still larger than {target_bytes // 1024}KB "
+                    "even after automatic compression (where supported). "
+                    "Please reduce the file size and try again."
+                )
+            })
+        raise ValidationError({
+            "file": (
+                f"File still exceeds the {settings.MAX_DOCUMENT_SIZE_MB}MB size "
+                "limit even after automatic compression."
+            )
+        })
     try:
         result = cloudinary.uploader.upload(
             document_file,

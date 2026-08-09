@@ -259,6 +259,89 @@ class DocumentApiTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(Document.objects.first().file_name, "slides.pptx")
 
+    def test_large_docx_compressed_on_upload(self, mock_delete, mock_upload):
+        import io
+        import zipfile
+
+        from django.conf import settings
+
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/report.docx",
+            "public_id": "documents/cse/a/3-1/notes/dbms/report123",
+        }
+        # A >2MB DOCX-style zip stored without compression (repetitive content
+        # re-zips to a fraction of its size).
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+            z.writestr("word/document.xml", b"repeat this text " * 400_000)
+        original = buf.getvalue()
+        self.assertGreater(len(original), settings.DOCUMENT_COMPRESS_AFTER_BYTES)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.post(
+            "/api/documents/",
+            {
+                "title": "Big Notes",
+                "file": SimpleUploadedFile(
+                    "report.docx",
+                    original,
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+                "branch": self.branch.id,
+                "section": self.section.id,
+                "semester": self.semester.id,
+                "category": self.category.id,
+                "subject": self.subject.id,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        stored = Document.objects.first()
+        self.assertIsNotNone(stored)
+        self.assertLess(stored.file_size, len(original))
+        # Cloudinary receives the compressed bytes.
+        sent = mock_upload.call_args.args[0]
+        self.assertLess(sent.size, len(original))
+
+    def test_over_limit_docx_rescued_by_compression(self, mock_delete, mock_upload):
+        import io
+        import zipfile
+
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/report.docx",
+            "public_id": "documents/cse/a/3-1/notes/dbms/report456",
+        }
+        # A 25MB stored-zip DOCX sits above the 20MB limit, but re-zips to a
+        # tiny file, so compression rescues it.
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+            z.writestr("word/document.xml", b"a" * 25_000_000)
+        original = buf.getvalue()
+        self.assertGreater(len(original), 20 * 1024 * 1024)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.post(
+            "/api/documents/",
+            {
+                "title": "Huge Notes",
+                "file": SimpleUploadedFile(
+                    "big.docx",
+                    original,
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+                "branch": self.branch.id,
+                "section": self.section.id,
+                "semester": self.semester.id,
+                "category": self.category.id,
+                "subject": self.subject.id,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        stored = Document.objects.first()
+        self.assertIsNotNone(stored)
+        self.assertLess(stored.file_size, 20 * 1024 * 1024)
+
     def test_unsupported_format_rejected(self, mock_delete, mock_upload):
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")

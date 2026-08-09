@@ -22,6 +22,7 @@ import {
   ALLOWED_UPLOAD_EXTENSIONS,
   getDocumentTypeMeta,
   isAllowedDocument,
+  MAX_DOCUMENT_INPUT_MB,
   MAX_DOCUMENT_SIZE_MB,
   UPLOAD_UNITS,
 } from "@/lib/document-types";
@@ -106,8 +107,8 @@ export function UploadDocumentDialog({
       setFile(null);
       return;
     }
-    if (f.size > MAX_DOCUMENT_SIZE_MB * 1024 * 1024) {
-      setFileError(`File exceeds the ${MAX_DOCUMENT_SIZE_MB} MB size limit.`);
+    if (f.size > MAX_DOCUMENT_INPUT_MB * 1024 * 1024) {
+      setFileError(`File exceeds the ${MAX_DOCUMENT_INPUT_MB} MB upload ceiling.`);
       setFile(null);
       return;
     }
@@ -597,7 +598,7 @@ export function UploadDocumentDialog({
                   <FileUp className="size-6 text-muted-foreground" />
                   <p className="text-sm font-medium">Click to choose a document</p>
                   <p className="text-xs text-muted-foreground">
-                    PDF, PPT, PPTX, DOC, DOCX or TXT · max {MAX_DOCUMENT_SIZE_MB} MB
+                    PDF, PPT, PPTX, DOC, DOCX or TXT · compressed to fit under {MAX_DOCUMENT_SIZE_MB} MB
                   </p>
                 </>
               )}

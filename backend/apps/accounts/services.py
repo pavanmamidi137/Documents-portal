@@ -432,8 +432,18 @@ def _resume_folder(student: User) -> str:
     return f"resumes/{branch}/{section}"
 
 
+# Resumes are compressed automatically on upload; anything still larger than
+# this after compression is rejected.
+RESUME_TARGET_BYTES = 500 * 1024  # 500KB
+
+
 def _validate_resume_file(document_file) -> None:
-    """Reject non-PDF/DOC/DOCX files and files over the size limit."""
+    """Reject non-PDF/DOC/DOCX files and files over the input size limit.
+
+    The input cap is generous so large files still get a chance to be
+    compressed; the 500KB target is enforced after compression in
+    ``upload_document``.
+    """
     if not document_file:
         raise ValidationError({"file": "A resume file is required."})
     if document_file.size <= 0:
@@ -444,7 +454,7 @@ def _validate_resume_file(document_file) -> None:
         raise ValidationError({"file": "Only PDF, DOC or DOCX resume files are allowed."})
     max_bytes = 10 * 1024 * 1024
     if document_file.size > max_bytes:
-        raise ValidationError({"file": "Resume exceeds the 10MB size limit."})
+        raise ValidationError({"file": "Resume exceeds the 10MB input size limit."})
 
 
 @transaction.atomic
@@ -471,7 +481,9 @@ def upload_resume(student: User, resume_file, request=None) -> Resume:
             )
         })
     folder = _resume_folder(student)
-    uploaded = upload_document(resume_file, folder)
+    # PDFs/DOCX over 2MB are compressed automatically; after compression the
+    # resume must fit within the 500KB target.
+    uploaded = upload_document(resume_file, folder, target_bytes=RESUME_TARGET_BYTES)
 
     resume, created = Resume.objects.get_or_create(student=student)
     if not created and resume.public_id and resume.public_id != uploaded["public_id"]:

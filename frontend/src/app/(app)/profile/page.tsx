@@ -330,6 +330,51 @@ function ThemePickerCard() {
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
 
+/**
+ * Downscale + re-encode an oversized image so it fits under the 2MB limit.
+ * Two scale-down passes (1024px then 512px) with progressively lower JPEG
+ * quality. PNG transparency is flattened onto a white background. When the
+ * image is already small enough it is returned untouched.
+ */
+async function compressImage(file: File): Promise<{ blob: Blob; compressed: boolean }> {
+  if (file.size <= MAX_AVATAR_SIZE) return { blob: file, compressed: false };
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Could not read image"));
+      image.src = objectUrl;
+    });
+    if (!img.naturalWidth || !img.naturalHeight) return { blob: file, compressed: false };
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { blob: file, compressed: false };
+    let smallest: Blob | null = null;
+    for (const maxEdge of [1024, 512]) {
+      const scale = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
+      const width = Math.max(1, Math.round(img.naturalWidth * scale));
+      const height = Math.max(1, Math.round(img.naturalHeight * scale));
+      canvas.width = width;
+      canvas.height = height;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+      for (const quality of [0.85, 0.7, 0.5, 0.35]) {
+        const blob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/jpeg", quality)
+        );
+        if (!blob) continue;
+        if (!smallest || blob.size < smallest.size) smallest = blob;
+        if (blob.size <= MAX_AVATAR_SIZE) return { blob, compressed: true };
+      }
+    }
+    return { blob: smallest ?? file, compressed: true };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 function AvatarCard() {
   const { user, refreshUser } = useAuth();
   const [uploading, setUploading] = useState(false);
@@ -342,17 +387,20 @@ function AvatarCard() {
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
-    if (file.size > MAX_AVATAR_SIZE) {
-      toast.error("Profile picture must be 2MB or smaller.");
-      if (inputRef.current) inputRef.current.value = "";
-      return;
-    }
     setUploading(true);
     try {
+      const { blob, compressed } = await compressImage(file);
       const form = new FormData();
-      form.append("file", file);
+      form.append(
+        "file",
+        compressed ? new File([blob], "avatar.jpg", { type: "image/jpeg" }) : file
+      );
       await http.upload("/auth/me/avatar/", form);
-      toast.success("Profile picture updated.");
+      toast.success(
+        compressed
+          ? "Photo was over 2MB — compressed and uploaded."
+          : "Profile picture updated."
+      );
       await refreshUser();
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -425,6 +473,9 @@ function AvatarCard() {
           </Button>
         )}
       </div>
+      <p className="text-[11px] text-muted-foreground">
+        Photos over 2MB are compressed automatically before uploading.
+      </p>
     </div>
   );
 }

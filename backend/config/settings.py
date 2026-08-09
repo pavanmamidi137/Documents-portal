@@ -226,6 +226,13 @@ CLOUDINARY = {
 MAX_DOCUMENT_SIZE_MB = int(
     os.getenv("MAX_DOCUMENT_SIZE_MB", os.getenv("MAX_PDF_SIZE_MB", "20"))
 )
+# Hard input ceiling before compression (generous, so large files can still be
+# compressed down to fit under MAX_DOCUMENT_SIZE_MB).
+DOCUMENT_MAX_INPUT_MB = int(os.getenv("DOCUMENT_MAX_INPUT_MB", "40"))
+# Files larger than this are compressed automatically before upload.
+DOCUMENT_COMPRESS_AFTER_BYTES = (
+    int(os.getenv("DOCUMENT_COMPRESS_AFTER_MB", "2")) * 1024 * 1024
+)
 
 # ---------------------------------------------------------------------------
 # AI usage limits (per student, admin-adjustable via AiAccessConfig)

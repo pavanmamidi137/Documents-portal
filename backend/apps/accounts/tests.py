@@ -1152,6 +1152,20 @@ class ResumeTests(TestCase):
         ).data["results"]
         self.assertEqual({r["roll_number"] for r in pending}, {"21IT01"})
 
+    def test_resume_over_500kb_rejected_after_compression(self):
+        from rest_framework.exceptions import ValidationError
+
+        # A PDF that PyMuPDF cannot decode gets no compression, so it must be
+        # rejected once it is still over the 500KB target.
+        big = SimpleUploadedFile(
+            "resume.pdf",
+            b"%PDF-1.4 fake resume content " + b"x" * (600 * 1024),
+            content_type="application/pdf",
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            services.upload_resume(self.student, big)
+        self.assertIn("500KB", str(ctx.exception))
+
     # -- review workflow -----------------------------------------------------
 
     @patch("apps.documents.services.cloudinary.uploader.upload")

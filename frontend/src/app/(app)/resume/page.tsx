@@ -674,7 +674,7 @@ export default function ResumePage() {
         )}
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
-          Only PDF, DOC and DOCX files up to 10MB are accepted.
+          PDF, DOC or DOCX. PDFs over 500KB are compressed automatically before upload.
         </p>
       </motion.div>
 

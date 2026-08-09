@@ -11,6 +11,9 @@ import {
 export const ALLOWED_UPLOAD_EXTENSIONS = ["pdf", "ppt", "pptx", "doc", "docx", "txt"] as const;
 
 export const MAX_DOCUMENT_SIZE_MB = 20;
+// Files larger than this are rejected up front; anything below is compressed
+// server-side (PDF/PPTX/DOCX) to fit under MAX_DOCUMENT_SIZE_MB.
+export const MAX_DOCUMENT_INPUT_MB = 40;
 
 /** Unit choices shown in the upload dialog; the chosen unit fills the title. */
 export const UPLOAD_UNITS = ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Unit 5"] as const;
