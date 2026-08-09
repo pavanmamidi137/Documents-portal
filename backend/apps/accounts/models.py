@@ -85,7 +85,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=FacultyAccess.BOTH, blank=True,
     )
     passout_year = models.PositiveSmallIntegerField(
-        null=True, blank=True,
+        null=True, blank=True, db_index=True,
         help_text="Batch pass-out year (e.g. 2025) - shown next to every student.",
     )
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.STUDENT)

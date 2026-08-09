@@ -55,6 +55,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "django.middleware.gzip.GZipMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -131,6 +132,29 @@ else:
     }
 
 AUTH_USER_MODEL = "accounts.User"
+
+# ---------------------------------------------------------------------------
+# Cache - per-process LocMem with a generous entry budget
+# ---------------------------------------------------------------------------
+# Heavy read endpoints (meta / dashboard / document tree) cache their JSON
+# here for a few seconds and invalidate via signals on writes, so page loads
+# stay fast no matter how many users are online. LocMem is per-process, which
+# is fine: each Gunicorn worker serves many users and holds its own cache.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "placemate-default",
+        "TIMEOUT": 60,
+    },
+    # Separate alias for response caching so throttles (which share the
+    # default cache) are never evicted or cleared by portal cache writes.
+    "portal": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "placemate-portal",
+        "TIMEOUT": 60,
+        "OPTIONS": {"MAX_ENTRIES": 2000},
+    },
+}
 
 # ---------------------------------------------------------------------------
 # DRF + JWT

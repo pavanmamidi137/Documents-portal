@@ -3,11 +3,51 @@
 import csv
 import io
 import re
+import sys
 import unicodedata
+import uuid
 
 from django.http import HttpResponse
 
 from .models import AuditLog, Notification
+
+
+# ---------------------------------------------------------------------------
+# Response caching (portal cache alias)
+# ---------------------------------------------------------------------------
+# Heavy read endpoints (meta / dashboard / document tree) cache their JSON in
+# the ``portal`` cache alias for a few seconds. Writes bump a per-group
+# "generation" token, which changes every cached key for that group - an
+# O(1) invalidation that works on any cache backend (LocMem here).
+
+_PORTAL_CACHE_TIMEOUT = 60
+
+
+def portal_caching_enabled() -> bool:
+    """Caching is disabled while running the test suite so assertions always
+    see freshly-written rows (the cache is per-process and survives between
+    tests)."""
+    return "test" not in sys.argv
+
+
+def portal_version(group: str) -> str:
+    """Opaque generation token for a cached group. Bumping it (via
+    ``invalidate_portal_caches``) makes every old key in that group a miss."""
+    from django.core.cache import caches
+
+    return caches["portal"].get(f"gen:{group}") or "0"
+
+
+def invalidate_portal_caches(*groups: str) -> None:
+    """Drop every cached response in the given groups. Never raises."""
+    try:
+        from django.core.cache import caches
+
+        cache = caches["portal"]
+        for group in groups:
+            cache.set(f"gen:{group}", uuid.uuid4().hex, _PORTAL_CACHE_TIMEOUT)
+    except Exception:
+        pass
 
 
 def get_client_ip(request):

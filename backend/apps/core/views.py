@@ -20,7 +20,26 @@ class DashboardView(APIView):
     """Role-aware dashboard statistics."""
 
     def get(self, request):
+        """Role-aware dashboard stats, cached ~15s per user.
+
+        The dashboard runs several aggregate COUNT queries plus recent-item
+        serialization; under many concurrent users that is the most expensive
+        read on the site. Document/resume writes bump the generation so the
+        next load recomputes - users never wait for stale data.
+        """
+        from apps.core.utils import portal_caching_enabled, portal_version
+
         user = request.user
+        cache = None
+        if portal_caching_enabled():
+            from django.core.cache import caches
+
+            cache = caches["portal"]
+            key = f"dash:{portal_version('dash')}:{user.pk}"
+            cached = cache.get(key)
+            if cached is not None:
+                return Response(cached)
+
         if user.is_super_admin:
             data = self._super_admin_stats()
         elif user.is_cr:
@@ -29,6 +48,8 @@ class DashboardView(APIView):
             data = self._faculty_stats(user)
         else:
             data = self._student_stats(user)
+        if cache is not None:
+            cache.set(key, data, 15)
         return Response(data)
 
     @staticmethod

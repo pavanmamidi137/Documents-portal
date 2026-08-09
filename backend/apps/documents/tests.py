@@ -470,8 +470,8 @@ class DocumentCheckFilesTests(TestCase):
         return client
 
     def test_check_files_flags_deleted_and_returns_id(self):
-        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
-            mock_exists.return_value = False
+        with patch("apps.documents.services.cloudinary_files_status") as mock_status:
+            mock_status.return_value = {self.doc.public_id: False}
             response = self._client().get("/api/documents/check-files/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["missing_ids"], [self.doc.id])
@@ -479,16 +479,16 @@ class DocumentCheckFilesTests(TestCase):
         self.assertTrue(self.doc.is_missing)
 
     def test_check_files_keeps_existing_files(self):
-        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
-            mock_exists.return_value = True
+        with patch("apps.documents.services.cloudinary_files_status") as mock_status:
+            mock_status.return_value = {self.doc.public_id: True}
             response = self._client().get("/api/documents/check-files/")
         self.assertEqual(response.data["missing_ids"], [])
         self.doc.refresh_from_db()
         self.assertFalse(self.doc.is_missing)
 
     def test_check_files_unknown_result_leaves_flag_alone(self):
-        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
-            mock_exists.return_value = None  # auth/network failure
+        with patch("apps.documents.services.cloudinary_files_status") as mock_status:
+            mock_status.return_value = None  # auth/network failure
             response = self._client().get("/api/documents/check-files/")
         self.assertEqual(response.data["missing_ids"], [])
         self.doc.refresh_from_db()
@@ -516,8 +516,8 @@ class DocumentCheckFilesTests(TestCase):
         self.doc.is_missing = True
         self.doc.file_checked_at = timezone.now() - timedelta(days=1)
         self.doc.save()
-        with patch("apps.documents.services.cloudinary_file_exists") as mock_exists:
-            mock_exists.return_value = True
+        with patch("apps.documents.services.cloudinary_files_status") as mock_status:
+            mock_status.return_value = {self.doc.public_id: True}
             response = self._client().get("/api/documents/check-files/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["restored_ids"], [self.doc.id])

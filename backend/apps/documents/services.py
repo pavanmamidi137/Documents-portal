@@ -155,6 +155,33 @@ def cloudinary_file_exists(public_id: str):
         return None
 
 
+def cloudinary_files_status(public_ids):
+    """Bulk existence check for raw files (Cloudinary admin API).
+
+    Returns {public_id: True/False} for the given ids using one batched
+    request per 100 ids instead of a separate admin API round-trip per file.
+    Returns None when the check itself failed (auth/network) - callers must
+    not mark files as missing when the answer is unknown.
+    """
+    if not public_ids:
+        return {}
+    try:
+        existing = set()
+        # resources_by_ids returns only resources that still exist; deleted
+        # ids are simply absent from the response. Max 100 ids per call.
+        for start in range(0, len(public_ids), 100):
+            chunk = public_ids[start : start + 100]
+            result = cloudinary.api.resources_by_ids(chunk, resource_type="raw")
+            existing.update(
+                r["public_id"]
+                for r in result.get("resources", [])
+                if r.get("public_id")
+            )
+        return {pid: pid in existing for pid in public_ids}
+    except Exception:
+        return None
+
+
 def signed_raw_url(public_id: str, attachment: bool = False) -> str:
     """Cloudinary delivery URL for a raw file, signed with the API secret.
 

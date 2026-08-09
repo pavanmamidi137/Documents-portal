@@ -334,15 +334,32 @@ class DocumentViewSet(viewsets.ModelViewSet):
         between levels is instant - no per-level fetches. Students are already
         scoped to their own branch + section by ``get_queryset``.
         """
+        from apps.core.utils import portal_caching_enabled, portal_version
+
+        cache = None
+        if portal_caching_enabled():
+            from django.core.cache import caches
+
+            cache = caches["portal"]
+            key = f"tree:{portal_version('tree')}:{request.user.pk}"
+            cached = cache.get(key)
+            if cached is not None:
+                return Response(cached)
+
         base = self.get_queryset()
         total = base.count()
         qs = base.order_by("-created_at")[:1000]
         serializer = DocumentListSerializer(qs, many=True)
-        return Response({
+        data = {
             "count": len(serializer.data),
             "total": total,  # lets the UI hint when the cap kicked in
             "results": serializer.data,
-        })
+        }
+        if cache is not None:
+            # Short TTL: uploads/deletes bump the generation and drop this
+            # entry anyway, and file-missing flags refresh within seconds.
+            cache.set(key, data, 15)
+        return Response(data)
 
     @action(detail=False, methods=["get"], url_path="check-files", permission_classes=[IsAuthenticated])
     def check_files(self, request):
@@ -359,7 +376,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
         from django.utils import timezone
 
-        from .services import cloudinary_file_exists
+        from .services import cloudinary_files_status
 
         cutoff = timezone.now() - timedelta(seconds=60)
         visible = self.get_queryset().filter(
@@ -369,13 +386,16 @@ class DocumentViewSet(viewsets.ModelViewSet):
         stale_missing = Document.objects.filter(
             is_missing=True, file_checked_at__lt=cutoff
         )[:50]
+        candidates = list(visible) + list(stale_missing)
+        # One batched Cloudinary call per 100 ids - not one round-trip per file.
+        statuses = cloudinary_files_status([d.public_id for d in candidates])
+        if statuses is None:
+            return Response({"checked": 0, "missing_ids": [], "restored_ids": []})
         missing_ids: list[int] = []
         restored_ids: list[int] = []
         checked = 0
-        for doc in list(visible) + list(stale_missing):
-            exists = cloudinary_file_exists(doc.public_id)
-            if exists is None:
-                continue
+        for doc in candidates:
+            exists = statuses.get(doc.public_id)
             checked += 1
             now = timezone.now()
             if not exists:

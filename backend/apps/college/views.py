@@ -300,24 +300,44 @@ class MetaView(viewsets.ViewSet):
     """Aggregated reference data for upload forms and student browsing."""
 
     def list(self, request):
-        return Response(
-            {
-                "branches": BranchSerializer(
-                    _branch_counts(Branch.objects.all()), many=True
-                ).data,
-                "sections": SectionSerializer(
-                    _section_counts(Section.objects.select_related("branch").all()),
-                    many=True,
-                ).data,
-                "semesters": SemesterSerializer(
-                    _semester_counts(Semester.objects.all()), many=True
-                ).data,
-                "categories": CategorySerializer(
-                    _category_counts(Category.objects.all()), many=True
-                ).data,
-                "subjects": SubjectSerializer(
-                    _subject_counts(Subject.objects.select_related("semester", "branch").all()),
-                    many=True,
-                ).data,
-            }
-        )
+        """Aggregated reference data, cached for 30s across all users.
+
+        Every upload form loads this on open, so thousands of users hitting
+        it at once would otherwise hammer the DB with the same COUNT queries.
+        The college signals bump the generation on any structure change, so
+        new branches/sections/subjects appear almost immediately.
+        """
+        from apps.core.utils import portal_caching_enabled, portal_version
+
+        cache = None
+        if portal_caching_enabled():
+            from django.core.cache import caches
+
+            cache = caches["portal"]
+            key = f"meta:{portal_version('meta')}"
+            cached = cache.get(key)
+            if cached is not None:
+                return Response(cached)
+
+        data = {
+            "branches": BranchSerializer(
+                _branch_counts(Branch.objects.all()), many=True
+            ).data,
+            "sections": SectionSerializer(
+                _section_counts(Section.objects.select_related("branch").all()),
+                many=True,
+            ).data,
+            "semesters": SemesterSerializer(
+                _semester_counts(Semester.objects.all()), many=True
+            ).data,
+            "categories": CategorySerializer(
+                _category_counts(Category.objects.all()), many=True
+            ).data,
+            "subjects": SubjectSerializer(
+                _subject_counts(Subject.objects.select_related("semester", "branch").all()),
+                many=True,
+            ).data,
+        }
+        if cache is not None:
+            cache.set(key, data, 30)
+        return Response(data)

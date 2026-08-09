@@ -26,8 +26,9 @@ class Document(models.Model):
     downloads = models.PositiveIntegerField(default=0)
     # Set when the Cloudinary file is found to be deleted; missing files are
     # hidden from every list until a new file replaces them.
-    is_missing = models.BooleanField(default=False)
-    file_checked_at = models.DateTimeField(null=True, blank=True)
+    is_missing = models.BooleanField(default=False, db_index=True)
+    # Indexed: the file-health sweeps filter on this every list load.
+    file_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
     # When a previously-deleted file comes back in Cloudinary it is un-hidden
     # and this marks when, so the UI can show a "Restored" badge for a while.
     restored_at = models.DateTimeField(null=True, blank=True)
