@@ -98,10 +98,11 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
 
   // When creating a student, guess the pass-out year from the roll number's
   // leading two digits (21CSE01 -> 2025) and prefill it - the admin can still
-  // override it.
+  // override it. Guard for the first render: `watch` is still undefined until
+  // the reset effect populates the form, so trimming it would crash the dialog.
   useEffect(() => {
     if (editing || !open) return;
-    const m = roll.trim().match(/^(\d{2})/);
+    const m = (roll ?? "").trim().match(/^(\d{2})/);
     if (m) {
       const year = 2000 + Number(m[1]) + 4;
       if (year >= 1990 && year <= 2100 && !getValues("passout_year")) {
