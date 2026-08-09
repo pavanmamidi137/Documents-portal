@@ -51,6 +51,7 @@ const schema = z
 type FormValues = z.infer<typeof schema>;
 
 const editSchema = z.object({
+  roll_number: z.string().optional(),
   full_name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   phone: z.string().optional(),
@@ -152,6 +153,7 @@ function EditDetailsCard() {
     if (user && !wasPrefilled.current) {
       wasPrefilled.current = true;
       reset({
+        roll_number: user.roll_number,
         full_name: user.full_name,
         email: user.email ?? "",
         phone: user.phone ?? "",
@@ -164,16 +166,22 @@ function EditDetailsCard() {
   const onSubmit = async (values: EditFormValues) => {
     setSaving(true);
     try {
-      await http.patch("/auth/me/", {
+      const payload: Record<string, unknown> = {
         full_name: values.full_name.trim(),
         email: values.email?.trim() || null,
         phone: values.phone?.trim() ?? "",
         gender: values.gender || "",
         passout_year: values.passout_year ? Number(values.passout_year) : null,
-      });
+      };
+      // Super Admins may also change their own username (roll number).
+      if (user?.is_super_admin && values.roll_number?.trim()) {
+        payload.roll_number = values.roll_number.trim().toUpperCase();
+      }
+      await http.patch("/auth/me/", payload);
       toast.success("Profile updated.");
       await refreshUser();
       reset({
+        roll_number: user?.is_super_admin ? (values.roll_number?.trim().toUpperCase() ?? "") : user?.roll_number ?? "",
         full_name: values.full_name.trim(),
         email: values.email?.trim() ?? "",
         phone: values.phone?.trim() ?? "",
@@ -196,11 +204,28 @@ function EditDetailsCard() {
           <Pencil className="size-5 text-primary" /> Edit Details
         </CardTitle>
         <CardDescription>
-          Update your name and contact details. Your roll number, branch and section stay fixed.
+          Update your name and contact details. Your branch and section stay fixed.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          {user.is_super_admin && (
+            <div className="space-y-2">
+              <Label htmlFor="edit-username">Username (Roll Number)</Label>
+              <Input
+                id="edit-username"
+                placeholder="e.g. ADMIN001"
+                className="font-mono uppercase"
+                {...register("roll_number")}
+              />
+              {errors.roll_number && (
+                <p className="text-xs text-destructive">{errors.roll_number.message}</p>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                This is your login username. Change it and you sign in with the new one next time.
+              </p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="edit-name">Full Name</Label>
             <Input id="edit-name" {...register("full_name")} />
@@ -624,27 +649,6 @@ export default function ProfilePage() {
         <div className="space-y-6">
           <EditDetailsCard />
           <MyAiUsageCard />
-
-          {canContactAdmin && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquareText className="size-5 text-primary" /> Contact Admin
-                </CardTitle>
-                <CardDescription>
-                  Need a subject added, an account fixed or something escalated? Send the admin a
-                  message and track the reply here.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Link href="/contact-admin" className="block">
-                  <Button variant="outline" className="w-full">
-                    <MessageSquareText className="size-4" /> Open Contact Admin
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
-          )}
         </div>
 
         <motion.div
@@ -694,6 +698,32 @@ export default function ProfilePage() {
 
         </motion.div>
       </div>
+
+      {/* Footer — Support is only shown to CRs and faculty (admins manage support
+          from their own pages). */}
+      {canContactAdmin && (
+        <div className="mt-8 border-t pt-6">
+          <div className="flex flex-col items-start justify-between gap-4 rounded-2xl border bg-card p-5 shadow-sm sm:flex-row sm:items-center">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <MessageSquareText className="size-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold">Support</p>
+                <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
+                  Need a subject added, an account fixed or something escalated? Message the admin
+                  and track the reply right here.
+                </p>
+              </div>
+            </div>
+            <Link href="/contact-admin">
+              <Button variant="outline">
+                <MessageSquareText className="size-4" /> Open Support
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

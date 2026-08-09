@@ -587,15 +587,63 @@ class ProfileUpdateTests(TestCase):
 
     def test_identity_fields_cannot_be_changed_via_me(self):
         client = self._client()
+        # branch/role are not writable via /auth/me/ - they are silently dropped.
         response = client.patch(
-            "/api/auth/me/",
-            {"roll_number": "HACKED", "branch": 999, "role": "SUPER_ADMIN"},
-            format="json",
+            "/api/auth/me/", {"branch": 999, "role": "SUPER_ADMIN"}, format="json"
         )
         self.assertEqual(response.status_code, 200)
         self.student.refresh_from_db()
-        self.assertEqual(self.student.roll_number, "21IT01")
         self.assertEqual(self.student.role, "STUDENT")
+
+    def test_student_cannot_change_own_username(self):
+        """Only admins may change their username - students get a clear error."""
+        client = self._client()
+        response = client.patch(
+            "/api/auth/me/", {"roll_number": "HACKED"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.roll_number, "21IT01")
+
+    def test_admin_can_change_own_username(self):
+        """Super Admins can edit their own login username (roll number)."""
+        admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": "admin", "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        response = client.patch(
+            "/api/auth/me/", {"roll_number": "admin001"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        admin.refresh_from_db()
+        self.assertEqual(admin.roll_number, "ADMIN001")  # normalized uppercase
+
+    def test_admin_username_must_be_unique(self):
+        User.objects.create_superuser(
+            roll_number="taken", password="x", full_name="Taken"
+        )
+        admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": "admin", "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        response = client.patch(
+            "/api/auth/me/", {"roll_number": "taken"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        admin.refresh_from_db()
+        self.assertEqual(admin.roll_number, "admin")
 
     def test_student_updates_passout_year_and_completion(self):
         before = self.student.profile_completion
@@ -784,6 +832,29 @@ class FacultyManagementTests(TestCase):
         deleted = client.delete(f"/api/faculty/{faculty.id}/")
         self.assertEqual(deleted.status_code, 204)
         self.assertFalse(User.objects.filter(roll_number="FAC01").exists())
+
+    def test_admin_can_change_faculty_username(self):
+        """Admin can edit a faculty member's username (roll number)."""
+        faculty = User.objects.create_user(
+            roll_number="FAC01", password="x", full_name="Prof. Rao",
+            branch=self.branch, role=User.Role.FACULTY,
+        )
+        client = self._client()
+        response = client.patch(
+            f"/api/faculty/{faculty.id}/",
+            {"roll_number": "fac2026"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        faculty.refresh_from_db()
+        self.assertEqual(faculty.roll_number, "FAC2026")  # normalized uppercase
+        # The new username is used for login.
+        login = APIClient().post(
+            "/api/auth/login/",
+            {"roll_number": "FAC2026", "password": "x"},
+            format="json",
+        )
+        self.assertEqual(login.status_code, 200)
 
 
 class AdminManagementTests(TestCase):

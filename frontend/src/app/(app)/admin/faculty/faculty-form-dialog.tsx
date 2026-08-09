@@ -86,6 +86,7 @@ export function FacultyFormDialog({ open, onOpenChange, faculty, meta, onSaved }
     try {
       if (faculty) {
         await http.patch(`/faculty/${faculty.id}/`, {
+          roll_number: values.roll_number.trim().toUpperCase(),
           full_name: values.full_name.trim(),
           email: values.email?.trim() || null,
           phone: values.phone?.trim() ?? "",
@@ -128,15 +129,20 @@ export function FacultyFormDialog({ open, onOpenChange, faculty, meta, onSaved }
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="fac-roll">Roll Number</Label>
+            <Label htmlFor="fac-roll">Username (Roll Number)</Label>
             <Input
               id="fac-roll"
               placeholder="e.g. FAC001"
-              disabled={!!faculty}
+              className="font-mono uppercase"
               {...register("roll_number")}
             />
             {errors.roll_number && (
               <p className="text-xs text-destructive">{errors.roll_number.message}</p>
+            )}
+            {faculty && (
+              <p className="text-[11px] text-muted-foreground">
+                Changing the username updates their login username.
+              </p>
             )}
           </div>
 

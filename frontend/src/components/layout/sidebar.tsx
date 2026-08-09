@@ -21,7 +21,6 @@ import {
   LayoutDashboard,
   LogOut,
   Megaphone,
-  MessageSquareText,
   PanelLeftClose,
   ScrollText,
   Settings2,
@@ -91,11 +90,6 @@ const ADMIN_ONLY: NavItem[] = [
 
 const CR_ONLY: NavItem[] = [{ href: "/cr/students", label: "Students", icon: Users }];
 
-// Faculty & CRs can message the admin from anywhere - not just the profile.
-const SUPPORT_ONLY: NavItem[] = [
-  { href: "/contact-admin", label: "Contact Admin", icon: MessageSquareText },
-];
-
 interface SidebarProps {
   mode: SidebarMode;
   onModeChange: (mode: SidebarMode) => void;
@@ -155,7 +149,6 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
     groups = [
       { items: [COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2], COMMON[3]] },
       { label: "Career", items: STUDENT_ONLY },
-      { label: "Support", items: SUPPORT_ONLY },
     ];
   } else if (user?.is_faculty) {
     const facultyTools: NavItem[] = [];
@@ -164,7 +157,6 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
     groups = [
       { items: [COMMON[0], COMMON[2]] },
       ...(facultyTools.length > 0 ? [{ label: "Faculty", items: facultyTools }] : []),
-      { label: "Support", items: SUPPORT_ONLY },
     ];
   } else {
     groups = [{ items: [...COMMON] }, { label: "Career", items: STUDENT_ONLY }];

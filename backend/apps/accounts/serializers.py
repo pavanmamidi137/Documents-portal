@@ -72,11 +72,32 @@ class ResetPasswordSerializer(serializers.Serializer):
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
-    """Users editing their own contact details (roll/branch/section stay fixed)."""
+    """Users editing their own contact details (branch/section stay fixed).
+
+    Super Admins may also change their own username (roll number); for every
+    other role the roll number is read-only and any attempt to change it is
+    rejected.
+    """
 
     class Meta:
         model = User
-        fields = ["full_name", "email", "phone", "gender", "passout_year"]
+        fields = ["roll_number", "full_name", "email", "phone", "gender", "passout_year"]
+
+    def validate_roll_number(self, value):
+        request = self.context.get("request")
+        if not request or not request.user.is_super_admin:
+            raise serializers.ValidationError(
+                "Only admins can change their username."
+            )
+        value = value.strip().upper()
+        if not value:
+            raise serializers.ValidationError("Username cannot be empty.")
+        qs = User.objects.filter(roll_number=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("This username is already in use.")
+        return value
 
     def validate_passout_year(self, value):
         if value is None:
@@ -262,17 +283,28 @@ class FacultyCreateSerializer(serializers.ModelSerializer):
 
 
 class FacultyUpdateSerializer(serializers.ModelSerializer):
-    """Admin edits a faculty member (identity fields stay fixed)."""
+    """Admin edits a faculty member (username/roll number editable too)."""
 
     password = serializers.CharField(write_only=True, min_length=6, required=False, allow_blank=True)
 
     class Meta:
         model = User
         fields = [
-            "id", "full_name", "email", "phone", "branch",
+            "id", "roll_number", "full_name", "email", "phone", "branch",
             "faculty_access", "is_active", "password",
         ]
         read_only_fields = ["id", "role"]
+
+    def validate_roll_number(self, value):
+        value = value.strip().upper()
+        if not value:
+            raise serializers.ValidationError("Username cannot be empty.")
+        qs = User.objects.filter(roll_number=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("This username is already in use.")
+        return value
 
     def validate_email(self, value):
         value = (value or "").strip().lower()
