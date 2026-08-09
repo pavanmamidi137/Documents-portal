@@ -1,24 +1,29 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import Resume, User, derive_passout_year
+from .models import AiAccessConfig, Resume, User, derive_passout_year
 
 
 class UserSerializer(serializers.ModelSerializer):
     role_label = serializers.CharField(read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
     section_name = serializers.CharField(source="section.name", read_only=True, default=None)
+    gender_label = serializers.CharField(source="get_gender_display", read_only=True, default="")
+    faculty_access_label = serializers.CharField(
+        source="get_faculty_access_display", read_only=True, default=""
+    )
 
     class Meta:
         model = User
         fields = [
-            "id", "roll_number", "full_name", "email", "phone", "passout_year",
-            "role", "role_label",
+            "id", "roll_number", "full_name", "email", "phone", "gender",
+            "gender_label", "avatar_url", "passout_year",
+            "role", "role_label", "faculty_access", "faculty_access_label",
             "branch", "branch_name", "section", "section_name",
             "is_active", "is_staff", "is_super_admin", "is_cr", "is_faculty",
-            "is_student", "date_joined",
+            "is_student", "profile_completion", "date_joined",
         ]
-        read_only_fields = ["id", "date_joined", "is_staff"]
+        read_only_fields = ["id", "date_joined", "is_staff", "profile_completion"]
 
 
 class LoginSerializer(TokenObtainPairSerializer):
@@ -70,7 +75,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["full_name", "email", "phone"]
+        fields = ["full_name", "email", "phone", "gender"]
 
     def validate_full_name(self, value):
         value = value.strip()
@@ -96,8 +101,8 @@ class StudentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", "roll_number", "full_name", "email", "phone", "passout_year",
-            "branch", "section", "password", "is_active",
+            "id", "roll_number", "full_name", "email", "phone", "gender",
+            "passout_year", "branch", "section", "password", "is_active",
         ]
         read_only_fields = ["id"]
 
@@ -150,7 +155,7 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", "full_name", "email", "phone", "passout_year",
+            "id", "full_name", "email", "phone", "gender", "passout_year",
             "branch", "section", "is_active",
         ]
         read_only_fields = ["id", "role"]
@@ -221,7 +226,7 @@ class FacultyCreateSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "roll_number", "full_name", "email", "phone",
-            "branch", "password", "is_active",
+            "branch", "faculty_access", "password", "is_active",
         ]
         read_only_fields = ["id"]
 
@@ -255,7 +260,10 @@ class FacultyUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "full_name", "email", "phone", "branch", "is_active", "password"]
+        fields = [
+            "id", "full_name", "email", "phone", "branch",
+            "faculty_access", "is_active", "password",
+        ]
         read_only_fields = ["id", "role"]
 
     def validate_email(self, value):
@@ -278,6 +286,7 @@ class ResumeSerializer(serializers.ModelSerializer):
     reviewed_by_name = serializers.CharField(
         source="reviewed_by.full_name", read_only=True, default=None
     )
+    ats_viewed_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Resume
@@ -288,6 +297,18 @@ class ResumeSerializer(serializers.ModelSerializer):
             "is_reviewed", "reviewed_by_name", "reviewed_at",
             "is_missing", "restored_at",
             "ai_status", "ai_score", "ai_analysis", "ai_match", "ai_error",
-            "ai_analyzed_at", "created_at", "updated_at",
+            "ai_analyzed_at", "ats_viewed_at", "created_at", "updated_at",
         ]
         read_only_fields = fields
+
+
+class AiAccessConfigSerializer(serializers.ModelSerializer):
+    """Super Admin view/edit of a student's AI usage limits."""
+
+    class Meta:
+        model = AiAccessConfig
+        fields = [
+            "id", "student", "daily_ai_requests", "unlimited_ai",
+            "ats_view_interval_days", "daily_resume_uploads", "updated_at",
+        ]
+        read_only_fields = ["id", "student", "updated_at"]

@@ -1,8 +1,8 @@
-# Documents-portal
+# PlaceMate — Campus Portal
 
-# 🎓 College Document Management Portal
+# 🤝 PlaceMate — Campus Documents, Resumes & Placements
 
-A production-ready portal for colleges to manage study documents — **Django REST API** + **Next.js 15/16 frontend**, backed by **Supabase PostgreSQL** and **Cloudinary** (PDF storage).
+A production-ready portal for colleges to manage study documents, student resumes (with AI reviews) and placement drives — **Django REST API** + **Next.js 15/16 frontend**, backed by **Supabase PostgreSQL**, **Cloudinary** (file storage) and **NVIDIA Nemotron AI**. Installable as a **PWA** on Android, Windows and supported browsers.
 
 | Layer | Technology |
 |---|---|
@@ -15,14 +15,19 @@ A production-ready portal for colleges to manage study documents — **Django RE
 ## ✨ Features
 
 - **Auth** — Login with roll number + password, JWT access + refresh tokens, automatic token refresh on the frontend, protected routes, role-based access.
-- **3 roles**
-  - **Super Admin** — dashboard analytics & charts, branch/section/semester/category/subject management, student CRUD + CSV bulk import/export, activate/deactivate, reset password, **promote/demote CR**, document upload/delete anywhere, announcements with visibility targeting, audit logs, global search.
-  - **CR (Sub Admin)** — can only see/manage **their own section**: students (add/edit/delete/reset password), document upload (locked to own branch/section), cannot promote, cannot touch other sections.
-  - **Student** — semester cards → categories → subjects → PDF list, preview/download PDFs, search, announcements, change password, **cannot upload**.
-- **Documents** — PDFs uploaded to Cloudinary as raw files under `documents/{branch}/{section}/{semester}/{category}/{subject}/`; only the URL + public ID are stored in PostgreSQL. Deleting a document also deletes the Cloudinary file.
-- **CSV** — bulk-import students (`Roll Number, Student Name, Email, Phone, Branch, Section, Password`), export students & documents reports.
+- **4 roles**
+  - **Super Admin** — dashboard analytics & charts, branch/section/semester/category/subject management, student CRUD + CSV bulk import/export (with **Gender** & **Passout Year**), activate/deactivate, reset password, **promote/demote CR**, document upload/delete anywhere, announcements with visibility targeting, audit logs, global search, **faculty portal access control** (resume / placement / both) and **per-student AI limits**.
+  - **CR (Sub Admin)** — can only see/manage **their own section**: students (add/edit/delete/reset password), document & assignment upload (locked to own branch/section), share requests with other sections, student-style document browsing.
+  - **Faculty** — review student resumes in their branch (mark reviewed, bulk review, ZIP download), see **every student's upload status**, and/or post placement drives — gated by the admin-assigned portal access.
+  - **Student** — semester cards → categories → subjects → document list with assignment deadlines, preview/download, search, announcements, **resume upload with AI star rating + ATS report**, placement drives with eligibility and apply links, change password.
+- **Documents & assignments** — files uploaded to Cloudinary as raw files under `documents/{branch}/{section}/{semester}/{category}/{subject}/`; only the URL + public ID are stored in PostgreSQL. Assignments can carry a **submission deadline** badge.
+- **Resumes** — one resume per student, delivered to branch faculty with **review status** (delivered / pending / reviewed / missing / restored). Uploads are **auto-analyzed** by AI for a **0–5 star rating**, daily AI request & upload limits (admin-adjustable per roll number) and a **10-day ATS report** view gate.
+- **Placements** — company drives with optional last date, eligibility, roll-number lists (paste or Excel), apply links and a **RAG-grounded AI assistant**; drive detail pages with an inline chatbot; students see their match % and eligibility.
+- **Notifications** — bell with unread count; document/drive/resume/announcement notifications; drive notifications clear only when the drive is actually opened.
+- **CSV** — bulk-import students (`Roll Number, Student Name, Phone, Email, Gender, Passout Year`), export students & documents reports.
 - **Audit log** — every login, create/update/delete, promote/demote, upload, download, CSV action is recorded (actor, action, target, IP, details).
-- **UI** — professional responsive dashboard, dark/light mode, animated cards, charts, paginated data tables, filters, toasts, skeletons, empty states, confirmation dialogs.
+- **PWA** — installable on Android/Windows/iOS with manifest, icons and a service worker (authenticated API responses are never cached).
+- **UI** — professional responsive dashboard, dark/light mode, 8 portal color themes, animated cards, charts, paginated data tables, filters, toasts, skeletons, empty states, confirmation dialogs.
 
 ## 📁 Project structure
 
@@ -86,6 +91,13 @@ Default super admin after `seed_data`: **roll number `admin` / password `Admin@1
 | `CORS_ALLOWED_ORIGINS` | Comma-separated frontend origins |
 | `CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET` | Cloudinary credentials |
 | `MAX_PDF_SIZE_MB` | Upload limit (default 20) |
+| `NVIDIA_API_KEY` | NVIDIA Nemotron API key (placement AI + resume analysis) |
+| `NVIDIA_RAG_API_KEY` | Optional — separate NVIDIA RAG key (falls back to the 30B model otherwise) |
+| `NVIDIA_RAG_MODEL` | RAG model id (default `nvidia/nim-rag`) |
+| `AI_DAILY_REQUEST_LIMIT` | Default daily AI requests per student (default 5) |
+| `ATS_VIEW_INTERVAL_DAYS` | ATS report refresh interval (default 10) |
+| `RESUME_DAILY_UPLOAD_LIMIT` | Resume uploads per day per student (default 2) |
+| `AI_AUTO_ANALYZE_ON_UPLOAD` | Auto-analyze resumes after upload (default 1) |
 | `ADMIN_ROLL_NUMBER/ADMIN_PASSWORD/...` | Seed-data super admin |
 
 **Frontend (`frontend/.env.local`)**:

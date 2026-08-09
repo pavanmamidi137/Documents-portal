@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpCircle,
   ArrowDownCircle,
+  BrainCircuit,
   Download,
   FileSpreadsheet,
   KeyRound,
@@ -54,7 +55,7 @@ import { CsvImportDialog } from "./csv-import-dialog";
 import { http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
-import type { MetaData, Paginated, User } from "@/lib/types";
+import type { AiAccessConfig, MetaData, Paginated, User } from "@/lib/types";
 import { formatDate, getErrorMessage, roleColor } from "@/lib/utils";
 
 interface Props {
@@ -80,6 +81,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   const [resetting, setResetting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [aiAccessTarget, setAiAccessTarget] = useState<User | null>(null);
   const [bulkTargets, setBulkTargets] = useState<User[]>([]);
   const [pendingBulk, setPendingBulk] = useState<BulkAction | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
@@ -456,6 +458,11 @@ export function StudentsPage({ meta, isCr = false }: Props) {
             <DropdownMenuItem onClick={() => setPasswordTarget(s)}>
               <KeyRound className="size-4" /> Reset Password
             </DropdownMenuItem>
+            {isAdmin && (
+              <DropdownMenuItem onClick={() => setAiAccessTarget(s)}>
+                <BrainCircuit className="size-4" /> AI Access Limits
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteTarget(s)}
@@ -739,6 +746,13 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         onConfirm={confirmDelete}
       />
 
+      <AiAccessDialog
+        key={aiAccessTarget?.id ?? "none"}
+        open={!!aiAccessTarget}
+        onOpenChange={(open) => !open && setAiAccessTarget(null)}
+        student={aiAccessTarget}
+      />
+
       <ConfirmDialog
         open={!!pendingBulk}
         onOpenChange={(open) => {
@@ -852,6 +866,168 @@ function DeleteStudentSheet({
       loading={loading}
       onConfirm={onConfirm}
     />
+  );
+}
+
+/** Admin: raise/lower a specific student's AI limits (or grant unlimited). */
+function AiAccessDialog({
+  open,
+  onOpenChange,
+  student,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  student: User | null;
+}) {
+  const queryClient = useQueryClient();
+  const [data, setData] = useState<AiAccessConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [dailyAi, setDailyAi] = useState("");
+  const [atsInterval, setAtsInterval] = useState("");
+  const [dailyUploads, setDailyUploads] = useState("");
+  const [unlimited, setUnlimited] = useState(false);
+
+  // Load the student's current limits when the dialog opens. State updates
+  // happen only after the await, so the fetch never blocks rendering.
+  useEffect(() => {
+    if (!open || !student) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await http.get<AiAccessConfig>(`/students/${student.id}/ai_access/`);
+        if (cancelled) return;
+        setData(res);
+        setDailyAi(res.daily_ai_requests == null ? "" : String(res.daily_ai_requests));
+        setAtsInterval(res.ats_view_interval_days == null ? "" : String(res.ats_view_interval_days));
+        setDailyUploads(res.daily_resume_uploads == null ? "" : String(res.daily_resume_uploads));
+        setUnlimited(res.unlimited_ai);
+      } catch (error) {
+        if (!cancelled) toast.error(getErrorMessage(error));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, student?.id]);
+
+  const save = async () => {
+    if (!student) return;
+    setSaving(true);
+    try {
+      const res = await http.patch<AiAccessConfig>(`/students/${student.id}/ai_access/`, {
+        daily_ai_requests: dailyAi ? Number(dailyAi) : null,
+        ats_view_interval_days: atsInterval ? Number(atsInterval) : null,
+        daily_resume_uploads: dailyUploads ? Number(dailyUploads) : null,
+        unlimited_ai: unlimited,
+      });
+      setData(res);
+      toast.success(`AI limits updated for ${student.full_name}.`);
+      queryClient.invalidateQueries({ queryKey: ["students"] });
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const effective = data?.effective;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <BrainCircuit className="size-5 text-primary" /> AI Access Limits
+          </DialogTitle>
+          <DialogDescription>
+            Raise or lower the AI limits for{" "}
+            <span className="font-medium text-foreground">{student?.full_name}</span>{" "}
+            ({student?.roll_number}). Blank fields use the portal defaults.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex justify-center py-10">
+            <Loader2 className="size-6 animate-spin text-primary" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2.5">
+              <div>
+                <p className="text-sm font-medium">Unlimited AI</p>
+                <p className="text-xs text-muted-foreground">
+                  Bypasses the daily request limit for this student.
+                </p>
+              </div>
+              <Switch checked={unlimited} onCheckedChange={setUnlimited} />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ai-daily">AI requests per day</Label>
+              <Input
+                id="ai-daily"
+                type="number"
+                min={0}
+                placeholder={effective ? `Default: ${effective.daily_ai_requests}` : "Portal default"}
+                value={dailyAi}
+                onChange={(e) => setDailyAi(e.target.value)}
+                disabled={unlimited}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ai-ats">ATS report refresh interval (days)</Label>
+              <Input
+                id="ai-ats"
+                type="number"
+                min={1}
+                placeholder={effective ? `Default: ${effective.ats_view_interval_days ?? "—"}` : "Portal default"}
+                value={atsInterval}
+                onChange={(e) => setAtsInterval(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                How often the student can open the full ATS report (e.g. 10 = once every 10 days).
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ai-uploads">Resume uploads per day</Label>
+              <Input
+                id="ai-uploads"
+                type="number"
+                min={0}
+                placeholder={effective ? `Default: ${effective.daily_resume_uploads}` : "Portal default"}
+                value={dailyUploads}
+                onChange={(e) => setDailyUploads(e.target.value)}
+              />
+            </div>
+
+            {data && (
+              <p className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                Used today: {data.ai_requests_used_today} AI request
+                {data.ai_requests_used_today === 1 ? "" : "s"} · {data.resume_uploads_used_today} resume
+                upload{data.resume_uploads_used_today === 1 ? "" : "s"}
+              </p>
+            )}
+
+            <DialogFooter className="gap-2 pt-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+                Cancel
+              </Button>
+              <Button onClick={save} disabled={saving}>
+                {saving && <Loader2 className="size-4 animate-spin" />}
+                Save Limits
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

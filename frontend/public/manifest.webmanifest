@@ -1,7 +1,7 @@
 {
-  "name": "Placify",
-  "short_name": "Placify",
-  "description": "College Documents Portal — placement drives, documents, announcements and resumes for your college.",
+  "name": "PlaceMate",
+  "short_name": "PlaceMate",
+  "description": "PlaceMate — campus documents, AI resume reviews and placement drives for your college.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

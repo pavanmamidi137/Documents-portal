@@ -9,6 +9,7 @@ import { motion } from "framer-motion";
 import {
   BrainCircuit,
   CalendarDays,
+  Camera,
   GraduationCap,
   KeyRound,
   Loader2,
@@ -17,6 +18,7 @@ import {
   Pencil,
   Phone,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -51,6 +53,7 @@ const editSchema = z.object({
   full_name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   phone: z.string().optional(),
+  gender: z.string().optional(),
 });
 
 type EditFormValues = z.infer<typeof editSchema>;
@@ -150,6 +153,7 @@ function EditDetailsCard() {
         full_name: user.full_name,
         email: user.email ?? "",
         phone: user.phone ?? "",
+        gender: user.gender ?? "",
       });
     }
   }, [user, reset]);
@@ -161,6 +165,7 @@ function EditDetailsCard() {
         full_name: values.full_name.trim(),
         email: values.email?.trim() || null,
         phone: values.phone?.trim() ?? "",
+        gender: values.gender || "",
       });
       toast.success("Profile updated.");
       await refreshUser();
@@ -168,6 +173,7 @@ function EditDetailsCard() {
         full_name: values.full_name.trim(),
         email: values.email?.trim() ?? "",
         phone: values.phone?.trim() ?? "",
+        gender: values.gender ?? "",
       });
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -205,6 +211,18 @@ function EditDetailsCard() {
           <div className="space-y-2">
             <Label htmlFor="edit-phone">Phone</Label>
             <Input id="edit-phone" placeholder="10-digit mobile" {...register("phone")} />
+          </div>
+          <div className="space-y-2">
+            <Label>Gender</Label>
+            <select
+              {...register("gender")}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm outline-none transition-colors focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/20"
+            >
+              <option value="">Prefer not to say</option>
+              <option value="MALE">Male</option>
+              <option value="FEMALE">Female</option>
+              <option value="OTHER">Other</option>
+            </select>
           </div>
           <Button type="submit" disabled={saving || !isDirty} className="w-full">
             {saving && <Loader2 className="size-4 animate-spin" />}
@@ -292,6 +310,99 @@ function ThemePickerCard() {
   );
 }
 
+function AvatarCard() {
+  const { user, refreshUser } = useAuth();
+  const [uploading, setUploading] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  if (!user) return null;
+
+  const pick = () => inputRef.current?.click();
+
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      await http.upload("/auth/me/avatar/", form);
+      toast.success("Profile picture updated.");
+      await refreshUser();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const remove = async () => {
+    setRemoving(true);
+    try {
+      await http.delete("/auth/me/avatar/");
+      toast.success("Profile picture removed.");
+      await refreshUser();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-3 sm:items-start">
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".jpg,.jpeg,.png,.webp,.gif"
+        className="hidden"
+        onChange={(e) => upload(e.target.files?.[0])}
+      />
+      <div className="group relative">
+        {user.avatar_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={user.avatar_url}
+            alt={user.full_name}
+            className="size-24 rounded-3xl object-cover shadow-lg shadow-primary/20 ring-4 ring-primary/10"
+          />
+        ) : (
+          <div className="flex size-24 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/60 text-3xl font-bold text-primary-foreground shadow-lg shadow-primary/30">
+            {initials(user.full_name)}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={pick}
+          disabled={uploading}
+          title="Upload profile picture"
+          aria-label="Upload profile picture"
+          className="absolute right-0 -bottom-1 flex size-8 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-md transition-all hover:scale-105 hover:text-foreground disabled:opacity-50"
+        >
+          {uploading ? <Loader2 className="size-4 animate-spin" /> : <Camera className="size-4" />}
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" onClick={pick} disabled={uploading} className="h-8 gap-1.5 text-xs">
+          <Camera className="size-3.5" /> {uploading ? "Uploading…" : "Change photo"}
+        </Button>
+        {user.avatar_url && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={remove}
+            disabled={removing}
+            className="h-8 gap-1.5 text-xs text-destructive hover:text-destructive"
+          >
+            <Trash2 className="size-3.5" /> {removing ? "Removing…" : "Remove"}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ProfilePage() {
   const { user } = useAuth();
   const [submitting, setSubmitting] = useState(false);
@@ -335,11 +446,7 @@ export default function ProfilePage() {
       >
         <div className="pointer-events-none absolute -top-20 -right-20 size-64 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-3xl" />
         <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:p-8">
-          <div className="flex shrink-0 flex-col items-center gap-3 sm:items-start">
-            <div className="flex size-24 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/60 text-3xl font-bold text-primary-foreground shadow-lg shadow-primary/30">
-              {initials(user.full_name)}
-            </div>
-          </div>
+          <AvatarCard />
           <div className="min-w-0 flex-1 text-center sm:text-left">
             <h2 className="text-2xl font-bold tracking-tight">{user.full_name}</h2>
             <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 sm:justify-start">
@@ -392,6 +499,32 @@ export default function ProfilePage() {
       {user.is_super_admin && (
         <div className="mb-6">
           <ThemePickerCard />
+        </div>
+      )}
+
+      {user.is_student && (
+        <div className="mb-6 rounded-2xl border bg-card p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Profile completion</p>
+              <p className="text-xs text-muted-foreground">
+                Fill in your details to help faculty and the placement cell match you better.
+              </p>
+            </div>
+            <p className="text-lg font-bold tabular-nums text-primary">{user.profile_completion}%</p>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${user.profile_completion}%` }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+              className="h-full rounded-full bg-gradient-to-r from-primary to-primary/60"
+            />
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Name, email, phone, gender, pass-out year, profile picture and a delivered resume all
+            count toward your completion.
+          </p>
         </div>
       )}
 

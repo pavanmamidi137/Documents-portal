@@ -204,6 +204,21 @@ MAX_DOCUMENT_SIZE_MB = int(
 )
 
 # ---------------------------------------------------------------------------
+# AI usage limits (per student, admin-adjustable via AiAccessConfig)
+# ---------------------------------------------------------------------------
+# How many AI resume reviews/asks a student can run per day.
+AI_DAILY_REQUEST_LIMIT = int(os.getenv("AI_DAILY_REQUEST_LIMIT", "5"))
+# How often the full ATS report may be opened (days).
+ATS_VIEW_INTERVAL_DAYS = int(os.getenv("ATS_VIEW_INTERVAL_DAYS", "10"))
+# How many resume uploads/replacements a student may do per day.
+RESUME_DAILY_UPLOAD_LIMIT = int(os.getenv("RESUME_DAILY_UPLOAD_LIMIT", "2"))
+# Run the AI resume review automatically right after an upload (background
+# thread). Tests disable this so upload tests stay fast and hermetic.
+AI_AUTO_ANALYZE_ON_UPLOAD = os.getenv(
+    "AI_AUTO_ANALYZE_ON_UPLOAD", "1"
+).lower() in ("1", "true", "yes")
+
+# ---------------------------------------------------------------------------
 # Static files (Whitenoise for Render)
 # ---------------------------------------------------------------------------
 STATIC_URL = "static/"

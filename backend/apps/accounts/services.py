@@ -7,7 +7,7 @@ import csv
 import io
 
 from django.contrib.auth.hashers import make_password
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, close_old_connections, transaction
 from rest_framework.exceptions import ValidationError
 
 from apps.core.utils import log_audit
@@ -19,6 +19,20 @@ CSV_REQUIRED_COLUMNS = {"roll number", "student name"}
 PASSOUT_ALIASES = {
     "passout year", "passout", "passoutyear", "batch", "year of passout",
 }
+# Optional header aliases for the gender column.
+GENDER_ALIASES = {"gender", "sex"}
+
+
+def _normalize_gender(raw: str):
+    """Map a CSV/typed gender value to the stored choice (case-insensitive)."""
+    value = (raw or "").strip().lower()
+    if value in ("m", "male", "boy", "1"):
+        return User.Gender.MALE
+    if value in ("f", "female", "girl", "2"):
+        return User.Gender.FEMALE
+    if value in ("o", "other", "3"):
+        return User.Gender.OTHER
+    return ""
 
 
 @transaction.atomic
@@ -138,6 +152,10 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
     passout_col = next(
         (header_map[k] for k in PASSOUT_ALIASES if k in header_map), None
     )
+    # Optional "Gender" column (any alias).
+    gender_col = next(
+        (header_map[k] for k in GENDER_ALIASES if k in header_map), None
+    )
 
     # Resolve the single target branch/section for the whole file.
     if actor.is_cr:
@@ -181,6 +199,10 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
         email = ((row.get(header_map.get("email")) or "").strip().lower()
                  if header_map.get("email") else "")
         phone = (row.get(header_map.get("phone")) or "").strip() if header_map.get("phone") else ""
+        gender = (
+            _normalize_gender(row.get(gender_col))
+            if gender_col else ""
+        )
         passout_year = None
         if passout_col:
             raw = (row.get(passout_col) or "").strip()
@@ -190,7 +212,8 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
             passout_year = derive_passout_year(roll)
         rows.append({
             "roll": roll, "full_name": full_name, "email": email,
-            "phone": phone, "passout_year": passout_year, "seen": seen,
+            "phone": phone, "gender": gender,
+            "passout_year": passout_year, "seen": seen,
         })
 
     if not rows:
@@ -264,11 +287,14 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
             if not claim_email(r):
                 continue
             # Placement (branch/section) is fixed at creation time - a re-import
-            # only refreshes name/email/phone (and batch when the column exists).
+            # only refreshes name/email/phone/gender (and batch when the column
+            # exists). A blank gender cell never wipes an existing value.
             student.full_name = r["full_name"]
             if r["email"]:
                 student.email = r["email"]
             student.phone = r["phone"]
+            if gender_col and r["gender"]:
+                student.gender = r["gender"]
             if passout_col:
                 student.passout_year = r["passout_year"]
             update_pairs.append((r, student))
@@ -280,7 +306,7 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
             created_users = [
                 User(
                     roll_number=r["roll"], full_name=r["full_name"],
-                    email=r["email"] or None, phone=r["phone"],
+                    email=r["email"] or None, phone=r["phone"], gender=r["gender"],
                     role=User.Role.STUDENT, branch=branch, section=section,
                     passout_year=r["passout_year"],
                     password=make_password(r["roll"], hasher="pbkdf2_sha256_import"),
@@ -299,8 +325,8 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
                     try:
                         User.objects.create(
                             roll_number=u.roll_number, full_name=u.full_name,
-                            email=u.email, phone=u.phone, role=u.role,
-                            branch=branch, section=section,
+                            email=u.email, phone=u.phone, gender=u.gender,
+                            role=u.role, branch=branch, section=section,
                             passout_year=u.passout_year, password=u.password,
                         )
                         created += 1
@@ -312,6 +338,8 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
 
         if update_pairs:
             update_fields = ["full_name", "email", "phone"]
+            if gender_col:
+                update_fields.append("gender")
             if passout_col:
                 update_fields.append("passout_year")
             update_rows = [s for _, s in update_pairs]
@@ -345,6 +373,56 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
 RESUME_EXTENSIONS = {".pdf", ".doc", ".docx"}
 
 
+def _effective_ai_limits(student: User) -> dict:
+    """Portal defaults overridden by the student's AiAccessConfig row."""
+    from django.conf import settings
+
+    defaults = {
+        "daily_ai_requests": settings.AI_DAILY_REQUEST_LIMIT,
+        "ats_view_interval_days": settings.ATS_VIEW_INTERVAL_DAYS,
+        "daily_resume_uploads": settings.RESUME_DAILY_UPLOAD_LIMIT,
+        "unlimited_ai": False,
+    }
+    config = getattr(student, "ai_access", None)
+    if config:
+        if config.unlimited_ai:
+            defaults["unlimited_ai"] = True
+        if config.daily_ai_requests is not None:
+            defaults["daily_ai_requests"] = config.daily_ai_requests
+        if config.ats_view_interval_days is not None:
+            defaults["ats_view_interval_days"] = config.ats_view_interval_days
+        if config.daily_resume_uploads is not None:
+            defaults["daily_resume_uploads"] = config.daily_resume_uploads
+    return defaults
+
+
+def _today_start():
+    from django.utils import timezone
+
+    return timezone.localdate()
+
+
+def _ai_requests_used_today(student: User) -> int:
+    """Count the student's AI review/ask/chat calls made today."""
+    from apps.placements.models import AiUsageLog
+
+    return AiUsageLog.objects.filter(
+        user=student,
+        created_at__date=_today_start(),
+    ).count()
+
+
+def _resume_uploads_used_today(student: User) -> int:
+    """Count resume uploads/replacements the student made today (audit trail)."""
+    from apps.core.models import AuditLog
+
+    return AuditLog.objects.filter(
+        actor=student,
+        action__in=["RESUME_UPLOAD", "RESUME_UPDATE"],
+        created_at__date=_today_start(),
+    ).count()
+
+
 def _resume_folder(student: User) -> str:
     """Cloudinary folder: resumes/{branch}/{section}/"""
     from apps.core.utils import slugify
@@ -374,11 +452,24 @@ def upload_resume(student: User, resume_file, request=None) -> Resume:
     """Upload (or replace) a student's resume on Cloudinary.
 
     One resume per student: an existing Cloudinary file is removed first, then
-    the new file is uploaded and the Resume row is updated in place.
+    the new file is uploaded and the Resume row is updated in place. Enforces
+    the student's per-day resume upload limit and kicks off an automatic AI
+    analysis right after the upload so the review is ready immediately.
     """
+    from django.conf import settings
+
     from apps.documents.services import delete_document_file, upload_document
 
     _validate_resume_file(resume_file)
+    # Per-day upload limit (default 2, admin-adjustable per student).
+    limit = _effective_ai_limits(student)["daily_resume_uploads"]
+    if limit and _resume_uploads_used_today(student) >= limit:
+        raise ValidationError({
+            "detail": (
+                f"You can upload a resume only {limit} time(s) per day. "
+                "Try again tomorrow, or ask the admin for a higher limit."
+            )
+        })
     folder = _resume_folder(student)
     uploaded = upload_document(resume_file, folder)
 
@@ -429,7 +520,43 @@ def upload_resume(student: User, resume_file, request=None) -> Resume:
         {"roll_number": student.roll_number, "file": resume.file_name},
         request,
     )
+    # Auto-analyse the new file in the background so the star rating and drive
+    # matches are ready when the student opens their resume page. Best-effort:
+    # if the AI is unavailable or the student hit their daily AI request limit
+    # the resume stays PENDING and they can run it manually later. Gated by
+    # AI_AUTO_ANALYZE_ON_UPLOAD (tests disable it for speed/hermeticity).
+    if getattr(settings, "AI_AUTO_ANALYZE_ON_UPLOAD", True):
+        try:
+            import threading
+
+            threading.Thread(
+                target=_auto_analyze_in_thread, args=(resume.id,), daemon=True
+            ).start()
+        except Exception:
+            pass  # never fail an upload because the background thread failed
     return resume
+
+
+def _auto_analyze_in_thread(resume_id: int):
+    """Run the AI resume review right after an upload (in a background thread)."""
+    # This thread outlives the request, so it needs its own DB connections:
+    # Django closes the request's connection when the response finishes.
+    close_old_connections()
+    try:
+        from apps.placements.resume_ai import analyze_resume
+
+        resume = Resume.objects.select_related("student").filter(pk=resume_id).first()
+        if not resume or resume.is_missing:
+            return
+        limits = _effective_ai_limits(resume.student)
+        if not limits["unlimited_ai"] and \
+                _ai_requests_used_today(resume.student) >= limits["daily_ai_requests"]:
+            return  # the student already used today's AI quota - leave it PENDING
+        analyze_resume(resume, resume.student)
+    except Exception:
+        pass  # background analysis must never crash anything
+    finally:
+        close_old_connections()
 
 
 @transaction.atomic

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
+  CalendarClock,
   Download,
   Eye,
   ListChecks,
@@ -290,6 +291,15 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
                     title="This file was deleted in Cloudinary and restored recently."
                   >
                     <RotateCcw className="size-2.5" /> Restored
+                  </Badge>
+                )}
+                {d.submission_deadline && (
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 gap-1 border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                    title="Last date to submit this assignment"
+                  >
+                    <CalendarClock className="size-2.5" /> {formatDate(d.submission_deadline)}
                   </Badge>
                 )}
               </p>

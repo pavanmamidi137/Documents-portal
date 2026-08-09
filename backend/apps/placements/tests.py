@@ -187,7 +187,8 @@ class DriveApiTests(APITestCase):
             set(notifs.values_list("user_id", flat=True)),
             {self.student.id, self.student2.id},
         )
-        self.assertEqual(notifs.first().link, "/placements")
+        # The notification deep-links to the drive detail page.
+        self.assertTrue(notifs.first().link.startswith("/placements/"))
         self.assertIn("TCS", notifs.first().title)
 
     def test_editing_a_drive_does_not_re_notify(self):

@@ -1,29 +1,30 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useTheme } from "next-themes";
 import {
   ArrowRight,
-  BarChart3,
   BellRing,
   BookOpen,
+  Briefcase,
   Check,
   Download,
   FileText,
   FolderOpen,
   GraduationCap,
+  Handshake,
   Layers,
-  Library,
   Moon,
+  Rocket,
   Search,
   Share2,
   ShieldCheck,
-  Sparkles,
   Sun,
   UploadCloud,
+  UserRoundCheck,
   Users,
 } from "lucide-react";
 
@@ -59,7 +60,7 @@ const FEATURES = [
   {
     icon: BellRing,
     title: "Smart notifications",
-    text: "CRs get an instant bell notification when another section wants to share a document, and can accept or decline.",
+    text: "New documents, drives, resumes and admin replies land in the bell instantly — nothing slips through.",
   },
   {
     icon: Users,
@@ -67,9 +68,9 @@ const FEATURES = [
     text: "Add students one by one or bulk-import via CSV. Promote CRs, reset passwords and manage every account.",
   },
   {
-    icon: BarChart3,
-    title: "Analytics dashboard",
-    text: "Live totals, uploads by category and branch, and recent activity at a glance.",
+    icon: Briefcase,
+    title: "Placement drives",
+    text: "Company drives with eligibility, apply links and an AI assistant that answers which drives match you.",
   },
   {
     icon: ShieldCheck,
@@ -86,8 +87,8 @@ const ROLES = [
     points: [
       "Browse & download documents for your branch and section",
       "Navigate by semester → category → subject",
-      "Search and preview files in the browser",
-      "Download multiple documents in one go",
+      "Upload your resume and check your AI star rating",
+      "See which placement drives match your profile",
     ],
   },
   {
@@ -95,7 +96,7 @@ const ROLES = [
     title: "Class Representatives (CR)",
     color: "from-violet-500/20 to-purple-500/10 text-violet-600 dark:text-violet-400",
     points: [
-      "Upload documents for your assigned section",
+      "Upload documents & assignments for your section",
       "Request sharing with other sections' CRs",
       "Accept incoming share requests for your students",
       "Manage your section's students — add, CSV import, reset passwords",
@@ -108,8 +109,8 @@ const ROLES = [
     points: [
       "Manage branches, sections, semesters, subjects & categories",
       "Upload and share documents across every section",
-      "Promote/demote CRs, activate accounts, reset passwords",
-      "Full audit logs and college-wide analytics",
+      "Control faculty portal access — resume and/or placement",
+      "Full audit logs, AI credit usage and college-wide analytics",
     ],
   },
 ];
@@ -123,14 +124,50 @@ const STEPS = [
   {
     step: "02",
     title: "Explore or upload",
-    text: "Students browse by semester, category and subject. CRs and admins upload notes, manuals and more.",
+    text: "Students browse by semester, category and subject. CRs and admins upload notes, assignments and drives.",
   },
   {
     step: "03",
-    title: "Share & download",
-    text: "CRs share across sections with one tap, and everyone downloads what they need — no more chasing files.",
+    title: "Share & grow",
+    text: "Share documents across sections, get AI resume reviews and track placement drives — all in one place.",
   },
 ];
+
+function InstallAppButton() {
+  const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
+
+  // Listen for the browser's "installable PWA" event so the button can trigger
+  // a native app install (Android / Windows / supported browsers).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  if (!installPrompt) {
+    return null;
+  }
+
+  return (
+    <Button
+      size="lg"
+      variant="outline"
+      onClick={() => {
+        const promptEvent = installPrompt as unknown as {
+          prompt: () => Promise<void>;
+          userChoice: Promise<{ outcome: string }>;
+        };
+        void promptEvent.prompt();
+        setInstallPrompt(null);
+      }}
+    >
+      <Download className="size-4" /> Install as App
+    </Button>
+  );
+}
 
 export default function HomePage() {
   const { user, loading } = useAuth();
@@ -144,7 +181,7 @@ export default function HomePage() {
   if (loading || user) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
-        <GraduationCap className="size-8 animate-pulse text-primary" />
+        <Handshake className="size-8 animate-pulse text-primary" />
       </div>
     );
   }
@@ -156,11 +193,11 @@ export default function HomePage() {
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
             <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-md shadow-primary/25">
-              <GraduationCap className="size-5" />
+              <Handshake className="size-5" />
             </div>
             <div className="leading-tight">
-              <p className="text-sm font-bold tracking-tight">College Document Portal</p>
-              <p className="text-[11px] text-muted-foreground">Every note, one place</p>
+              <p className="text-sm font-bold tracking-tight">PlaceMate</p>
+              <p className="text-[11px] text-muted-foreground">Campus documents, placements &amp; more</p>
             </div>
           </Link>
           <nav className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
@@ -199,7 +236,7 @@ export default function HomePage() {
         <div className="relative mx-auto max-w-6xl px-4 pt-20 pb-16 text-center sm:px-6 sm:pt-28">
           <motion.div {...fadeUp} transition={{ duration: 0.5 }}>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-              <Sparkles className="size-3.5" /> The digital library for your college
+              <Handshake className="size-3.5" /> PlaceMate — your campus hub
             </span>
           </motion.div>
 
@@ -208,9 +245,9 @@ export default function HomePage() {
             transition={{ duration: 0.5, delay: 0.08 }}
             className="mx-auto mt-6 max-w-3xl text-4xl leading-tight font-extrabold tracking-tight sm:text-6xl"
           >
-            Every note, question paper &amp; lab manual.{" "}
+            Every note, resume &amp; placement drive.{" "}
             <span className="bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-              One portal.
+              One place.
             </span>
           </motion.h1>
 
@@ -219,9 +256,9 @@ export default function HomePage() {
             transition={{ duration: 0.5, delay: 0.16 }}
             className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground"
           >
-            The College Document Portal lets students, Class Representatives and admins upload,
-            browse, share and download study documents — organized by semester, category and
-            subject, with role-based access for everyone.
+            PlaceMate brings together study documents, resumes with AI reviews, and placement drives
+            for your whole college — organized by semester, subject and section, with role-based
+            access for students, CRs, faculty and admins.
           </motion.p>
 
           <motion.div
@@ -229,24 +266,32 @@ export default function HomePage() {
             transition={{ duration: 0.5, delay: 0.24 }}
             className="mt-9 flex flex-wrap items-center justify-center gap-3"
           >
-            <Button size="lg" render={<Link href="/login" />} className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110">
+            <Button
+              size="lg"
+              render={<Link href="/login" />}
+              className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+            >
               Get started <ArrowRight className="size-4" />
             </Button>
             <Button size="lg" variant="outline" render={<a href="#features" />}>
               Explore features
             </Button>
+            <InstallAppButton />
           </motion.div>
 
           <motion.div
             {...fadeUp}
             transition={{ duration: 0.5, delay: 0.32 }}
-            className="mx-auto mt-12 flex max-w-2xl flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-muted-foreground"
+            className="mx-auto mt-12 flex max-w-3xl flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-muted-foreground"
           >
             <span className="flex items-center gap-1.5">
               <Check className="size-4 text-emerald-500" /> PDF, PPT, DOCX &amp; TXT
             </span>
             <span className="flex items-center gap-1.5">
-              <Check className="size-4 text-emerald-500" /> Organized by semester
+              <Check className="size-4 text-emerald-500" /> AI resume reviews
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Check className="size-4 text-emerald-500" /> Placement drives
             </span>
             <span className="flex items-center gap-1.5">
               <Check className="size-4 text-emerald-500" /> Role-based access
@@ -259,20 +304,22 @@ export default function HomePage() {
       <section id="about" className="border-y bg-muted/30 py-20">
         <div className="mx-auto grid max-w-6xl items-center gap-12 px-4 sm:px-6 lg:grid-cols-2">
           <div>
-            <p className="text-sm font-semibold text-primary">What is this portal?</p>
+            <p className="text-sm font-semibold text-primary">What is PlaceMate?</p>
             <h2 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
-              A shared library built for your college
+              A shared campus platform built for your college
             </h2>
             <p className="mt-4 text-muted-foreground">
-              Instead of notes scattered across WhatsApp groups and pen drives, everything lives in
-              one organized, searchable place. Each branch and section sees exactly the documents
-              meant for them — no clutter, no missing files.
+              Instead of notes scattered across WhatsApp groups, resumes lost in mail threads and
+              drives forwarded from person to person — everything lives in one organized, searchable
+              place. Each branch and section sees exactly what&apos;s meant for them, and faculty track
+              resumes &amp; drives without chasing anyone.
             </p>
             <ul className="mt-6 space-y-3">
               {[
                 "Documents stored once and shared across sections without re-uploading",
+                "Resumes reviewed by faculty with an AI star rating and ATS report",
+                "Placement drives with eligibility, apply links and an AI assistant",
                 "CRs keep their section's library up to date, admins keep the whole college in check",
-                "Students always find the latest notes, manuals and question banks",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2.5 text-sm">
                   <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
@@ -306,6 +353,8 @@ export default function HomePage() {
                   { icon: FileText, name: "DBMS — Unit 1 Notes.pdf", meta: "Notes · 1.2 MB", color: "bg-rose-500/15 text-rose-500" },
                   { icon: FileText, name: "Operating Systems — Mid-1", meta: "Previous Paper · 480 KB", color: "bg-sky-500/15 text-sky-500" },
                   { icon: FileText, name: "Computer Networks — Lab Manual", meta: "Lab Manuals · 2.8 MB", color: "bg-amber-500/15 text-amber-500" },
+                  { icon: UserRoundCheck, name: "My Resume — 4.5 ★ AI rating", meta: "Reviewed by faculty", color: "bg-violet-500/15 text-violet-500" },
+                  { icon: Briefcase, name: "TCS Drive — Software Engineer", meta: "Apply by 15 Aug · 6-8 LPA", color: "bg-teal-500/15 text-teal-500" },
                 ].map((f, i) => (
                   <div
                     key={f.name}
@@ -337,8 +386,8 @@ export default function HomePage() {
               Everything your campus needs
             </h2>
             <p className="mt-4 text-muted-foreground">
-              Built around the way colleges actually work — semesters, sections, subjects and the
-              people who keep them running.
+              Built around the way colleges actually work — semesters, sections, subjects, resumes
+              and placements.
             </p>
           </div>
 
@@ -369,7 +418,7 @@ export default function HomePage() {
           <div className="mx-auto max-w-2xl text-center">
             <p className="text-sm font-semibold text-primary">Made for every role</p>
             <h2 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
-              One portal, three ways to use it
+              One portal, four ways to use it
             </h2>
           </div>
 
@@ -397,6 +446,38 @@ export default function HomePage() {
                 </ul>
               </motion.div>
             ))}
+
+            {/* Faculty */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.45, delay: 0.24 }}
+              className="flex flex-col rounded-2xl border bg-card p-6 shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
+            >
+              <div className="flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 text-amber-600 ring-1 ring-amber-500/20 dark:text-amber-400">
+                <Rocket className="size-6" />
+              </div>
+              <h3 className="mt-4 text-lg font-bold">Faculty</h3>
+              <ul className="mt-4 space-y-2.5">
+                <li className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+                  Review student resumes in your branch — with one-click mark-all-reviewed
+                </li>
+                <li className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+                  Track who has uploaded a resume and who hasn&apos;t
+                </li>
+                <li className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+                  Post and manage placement drives (if the admin gives you access)
+                </li>
+                <li className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <Check className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+                  Message the admin when you need help or changes
+                </li>
+              </ul>
+            </motion.div>
           </div>
         </div>
       </section>
@@ -436,13 +517,13 @@ export default function HomePage() {
       <section className="relative overflow-hidden border-t py-20">
         <div className="pointer-events-none absolute -top-24 left-1/2 size-96 -translate-x-1/2 rounded-full bg-primary/20 blur-3xl" />
         <div className="relative mx-auto max-w-3xl px-4 text-center sm:px-6">
-          <Library className="mx-auto size-10 text-primary" />
+          <Handshake className="mx-auto size-10 text-primary" />
           <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
-            Ready to find everything you need?
+            Ready to bring your campus together?
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-            Sign in with your roll number and open your college&apos;s document library. Your default
-            password is your roll number — change it after your first login.
+            Sign in with your roll number and open your college&apos;s PlaceMate. Your default password
+            is your roll number — change it after your first login.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Button
@@ -450,7 +531,7 @@ export default function HomePage() {
               render={<Link href="/login" />}
               className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
             >
-              Sign in to the portal <ArrowRight className="size-4" />
+              Sign in to PlaceMate <ArrowRight className="size-4" />
             </Button>
           </div>
         </div>
@@ -461,11 +542,11 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm text-muted-foreground sm:flex-row sm:px-6">
           <div className="flex items-center gap-2">
             <div className="flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
-              <GraduationCap className="size-4" />
+              <Handshake className="size-4" />
             </div>
-            <span className="font-medium text-foreground">College Document Portal</span>
+            <span className="font-medium text-foreground">PlaceMate</span>
           </div>
-          <p>Built for students, CRs and administrators.</p>
+          <p>Built for students, CRs, faculty and administrators.</p>
         </div>
       </footer>
     </div>

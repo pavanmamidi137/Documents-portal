@@ -13,6 +13,12 @@ class Document(models.Model):
 
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, default="")
+    # For assignments: the last date students can submit. Optional for other
+    # document types; shown as a badge on cards and in the student browser.
+    submission_deadline = models.DateField(
+        null=True, blank=True,
+        help_text="Optional - for assignments, the last date to submit.",
+    )
     file_name = models.CharField(max_length=255)
     file_size = models.PositiveBigIntegerField(default=0)  # bytes
     cloudinary_url = models.URLField(max_length=500)

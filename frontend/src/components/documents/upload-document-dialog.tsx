@@ -58,6 +58,8 @@ const schema = z.object({
   category: z.string().min(1, "Select a category"),
   subject: z.string().min(1, "Select a subject"),
   unit: z.string().optional(),
+  // For assignments: the last date students can submit (optional).
+  submission_deadline: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -128,6 +130,7 @@ export function UploadDocumentDialog({
   const selectedSubject = useWatch({ control, name: "subject" });
   const selectedUnit = useWatch({ control, name: "unit" });
   const selectedTitle = useWatch({ control, name: "title" });
+  const selectedDeadline = useWatch({ control, name: "submission_deadline" });
 
   // Derived from useWatch so the selects stay in sync without re-watching
   // inside the memo (subjects with no branch are college-wide, so they appear
@@ -195,6 +198,7 @@ export function UploadDocumentDialog({
         category: "",
         subject: "",
         unit: "",
+        submission_deadline: "",
       });
       titleDirty.current = false;
       // File/error/selection state is reset by the parent's `key` remount.
@@ -252,6 +256,9 @@ export function UploadDocumentDialog({
     form.append("semester", values.semester);
     form.append("category", values.category);
     form.append("subject", values.subject);
+    if (values.submission_deadline) {
+      form.append("submission_deadline", values.submission_deadline);
+    }
 
     setSubmitting(true);
     try {
@@ -411,7 +418,7 @@ export function UploadDocumentDialog({
                           onCheckedChange={(v) => toggleShared(s.id, v === true)}
                         />
                         <span className="truncate">
-                          {s.branch_name} - Sec {s.name}
+                          {s.branch_code || s.branch_name} · Sec {s.name}
                         </span>
                       </label>
                     ))}
@@ -541,6 +548,20 @@ export function UploadDocumentDialog({
           </div>
 
           <div className="space-y-2">
+            <Label>Submission Deadline</Label>
+            <Input
+              type="date"
+              value={selectedDeadline}
+              onChange={(e) => setValue("submission_deadline", e.target.value)}
+              placeholder="Last date to submit (optional)"
+            />
+            <p className="text-xs text-muted-foreground">
+              For assignments: the last date students can submit. Shown as a badge on the
+              document — optional for other files.
+            </p>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="doc-title">Title</Label>
             <Input
               id="doc-title"
@@ -614,7 +635,7 @@ export function UploadDocumentDialog({
                       onCheckedChange={(v) => toggleShared(s.id, v === true)}
                     />
                     <span className="truncate">
-                      {s.branch_name} - Sec {s.name}
+                      {s.branch_code || s.branch_name} · Sec {s.name}
                     </span>
                   </label>
                 ))}

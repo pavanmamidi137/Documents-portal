@@ -24,7 +24,8 @@ class DocumentListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
         fields = [
-            "id", "title", "description", "file_name", "file_size",
+            "id", "title", "description", "submission_deadline",
+            "file_name", "file_size",
             "cloudinary_url", "download_url", "downloads", "created_at",
             "branch", "branch_name", "section", "section_name",
             "semester", "semester_name", "category", "category_name",
@@ -45,7 +46,13 @@ class DocumentShareRequestSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="document.category.name", read_only=True)
     semester_name = serializers.CharField(source="document.semester.name", read_only=True)
     from_branch_name = serializers.CharField(source="from_section.branch.name", read_only=True)
+    from_branch_code = serializers.CharField(
+        source="from_section.branch.code", read_only=True, default=""
+    )
     from_section_name = serializers.CharField(source="from_section.name", read_only=True)
+    to_branch_code = serializers.CharField(
+        source="to_section.branch.code", read_only=True, default=""
+    )
     to_section_name = serializers.CharField(source="to_section.name", read_only=True)
     requested_by_name = serializers.CharField(
         source="requested_by.full_name", read_only=True, default=None
@@ -60,8 +67,8 @@ class DocumentShareRequestSerializer(serializers.ModelSerializer):
         fields = [
             "id", "document", "document_title", "file_name",
             "subject_name", "category_name", "semester_name",
-            "from_section", "from_section_name", "from_branch_name",
-            "to_section", "to_section_name",
+            "from_section", "from_section_name", "from_branch_name", "from_branch_code",
+            "to_section", "to_section_name", "to_branch_code",
             "requested_by", "requested_by_name", "requested_by_roll",
             "status", "status_label", "note", "created_at", "responded_at",
         ]
@@ -71,6 +78,8 @@ class DocumentShareRequestSerializer(serializers.ModelSerializer):
 class DocumentCreateSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=200)
     description = serializers.CharField(required=False, allow_blank=True, default="")
+    # Optional: for assignments, the last date students can submit.
+    submission_deadline = serializers.DateField(required=False, allow_null=True)
     file = serializers.FileField(write_only=True)
     branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all())
     # Either a single primary `section` or a list `sections` (admin shares one

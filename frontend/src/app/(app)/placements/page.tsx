@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Bot,
@@ -52,6 +53,7 @@ function matchClasses(score: number) {
 
 export default function PlacementsPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"open" | "expired">("open");
   const [formOpen, setFormOpen] = useState(false);
@@ -168,8 +170,9 @@ export default function PlacementsPage() {
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: Math.min(i * 0.04, 0.3) }}
+              onClick={() => router.push(`/placements/${d.id}`)}
               className={cn(
-                "group relative flex flex-col rounded-2xl border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg",
+                "group relative flex cursor-pointer flex-col rounded-2xl border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg",
                 d.status === "OPEN" ? "hover:border-primary/30" : "opacity-80"
               )}
             >
@@ -290,42 +293,54 @@ export default function PlacementsPage() {
                     )}
                   >
                     <CalendarDays className="size-3.5" />
-                    {d.status === "OPEN"
-                      ? `Apply by ${formatDate(d.last_date_to_apply)}`
-                      : `Closed on ${formatDate(d.last_date_to_apply)}`}
+                    {d.last_date_to_apply
+                      ? d.status === "OPEN"
+                        ? `Apply by ${formatDate(d.last_date_to_apply)}`
+                        : `Closed on ${formatDate(d.last_date_to_apply)}`
+                      : "Apply date not announced"}
                   </p>
                   {d.status === "EXPIRED" && d.expires_at && (
                     <p className="mt-0.5 text-[11px] text-muted-foreground/80">
                       Removed automatically on {formatDate(d.expires_at)}
                     </p>
                   )}
-                  <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/80">
-                    <Building2 className="size-3" />
-                    Posted by {d.posted_by_name ?? "Admin"}
-                    {d.posted_by_role ? ` · ${ROLE_LABELS[d.posted_by_role] ?? "Portal"}` : ""} ·{" "}
-                    {formatDate(d.created_at)}
-                  </p>
+                  {d.posted_by_name && (
+                    <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/80">
+                      <Building2 className="size-3" />
+                      Posted by {d.posted_by_name}
+                      {d.posted_by_role ? ` · ${ROLE_LABELS[d.posted_by_role] ?? "Portal"}` : ""} ·{" "}
+                      {formatDate(d.created_at)}
+                    </p>
+                  )}
                 </div>
-                {d.drive_link ? (
-                  <a
-                    href={d.drive_link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-                      d.status === "OPEN"
-                        ? "bg-primary text-primary-foreground hover:brightness-110"
-                        : "pointer-events-none bg-muted text-muted-foreground"
-                    )}
-                  >
-                    {d.status === "OPEN" ? "Apply" : "Closed"}
-                    <ExternalLink className="size-3.5" />
-                  </a>
-                ) : (
-                  <Badge variant="outline" className="text-muted-foreground">
-                    Contact placement cell
-                  </Badge>
-                )}
+                <div
+                  className="flex items-center gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Button size="sm" variant="outline" onClick={() => router.push(`/placements/${d.id}`)}>
+                    Details
+                  </Button>
+                  {d.drive_link ? (
+                    <a
+                      href={d.drive_link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                        d.status === "OPEN"
+                          ? "bg-primary text-primary-foreground hover:brightness-110"
+                          : "pointer-events-none bg-muted text-muted-foreground"
+                      )}
+                    >
+                      {d.status === "OPEN" ? "Apply" : "Closed"}
+                      <ExternalLink className="size-3.5" />
+                    </a>
+                  ) : (
+                    <Badge variant="outline" className="text-muted-foreground">
+                      Contact placement cell
+                    </Badge>
+                  )}
+                </div>
               </div>
             </motion.div>
           ))}

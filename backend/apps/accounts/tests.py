@@ -1461,6 +1461,192 @@ class ResumeTests(TestCase):
         response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 403)
 
+    # -- AI usage limits ------------------------------------------------
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_resume_upload_limit_blocks_third_upload_today(self, mock_upload):
+        from django.test import override_settings
+
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        client = self._client(self.student)
+        # First two uploads succeed (default daily limit = 2).
+        for _ in range(2):
+            response = client.post(
+                "/api/resumes/", {"file": self._resume_file()}, format="multipart"
+            )
+            self.assertEqual(response.status_code, 201)
+        # The third upload of the day is blocked with a friendly message.
+        third = client.post(
+            "/api/resumes/", {"file": self._resume_file()}, format="multipart"
+        )
+        self.assertEqual(third.status_code, 400)
+        self.assertIn("per day", str(third.data))
+        # An admin override raises the limit.
+        from .models import AiAccessConfig
+
+        AiAccessConfig.objects.create(student=self.student, daily_resume_uploads=5)
+        allowed = client.post(
+            "/api/resumes/", {"file": self._resume_file()}, format="multipart"
+        )
+        self.assertEqual(allowed.status_code, 201)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_ai_request_limit_blocks_extra_analyzes_today(self, mock_upload):
+        from django.test import override_settings
+
+        from apps.placements.models import AiUsageLog
+
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+
+        # Simulate the student having used their daily AI budget already.
+        for _ in range(5):
+            AiUsageLog.objects.create(
+                user=self.student, action=AiUsageLog.Action.RESUME,
+                prompt_tokens=10, completion_tokens=5,
+            )
+        client = self._client(self.student)
+        response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("today", str(response.data))
+
+        # The daily budget resets the next day.
+        from django.utils import timezone
+
+        AiUsageLog.objects.update(created_at=timezone.now() - __import__("datetime").timedelta(days=1))
+        with (
+            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python"),
+            patch("apps.placements.resume_ai.ai_json", return_value={"score": 60, "summary": "ok", "strengths": [], "improvements": [], "skills": [], "ats_keywords": []}),
+        ):
+            allowed = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+        self.assertEqual(allowed.status_code, 200, allowed.data)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_unlimited_ai_bypasses_daily_limit(self, mock_upload):
+        from apps.placements.models import AiUsageLog
+
+        from .models import AiAccessConfig
+
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        AiAccessConfig.objects.create(student=self.student, unlimited_ai=True)
+        for _ in range(10):
+            AiUsageLog.objects.create(
+                user=self.student, action=AiUsageLog.Action.RESUME,
+                prompt_tokens=10, completion_tokens=5,
+            )
+        client = self._client(self.student)
+        with (
+            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python"),
+            patch("apps.placements.resume_ai.ai_json", return_value={"score": 60, "summary": "ok", "strengths": [], "improvements": [], "skills": [], "ats_keywords": []}),
+        ):
+            response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_ats_report_gated_once_per_interval(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        resume.ai_status = Resume.AiStatus.COMPLETE
+        resume.ai_score = 80
+        resume.ai_analysis = {"summary": "Great resume", "ats_keywords": ["Git"]}
+        resume.save()
+
+        client = self._client(self.student)
+        first = client.post(f"/api/resumes/{resume.id}/ats_view/", {}, format="json")
+        self.assertEqual(first.status_code, 200)
+        self.assertFalse(first.data["locked"])
+        self.assertEqual(first.data["ai_score"], 80)
+
+        # Opening again within the 10-day interval is blocked.
+        second = client.post(f"/api/resumes/{resume.id}/ats_view/", {}, format="json")
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(second.data["locked"])
+        self.assertIsNotNone(second.data["next_available_at"])
+        self.assertIsNone(second.data["analysis"])
+
+        # The interval is admin-adjustable per student.
+        from .models import AiAccessConfig
+
+        AiAccessConfig.objects.create(student=self.student, ats_view_interval_days=0)
+        unlimited = client.post(f"/api/resumes/{resume.id}/ats_view/", {}, format="json")
+        self.assertFalse(unlimited.data["locked"])
+
+    def test_ai_access_admin_endpoint_get_and_patch(self):
+        from .models import AiAccessConfig
+
+        client = self._client(self.admin)
+        url = f"/api/students/{self.student.id}/ai_access/"
+        get = client.get(url)
+        self.assertEqual(get.status_code, 200)
+        self.assertEqual(get.data["effective"]["daily_ai_requests"], 5)
+        self.assertEqual(get.data["effective"]["daily_resume_uploads"], 2)
+
+        patch_resp = client.patch(
+            url,
+            {"daily_ai_requests": 20, "unlimited_ai": True, "ats_view_interval_days": 7},
+            format="json",
+        )
+        self.assertEqual(patch_resp.status_code, 200)
+        config = AiAccessConfig.objects.get(student=self.student)
+        self.assertEqual(config.daily_ai_requests, 20)
+        self.assertTrue(config.unlimited_ai)
+        self.assertEqual(config.ats_view_interval_days, 7)
+
+    def test_student_cannot_change_own_ai_access(self):
+        client = self._client(self.student)
+        response = client.patch(
+            f"/api/students/{self.student.id}/ai_access/",
+            {"daily_ai_requests": 999},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_faculty_student_status_lists_upload_state(self):
+        Resume.objects.create(
+            student=self.student, file_name="r.pdf", file_size=10,
+            cloudinary_url="https://x.example/r.pdf", public_id="r",
+            is_reviewed=True,
+        )
+        no_resume = User.objects.create_user(
+            roll_number="21IT04", password="x", full_name="Zoya",
+            branch=self.branch, section=self.section_a,
+        )
+        client = self._client(self.faculty)
+        response = client.get("/api/resumes/student_status/")
+        self.assertEqual(response.status_code, 200)
+        by_roll = {r["roll_number"]: r for r in response.data["results"]}
+        self.assertIn("21IT01", by_roll)
+        self.assertTrue(by_roll["21IT01"]["has_resume"])
+        self.assertTrue(by_roll["21IT01"]["is_reviewed"])
+        self.assertIn("21IT04", by_roll)
+        self.assertFalse(by_roll["21IT04"]["has_resume"])
+
+    def test_gender_imported_from_csv(self):
+        csv_content = (
+            "Roll Number,Student Name,Gender\n"
+            "21CSE01,Aarav,Male\n"
+            "21CSE02,Bhavya,Female\n"
+            "21CSE03,Charan,Other\n"
+        )
+        result = services.import_students_csv(
+            SimpleUploadedFile("students.csv", csv_content.encode("utf-8")), self.admin,
+            branch_id=self.branch.id, section_id=self.section_a.id,
+        )
+        self.assertEqual(result["created"], 3)
+        self.assertEqual(
+            User.objects.get(roll_number="21CSE01").gender, User.Gender.MALE
+        )
+        self.assertEqual(
+            User.objects.get(roll_number="21CSE02").gender, User.Gender.FEMALE
+        )
+        self.assertEqual(
+            User.objects.get(roll_number="21CSE03").gender, User.Gender.OTHER
+        )
+
     @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_analyze_surfaces_ai_errors_and_keeps_status(self, mock_upload):
         from apps.placements.ai import AiError

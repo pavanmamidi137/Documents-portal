@@ -23,9 +23,10 @@ from apps.core.permissions import (
 from apps.core.throttles import AiRateThrottle, LoginRateThrottle
 from apps.core.utils import build_zip_response, csv_response, log_audit
 
-from .models import Resume, User
+from .models import AiAccessConfig, Resume, User
 from .serializers import (
     AdminCreateSerializer,
+    AiAccessConfigSerializer,
     ChangePasswordSerializer,
     FacultyCreateSerializer,
     FacultyUpdateSerializer,
@@ -94,6 +95,55 @@ class MeView(APIView):
         request.user.save()
         log_audit(request.user, "PROFILE_UPDATE", "User", request.user.id,
                   {"roll_number": request.user.roll_number, "fields": list(serializer.validated_data)}, request)
+        return Response(UserSerializer(request.user).data)
+
+
+class AvatarView(APIView):
+    """Upload (or replace) the signed-in user's profile picture.
+
+    The image goes to Cloudinary under ``avatars/{roll}/`` and the URL is
+    stored on the user. Sends multipart/form-data with a ``file`` field.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from apps.core.utils import slugify
+
+        image = request.FILES.get("file")
+        if not image:
+            raise ValidationError({"file": "A profile picture is required."})
+        if image.size > 5 * 1024 * 1024:
+            raise ValidationError({"file": "Profile picture exceeds the 5MB size limit."})
+        name = (image.name or "").lower()
+        ext = f".{name.rpartition('.')[2]}" if "." in name else ""
+        if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+            raise ValidationError({"file": "Only JPG, PNG, WEBP or GIF images are allowed."})
+        try:
+            import cloudinary.uploader
+
+            result = cloudinary.uploader.upload(
+                image,
+                resource_type="image",
+                folder=f"avatars/{slugify(request.user.roll_number)}",
+                use_filename=True,
+                unique_filename=True,
+                overwrite=False,
+            )
+        except Exception as exc:
+            raise ValidationError({"file": f"Cloudinary upload failed: {exc}"})
+        request.user.avatar_url = result["secure_url"]
+        request.user.save(update_fields=["avatar_url"])
+        log_audit(request.user, "PROFILE_UPDATE", "User", request.user.id,
+                  {"roll_number": request.user.roll_number, "fields": ["avatar_url"]}, request)
+        return Response(UserSerializer(request.user).data)
+
+    def delete(self, request):
+        """Remove the profile picture."""
+        request.user.avatar_url = ""
+        request.user.save(update_fields=["avatar_url"])
+        log_audit(request.user, "PROFILE_UPDATE", "User", request.user.id,
+                  {"roll_number": request.user.roll_number, "fields": ["avatar_url"]}, request)
         return Response(UserSerializer(request.user).data)
 
 
@@ -340,6 +390,45 @@ class StudentViewSet(viewsets.ModelViewSet):
         services.reset_password(student, serializer.validated_data["new_password"], request.user, request)
         return Response({"detail": "Password reset successfully."})
 
+    @action(detail=True, methods=["get", "patch"], permission_classes=[IsSuperAdmin])
+    def ai_access(self, request, pk=None):
+        """Read or update a student's AI usage limits (Super Admin).
+
+        GET returns the effective limits plus today's usage; PATCH accepts
+        ``daily_ai_requests``, ``ats_view_interval_days``,
+        ``daily_resume_uploads`` and ``unlimited_ai`` (null fields fall back to
+        the portal defaults).
+        """
+        student = self._get_student_or_404(pk)
+        config, _created = AiAccessConfig.objects.get_or_create(student=student)
+
+        if request.method == "GET":
+            limits = services._effective_ai_limits(student)
+            return Response({
+                **AiAccessConfigSerializer(config).data,
+                "effective": limits,
+                "ai_requests_used_today": services._ai_requests_used_today(student),
+                "resume_uploads_used_today": services._resume_uploads_used_today(student),
+            })
+
+        serializer = AiAccessConfigSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        validated = serializer.validated_data
+        for field, value in validated.items():
+            setattr(config, field, value)
+        config.updated_by = request.user
+        config.save()
+        log_audit(
+            request.user, "UPDATE", "AiAccessConfig", student.id,
+            {"roll_number": student.roll_number, **validated}, request,
+        )
+        return Response({
+            **AiAccessConfigSerializer(config).data,
+            "effective": services._effective_ai_limits(student),
+            "ai_requests_used_today": services._ai_requests_used_today(student),
+            "resume_uploads_used_today": services._resume_uploads_used_today(student),
+        })
+
 
 # ---------------------------------------------------------------------------
 # Faculty management (Super Admin)
@@ -559,7 +648,16 @@ class ResumeViewSet(viewsets.ModelViewSet):
         resume = Resume.objects.filter(student=request.user).first()
         if not resume:
             raise NotFound("You have not uploaded a resume yet.")
-        return Response(ResumeSerializer(resume).data)
+        data = ResumeSerializer(resume).data
+        # Attach the student's AI limits + today's usage so the resume page can
+        # show how many AI requests/upload slots remain.
+        limits = services._effective_ai_limits(request.user)
+        data["limits"] = {
+            **limits,
+            "ai_requests_used_today": services._ai_requests_used_today(request.user),
+            "resume_uploads_used_today": services._resume_uploads_used_today(request.user),
+        }
+        return Response(data)
 
     def create(self, request, *args, **kwargs):
         """Students upload or replace their own resume."""
@@ -569,7 +667,14 @@ class ResumeViewSet(viewsets.ModelViewSet):
         if not resume_file:
             raise ValidationError({"file": "A resume file is required."})
         resume = services.upload_resume(request.user, resume_file, request)
-        return Response(ResumeSerializer(resume).data, status=status.HTTP_201_CREATED)
+        data = ResumeSerializer(resume).data
+        limits = services._effective_ai_limits(request.user)
+        data["limits"] = {
+            **limits,
+            "ai_requests_used_today": services._ai_requests_used_today(request.user),
+            "resume_uploads_used_today": services._resume_uploads_used_today(request.user),
+        }
+        return Response(data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
         resume = self.get_object()
@@ -802,11 +907,123 @@ class ResumeViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": "This resume's file was deleted from storage. Re-upload it first."}
             )
+        # Students have a per-day AI request budget (default 5, admin-adjustable
+        # per roll number; "unlimited" bypasses it). Faculty/admin reviews are
+        # not limited - they review on behalf of the college.
+        if user.is_student:
+            limits = services._effective_ai_limits(user)
+            if not limits["unlimited_ai"] and \
+                    services._ai_requests_used_today(user) >= limits["daily_ai_requests"]:
+                raise ValidationError({
+                    "detail": (
+                        f"You have used your {limits['daily_ai_requests']} AI request(s) for today. "
+                        "Come back tomorrow, or ask the admin to raise your limit."
+                    )
+                })
         try:
             analyze_resume(resume, user)
         except AiError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-        return Response(ResumeSerializer(resume).data)
+        data = ResumeSerializer(resume).data
+        if user.is_student:
+            limits = services._effective_ai_limits(user)
+            data["limits"] = {
+                **limits,
+                "ai_requests_used_today": services._ai_requests_used_today(user),
+                "resume_uploads_used_today": services._resume_uploads_used_today(user),
+            }
+        return Response(data)
+
+    @action(detail=True, methods=["post"])
+    def ats_view(self, request, pk=None):
+        """Open the full ATS report for a student's own analyzed resume.
+
+        The report is gated to once per interval (default 10 days, admin-
+        adjustable per student). The first open within an interval unlocks the
+        report and records the view time; further opens within the same
+        interval are blocked with the next available date.
+        """
+        from datetime import timedelta
+
+        from django.conf import settings
+
+        resume = Resume.objects.filter(pk=pk, student_id=request.user.id).first()
+        if not resume:
+            raise PermissionDenied("You can only open your own resume's ATS report.")
+        if resume.ai_status != Resume.AiStatus.COMPLETE:
+            raise ValidationError({
+                "detail": "Run the AI review first - the ATS report unlocks after it completes."
+            })
+        limits = services._effective_ai_limits(request.user)
+        interval = limits["ats_view_interval_days"]
+        now = timezone.now()
+        next_available = None
+        locked = False
+        if interval:
+            if resume.ats_viewed_at:
+                elapsed = now - resume.ats_viewed_at
+                if elapsed < timedelta(days=interval):
+                    locked = True
+                    next_available = resume.ats_viewed_at + timedelta(days=interval)
+            if not locked:
+                resume.ats_viewed_at = now
+                resume.save(update_fields=["ats_viewed_at", "updated_at"])
+        return Response({
+            "locked": locked,
+            "next_available_at": next_available.isoformat() if next_available else None,
+            "interval_days": interval or None,
+            "analysis": None if locked else resume.ai_analysis,
+            "ai_score": None if locked else resume.ai_score,
+            "ai_match": None if locked else resume.ai_match,
+        })
+
+    @action(detail=False, methods=["get"], permission_classes=[IsSuperAdminOrFaculty])
+    def student_status(self, request):
+        """Every student of the caller's branch with their resume upload status.
+
+        Faculty want to see at a glance who has uploaded a resume and who
+        hasn't (plus review state), not just the resumes that exist. Includes
+        the same search/branch/section filters as the resume list.
+        """
+        user = request.user
+        if user.is_faculty and not user.has_resume_portal:
+            raise PermissionDenied("Your faculty access does not include the resume portal.")
+        students = User.objects.select_related("branch", "section", "resume").filter(
+            role=User.Role.STUDENT
+        )
+        if user.is_faculty and user.branch_id:
+            students = students.filter(branch_id=user.branch_id)
+        params = self.request.query_params
+        search = params.get("search", "").strip()
+        if search:
+            students = students.filter(
+                Q(roll_number__icontains=search)
+                | Q(full_name__icontains=search)
+                | Q(email__icontains=search)
+            )
+        if params.get("branch"):
+            students = students.filter(branch_id=params["branch"])
+        if params.get("section"):
+            students = students.filter(section_id=params["section"])
+
+        rows = []
+        for s in students.iterator():
+            resume = getattr(s, "resume", None)
+            rows.append({
+                "student_id": s.id,
+                "roll_number": s.roll_number,
+                "full_name": s.full_name,
+                "branch_name": s.branch.name if s.branch else None,
+                "section_name": s.section.name if s.section else None,
+                "passout_year": s.passout_year,
+                "has_resume": bool(resume and not resume.is_missing),
+                "is_reviewed": bool(resume and resume.is_reviewed),
+                "resume_id": resume.id if resume else None,
+                "file_name": resume.file_name if resume else None,
+                "updated_at": resume.updated_at if resume else None,
+                "ai_status": resume.ai_status if resume else None,
+            })
+        return Response({"results": rows})
 
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, pk=None):

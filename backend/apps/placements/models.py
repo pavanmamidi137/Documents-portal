@@ -38,7 +38,8 @@ class Drive(models.Model):
         help_text="Optional: comma/newline-separated roll numbers (paste from an Excel sheet). "
                   "Students in the list get an 'Eligible for you' tag.",
     )
-    last_date_to_apply = models.DateField()
+    # Optional: a drive without a last date stays OPEN (no auto-expiry).
+    last_date_to_apply = models.DateField(null=True, blank=True)
     posted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -57,6 +58,8 @@ class Drive(models.Model):
 
     @property
     def is_expired(self) -> bool:
+        if not self.last_date_to_apply:
+            return False  # no deadline -> never expires
         return self.last_date_to_apply < timezone.localdate()
 
     @property
@@ -66,6 +69,8 @@ class Drive(models.Model):
     @property
     def expires_at(self):
         """The date the drive is hard-deleted (30 days after the last date)."""
+        if not self.last_date_to_apply:
+            return None
         return self.last_date_to_apply + timedelta(days=30)
 
     def eligible_rolls(self) -> set[str]:

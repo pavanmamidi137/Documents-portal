@@ -212,6 +212,7 @@ def create_document(data: dict, document_file, actor, request=None):
     common = {
         "title": data["title"].strip(),
         "description": data.get("description", "").strip(),
+        "submission_deadline": data.get("submission_deadline"),
         "file_name": uploaded["file_name"],
         "file_size": uploaded["file_size"],
         "cloudinary_url": uploaded["url"],
@@ -263,6 +264,7 @@ def share_document(document, sections, actor, request=None):
             Document.objects.create(
                 title=document.title,
                 description=document.description,
+                submission_deadline=document.submission_deadline,
                 file_name=document.file_name,
                 file_size=document.file_size,
                 cloudinary_url=document.cloudinary_url,
@@ -380,6 +382,7 @@ def fork_document(document, section, actor, request=None):
     forked = Document.objects.create(
         title=document.title,
         description=document.description,
+        submission_deadline=document.submission_deadline,
         file_name=document.file_name,
         file_size=document.file_size,
         cloudinary_url=document.cloudinary_url,

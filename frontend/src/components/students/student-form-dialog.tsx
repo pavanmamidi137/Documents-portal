@@ -34,6 +34,7 @@ const schema = z.object({
   full_name: z.string().min(2, "Student name is required"),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   phone: z.string().optional(),
+  gender: z.string().optional(),
   passout_year: z.string().optional(),
   branch: z.string().optional(),
   section: z.string().optional(),
@@ -86,6 +87,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
         full_name: student?.full_name ?? "",
         email: student?.email ?? "",
         phone: student?.phone ?? "",
+        gender: student?.gender ?? "",
         passout_year: student?.passout_year ? String(student.passout_year) : "",
         branch: student?.branch ? String(student.branch) : "",
         section: student?.section ? String(student.section) : "",
@@ -118,6 +120,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
           full_name: values.full_name,
           email: values.email || null,
           phone: values.phone ?? "",
+          gender: values.gender || "",
           passout_year: passoutYear,
           branch: values.branch ? Number(values.branch) : null,
           section: values.section ? Number(values.section) : null,
@@ -130,6 +133,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
           full_name: values.full_name.trim(),
           email: values.email || null,
           phone: values.phone ?? "",
+          gender: values.gender || "",
           passout_year: passoutYear,
           branch: values.branch ? Number(values.branch) : null,
           section: values.section ? Number(values.section) : null,
@@ -188,6 +192,19 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
               <Label>Phone</Label>
               <Input placeholder="10-digit mobile" {...register("phone")} />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Gender (optional)</Label>
+            <select
+              {...register("gender")}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm outline-none transition-colors focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/20"
+            >
+              <option value="">Prefer not to say</option>
+              <option value="MALE">Male</option>
+              <option value="FEMALE">Female</option>
+              <option value="OTHER">Other</option>
+            </select>
           </div>
 
           <div className="space-y-2">

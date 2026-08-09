@@ -7,7 +7,7 @@ from datetime import timedelta
 from math import ceil
 
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from rest_framework import permissions, status
@@ -28,8 +28,9 @@ from .serializers import DriveSerializer
 
 User = get_user_model()
 
-# Admins, faculty and CRs may post/manage drives; students only read.
-_WRITE_ROLES = {User.Role.SUPER_ADMIN, User.Role.FACULTY, User.Role.CR}
+# Admins and CRs may post/manage drives; faculty only if the admin gave them
+# the Placement portal access (some faculty are resume-review only).
+_WRITE_ROLES = {User.Role.SUPER_ADMIN, User.Role.CR}
 
 # Monthly AI credit budget (in tokens) the super admin sets on the AI Usage page.
 _AI_BUDGET_KEY = "ai_monthly_budget_tokens"
@@ -210,6 +211,11 @@ def _quick_drive_answer(drive, user, question):
     """Answer simple fact questions straight from the drive row - no LLM."""
     q = question.lower()
     if _QUICK_DEADLINE_RE.search(q):
+        if not drive.last_date_to_apply:
+            return (
+                f"No apply-by date was shared for {drive.company_name} - "
+                "contact the placement cell for details."
+            )
         return (
             f"The last date to apply for {drive.company_name} is "
             f"{drive.last_date_to_apply}."
@@ -371,7 +377,8 @@ def _parse_eligibility_file(uploaded) -> dict:
 
 
 class _CanWriteDrives(permissions.BasePermission):
-    """Authenticated users may read drives; only admins/faculty/CRs may write."""
+    """Authenticated users may read drives; only admins, CRs and faculty with
+    the Placement portal access may write."""
 
     def has_permission(self, request, view):
         user = request.user
@@ -379,6 +386,8 @@ class _CanWriteDrives(permissions.BasePermission):
             return False
         if request.method in permissions.SAFE_METHODS:
             return True
+        if user.is_faculty:
+            return user.has_placement_portal
         return user.role in _WRITE_ROLES
 
 
@@ -421,7 +430,8 @@ class DriveViewSet(ModelViewSet):
         return [_CanWriteDrives()]
 
     def get_queryset(self):
-        # Lazy cleanup: drop anything past its 30-day grace period.
+        # Lazy cleanup: drop anything past its 30-day grace period. Drives
+        # without a last date (NULL) never expire and are never cleaned up.
         cutoff = timezone.localdate() - timedelta(days=30)
         Drive.objects.filter(last_date_to_apply__lt=cutoff).delete()
 
@@ -432,7 +442,8 @@ class DriveViewSet(ModelViewSet):
             drive_status = (self.request.query_params.get("status") or "open").lower()
             today = timezone.localdate()
             if drive_status == "open":
-                qs = qs.filter(last_date_to_apply__gte=today)
+                # Drives with no deadline stay open forever.
+                qs = qs.filter(Q(last_date_to_apply__isnull=True) | Q(last_date_to_apply__gte=today))
             elif drive_status == "expired":
                 qs = qs.filter(last_date_to_apply__lt=today)
         return qs
@@ -536,7 +547,7 @@ class DriveViewSet(ModelViewSet):
             f"Details: {(drive.description or 'not mentioned')[:300]}\n"
             f"Eligibility: {(drive.eligibility or 'not mentioned')[:300]}\n"
             f"Eligible rolls: {drive.eligible_roll_numbers or 'not listed'}\n"
-            f"Last date to apply: {drive.last_date_to_apply}\n"
+            f"Last date to apply: {drive.last_date_to_apply or 'not announced'}\n"
             f"Apply link: {drive.drive_link or 'not provided'}"
         ]
         system = _RAG_CHAT_PROMPT + f"\nAsking student: {_student_line(user)}."
@@ -599,7 +610,7 @@ class DriveViewSet(ModelViewSet):
                 f"Details: {(d.description or 'not mentioned')[:300]}\n"
                 f"Eligibility: {(d.eligibility or 'not mentioned')[:300]}\n"
                 f"Eligible rolls: {d.eligible_roll_numbers or 'not listed'}\n"
-                f"Last date to apply: {d.last_date_to_apply}\n"
+                f"Last date to apply: {d.last_date_to_apply or 'not announced'}\n"
                 f"Apply link: {d.drive_link or 'not provided'}"
             )
         if not documents:
@@ -761,7 +772,7 @@ class DriveViewSet(ModelViewSet):
             Notification.Kind.DRIVE,
             f"New drive: {instance.company_name}",
             _drive_preview(instance),
-            "/placements",
+            f"/placements/{instance.id}",
         )
         # Refresh the AI match for this new drive across already-analyzed
         # resumes (background, best-effort) so students see their match score

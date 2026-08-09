@@ -40,3 +40,19 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def read_all(self, request):
         Notification.objects.filter(user=request.user, read=False).update(read=True)
         return Response({"ok": True})
+
+    @action(detail=False, methods=["post"], url_path="mark_kind_read")
+    def mark_kind_read(self, request):
+        """Mark every unread notification of one kind as read.
+
+        Used by the placements detail page: a drive notification's count only
+        clears once the student actually opens the drive, not when the bell is
+        clicked. Pass ``kind`` (e.g. DRIVE) as JSON or a query param.
+        """
+        kind = (request.data.get("kind") or request.query_params.get("kind") or "").upper()
+        if kind not in Notification.Kind.values:
+            return Response({"ok": False, "detail": "Unknown notification kind."}, status=400)
+        count = Notification.objects.filter(
+            user=request.user, kind=kind, read=False
+        ).update(read=True)
+        return Response({"ok": True, "updated": count})

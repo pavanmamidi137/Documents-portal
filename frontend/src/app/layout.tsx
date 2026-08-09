@@ -14,16 +14,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Placify | College Documents Portal",
+  title: "PlaceMate | Campus Documents, Resumes & Placements",
   description:
-    "Placify — placement drives, documents and resumes for your college. Upload, browse and share notes, question banks, lab manuals and more.",
+    "PlaceMate — campus documents, AI resume reviews and placement drives for your college. Upload, browse and share notes, question banks, lab manuals, resumes and drives.",
   // PWA: point the browser at the manifest, icons and iOS metadata. The
   // service worker (public/sw.js) is registered by next-pwa at runtime.
   manifest: "/manifest.webmanifest",
-  applicationName: "Placify",
+  applicationName: "PlaceMate",
   appleWebApp: {
     capable: true,
-    title: "Placify",
+    title: "PlaceMate",
     statusBarStyle: "default",
   },
   icons: {

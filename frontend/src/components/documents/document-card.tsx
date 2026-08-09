@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Download, Eye, RotateCcw, Trash2 } from "lucide-react";
+import { CalendarClock, Download, Eye, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentTypeMeta } from "@/lib/document-types";
@@ -115,6 +115,15 @@ export function DocumentCard({
             title="This file was deleted in Cloudinary and restored recently."
           >
             <RotateCcw className="size-3" /> Restored
+          </Badge>
+        )}
+        {document.submission_deadline && (
+          <Badge
+            variant="outline"
+            className="gap-1 border-rose-500/30 bg-rose-500/10 text-[11px] text-rose-600 dark:text-rose-400"
+            title="Last date to submit this assignment"
+          >
+            <CalendarClock className="size-3" /> Submit by {formatDate(document.submission_deadline)}
           </Badge>
         )}
       </div>

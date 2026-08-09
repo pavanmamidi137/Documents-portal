@@ -10,9 +10,11 @@ import {
   Eye,
   FileText,
   FileUp,
+  Gauge,
   Lightbulb,
   ListChecks,
   Loader2,
+  Lock,
   RefreshCw,
   RotateCcw,
   Send,
@@ -32,21 +34,137 @@ import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { fetchMyResume, http, openResumeInNewTab } from "@/lib/api";
-import type { Resume } from "@/lib/types";
-import { formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
+import type { Resume, ResumeAiAnalysis } from "@/lib/types";
+import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 
 const ACCEPTED = ".pdf,.doc,.docx";
 
-function scoreTone(score: number) {
-  if (score >= 70) return "text-emerald-600 dark:text-emerald-400";
-  if (score >= 45) return "text-amber-600 dark:text-amber-400";
-  return "text-rose-600 dark:text-rose-400";
+/** 0-100 AI score -> 0-5 stars (rounds to the nearest half star). */
+function scoreToStars(score: number | null): number {
+  if (score == null) return 0;
+  return Math.min(5, Math.max(0, Math.round(score / 10) / 2));
 }
 
 function scoreRing(score: number) {
   if (score >= 70) return "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
   if (score >= 45) return "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400";
   return "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400";
+}
+
+function StarRating({ score }: { score: number | null }) {
+  const stars = scoreToStars(score);
+  return (
+    <div className="flex items-center gap-0.5" aria-label={`${stars} out of 5 stars`}>
+      {[1, 2, 3, 4, 5].map((i) => {
+        const filled = stars >= i;
+        const half = !filled && stars >= i - 0.5;
+        return (
+          <Star
+            key={i}
+            className={cn(
+              "size-5",
+              filled
+                ? "fill-amber-400 text-amber-400"
+                : half
+                  ? "fill-amber-400/40 text-amber-400"
+                  : "text-muted-foreground/30"
+            )}
+          />
+        );
+      })}
+      <span className="ml-1.5 text-sm font-semibold tabular-nums">
+        {stars.toFixed(1)}
+        <span className="font-normal text-muted-foreground">/5</span>
+      </span>
+    </div>
+  );
+}
+
+interface AtsReport {
+  locked: boolean;
+  next_available_at: string | null;
+  interval_days: number | null;
+  analysis: ResumeAiAnalysis | null;
+  ai_score: number | null;
+  ai_match: Record<string, { score: number; reason: string; company_name: string }> | null;
+}
+
+function AtsReportCard({ resume }: { resume: Resume }) {
+  const [report, setReport] = useState<AtsReport | null>(null);
+  const [opening, setOpening] = useState(false);
+
+  const openReport = async () => {
+    if (opening) return;
+    setOpening(true);
+    try {
+      const data = await http.post<AtsReport>(`/resumes/${resume.id}/ats_view/`, {});
+      setReport(data);
+      if (data.locked) {
+        toast.info(
+          data.next_available_at
+            ? `The full ATS report unlocks on ${formatDate(data.next_available_at)} — it refreshes once every ${data.interval_days ?? 10} days.`
+            : "The full ATS report is locked for now."
+        );
+      } else {
+        toast.success("Full ATS report unlocked.");
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  // Only the student can open the report - faculty/admin don't get the button.
+  return (
+    <div className="rounded-xl border bg-card/60 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-xs font-semibold">
+            <Gauge className="size-3.5 text-violet-500" /> Full ATS Report
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            The complete keyword &amp; improvement report refreshes once every{" "}
+            {resume.limits?.ats_view_interval_days ?? 10} days.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={openReport} disabled={opening}>
+          {opening ? <Loader2 className="size-3.5 animate-spin" /> : <Gauge className="size-3.5" />}
+          {report?.locked ? "View again" : "Open Report"}
+        </Button>
+      </div>
+
+      {report && !report.locked && report.analysis && (
+        <div className="mt-3 space-y-3 border-t pt-3">
+          <div className="flex flex-wrap gap-1.5">
+            {report.analysis.ats_keywords.map((s, i) => (
+              <Badge key={i} variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 text-[11px] dark:text-amber-400">
+                + {s}
+              </Badge>
+            ))}
+            {report.analysis.ats_keywords.length === 0 && (
+              <p className="text-xs text-muted-foreground">No missing ATS keywords — great job.</p>
+            )}
+          </div>
+          {report.analysis.improvements.length > 0 && (
+            <ul className="space-y-1.5">
+              {report.analysis.improvements.map((s, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <Lightbulb className="mt-0.5 size-3 shrink-0 text-amber-500" /> {s}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {report?.locked && report.next_available_at && (
+        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Lock className="size-3" /> Unlocks {formatDate(report.next_available_at)}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function AiReviewCard({
@@ -76,9 +194,7 @@ function AiReviewCard({
           <CardDescription>
             {analyzing
               ? "Analyzing your resume — this takes a few seconds."
-              : resume.is_reviewed
-                ? "Faculty reviewed your resume — run the AI review for a quality score and drive matches."
-                : "Get a quality score and see which open drives match you best."}
+              : "Get a star rating and see which open drives match you best."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -89,9 +205,8 @@ function AiReviewCard({
           ) : (
             <div className="flex flex-wrap items-center gap-3">
               <p className="text-sm text-muted-foreground">
-                {resume.is_reviewed
-                  ? "The review takes a few seconds and uses your AI credits."
-                  : "Once faculty review your resume this runs automatically. You can also run it now to see your drive match chances early."}
+                New uploads are analyzed automatically. You can also run it now to see your star
+                rating and drive match chances early.
               </p>
               <Button onClick={onAnalyze} variant="outline">
                 <Sparkles className="size-4" /> Analyze with AI
@@ -140,21 +255,18 @@ function AiReviewCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        {/* Score + summary */}
+        {/* Star rating + summary */}
         <div className="flex items-start gap-4">
-          <div
-            className={`flex size-16 shrink-0 flex-col items-center justify-center rounded-2xl border ${scoreRing(resume.ai_score ?? 0)}`}
-          >
-            <span className={`text-2xl font-bold tabular-nums ${scoreTone(resume.ai_score ?? 0)}`}>
+          <div className="flex size-16 shrink-0 flex-col items-center justify-center rounded-2xl border bg-violet-500/10">
+            <span className="text-xl font-bold tabular-nums text-violet-600 dark:text-violet-400">
               {resume.ai_score ?? 0}
             </span>
-            <span className="text-[9px] font-semibold tracking-widest text-muted-foreground uppercase">
-              /100
-            </span>
+            <span className="text-[10px] font-medium text-muted-foreground">/ 100</span>
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">Resume quality score</p>
-            <p className="mt-1 text-sm text-muted-foreground">{analysis.summary}</p>
+            <StarRating score={resume.ai_score ?? 0} />
+            <p className="mt-1.5 text-sm font-medium">Resume quality</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">{analysis.summary}</p>
           </div>
         </div>
 
@@ -243,6 +355,8 @@ function AiReviewCard({
             </div>
           </div>
         )}
+
+        <AtsReportCard resume={resume} />
 
         <div className="flex items-center justify-between gap-3 border-t pt-3">
           <p className="text-[11px] text-muted-foreground">
@@ -529,6 +643,28 @@ export default function ResumePage() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {resume && resume.limits && !resume.limits.unlimited_ai && (
+          <div className="mt-6 rounded-xl border bg-muted/30 p-4">
+            <div className="grid gap-3 text-center sm:grid-cols-2">
+              <div className="rounded-lg border bg-card px-3 py-2">
+                <p className="text-[10px] text-muted-foreground uppercase">AI reviews today</p>
+                <p className="text-sm font-semibold tabular-nums">
+                  {resume.limits.ai_requests_used_today} / {resume.limits.daily_ai_requests}
+                </p>
+              </div>
+              <div className="rounded-lg border bg-card px-3 py-2">
+                <p className="text-[10px] text-muted-foreground uppercase">Resume uploads today</p>
+                <p className="text-sm font-semibold tabular-nums">
+                  {resume.limits.resume_uploads_used_today} / {resume.limits.daily_resume_uploads}
+                </p>
+              </div>
+            </div>
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              Daily limits reset at midnight. Need more? Ask the admin to raise your limits.
+            </p>
+          </div>
         )}
 
         {resume && !resume.is_missing && (

@@ -16,7 +16,10 @@ import {
   Download,
   Eye,
   FileText,
+  FileUp,
+  Loader2,
   RotateCcw,
+  UserRoundCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,13 +36,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EmptyState } from "@/components/empty-state";
 import { useMetaData } from "@/lib/use-meta";
 import { useAuth } from "@/lib/auth";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import { http, openResumeInNewTab } from "@/lib/api";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import type { Paginated, Resume } from "@/lib/types";
+import type { Paginated, Resume, StudentStatusRow } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 
 export default function FacultyResumesPage() {
@@ -48,6 +53,7 @@ export default function FacultyResumesPage() {
   const queryClient = useQueryClient();
   const isAdmin = user?.is_super_admin ?? false;
 
+  const [tab, setTab] = useState<"uploaded" | "students">("uploaded");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [q, setQ] = useState("");
@@ -202,6 +208,103 @@ export default function FacultyResumesPage() {
     setPage(1);
   };
 
+  // Every student of the branch with their resume upload/review status - the
+  // faculty member can see at a glance who has uploaded and who hasn't.
+  const { data: statusRows, isLoading: statusLoading } = useQuery({
+    queryKey: ["resumes", "student-status", debouncedQ, branch, section],
+    queryFn: () =>
+      http.get<{ results: StudentStatusRow[] }>("/resumes/student_status/", {
+        search: debouncedQ || undefined,
+        branch: branch || undefined,
+        section: section || undefined,
+      }),
+    enabled: tab === "students",
+  });
+
+  const statusColumns: Column<StudentStatusRow>[] = [
+    {
+      key: "student",
+      header: "Student",
+      cell: (s) => (
+        <div className="flex items-center gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary ring-1 ring-primary/30">
+            {s.full_name
+              .split(/\s+/)
+              .slice(0, 2)
+              .map((p) => p[0])
+              .join("")
+              .toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <p className="truncate font-medium">{s.full_name}</p>
+            <p className="truncate text-xs text-muted-foreground">{s.roll_number}</p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "class",
+      header: "Section",
+      cell: (s) => (
+        <div className="flex flex-wrap gap-1">
+          <Badge variant="secondary">{s.branch_name ?? "—"}</Badge>
+          <Badge variant="outline">{s.section_name ? `Sec ${s.section_name}` : "—"}</Badge>
+        </div>
+      ),
+    },
+    {
+      key: "batch",
+      header: "Batch",
+      cell: (s) => <span className="text-sm">{s.passout_year ?? "—"}</span>,
+    },
+    {
+      key: "resume",
+      header: "Resume",
+      cell: (s) =>
+        s.has_resume ? (
+          <Badge
+            variant="outline"
+            className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          >
+            <FileText className="size-3.5" /> Uploaded
+          </Badge>
+        ) : (
+          <Badge
+            variant="outline"
+            className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+          >
+            <FileUp className="size-3.5" /> Not uploaded
+          </Badge>
+        ),
+    },
+    {
+      key: "review",
+      header: "Review",
+      cell: (s) =>
+        s.is_reviewed ? (
+          <Badge
+            variant="outline"
+            className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          >
+            <CheckCircle2 className="size-3.5" /> Reviewed
+          </Badge>
+        ) : s.has_resume ? (
+          <Badge
+            variant="outline"
+            className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+          >
+            <Clock className="size-3.5" /> Pending
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
+    },
+  ];
+
+  const uploadedCount = data?.count ?? 0;
+  const statusList = statusRows?.results ?? [];
+  const uploadedIds = new Set(statusList.filter((s) => s.has_resume).map((s) => s.student_id));
+
   const columns: Column<Resume>[] = [
     {
       key: "student",
@@ -334,103 +437,159 @@ export default function FacultyResumesPage() {
         title="Student Resumes"
         description={
           isAdmin
-            ? "Browse resumes uploaded by students across every branch."
+            ? "Browse resumes uploaded by students across every branch, or see every student's upload status."
             : `Resumes of every student in the ${user?.branch_name ?? ""} branch, organised by section.`
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-xs">
-          <Input
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
-            placeholder="Search by name or roll number…"
-            className="h-9 bg-muted/50 pl-3"
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as "uploaded" | "students")}
+        className="mb-5"
+      >
+        <TabsList>
+          <TabsTrigger value="uploaded" className="gap-1.5">
+            <FileText className="size-4" /> Uploaded{uploadedCount > 0 ? ` (${uploadedCount})` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="students" className="gap-1.5">
+            <UserRoundCheck className="size-4" /> All students
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="students" className="mt-4">
+          {statusLoading ? (
+            <div className="flex justify-center py-16">
+              <Loader2 className="size-6 animate-spin text-primary" />
+            </div>
+          ) : statusList.length === 0 ? (
+            <EmptyState
+              icon={FileUp}
+              title="No students found"
+              description="No students match the current search or filters in your branch."
+            />
+          ) : (
+            <>
+              <div className="mb-4 flex flex-wrap gap-2">
+                <Badge variant="outline" className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <FileText className="size-3" /> {uploadedIds.size} uploaded
+                </Badge>
+                <Badge variant="outline" className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <FileUp className="size-3" /> {statusList.length - uploadedIds.size} not uploaded
+                </Badge>
+              </div>
+              <DataTable
+                columns={statusColumns}
+                data={statusList}
+                count={statusList.length}
+                page={1}
+                pageSize={statusList.length}
+                onPageChange={() => {}}
+                loading={false}
+                rowKey={(s) => s.student_id}
+                emptyTitle="No students found"
+                emptyDescription="No students match the current filters."
+              />
+              <p className="mt-3 text-xs text-muted-foreground">
+                Students manage their own resumes — they upload, preview, replace or delete them from
+                their profile. Students who haven&apos;t uploaded yet show an amber &quot;Not uploaded&quot; badge.
+              </p>
+            </>
+          )}
+        </TabsContent>
+        <TabsContent value="uploaded" className="mt-4">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="relative w-full max-w-xs">
+              <Input
+                value={q}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search by name or roll number…"
+                className="h-9 bg-muted/50 pl-3"
+              />
+            </div>
+            <Button
+              variant="outline"
+              className="gap-2"
+              disabled={!data?.count || markAll.isPending}
+              onClick={() => setMarkAllOpen(true)}
+            >
+              <CheckCheck className="size-4" /> Mark all reviewed
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleZip}
+              disabled={zipping}
+              title={
+                (data?.count ?? 0) > 100
+                  ? "ZIP includes the first 100 resumes in the current view"
+                  : "Download every resume in the current view as a ZIP"
+              }
+            >
+              <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
+            </Button>
+            {isAdmin && (
+              <Select value={branch} onValueChange={(v) => setFilter("branch", v ?? "")}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Branch">
+                    {branches.find((b) => String(b.id) === branch)?.name}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={String(b.id)}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Select value={section} onValueChange={(v) => setFilter("section", v ?? "")}>
+              <SelectTrigger className="w-36">
+                <SelectValue placeholder="Section">
+                  {selectedSection ? `Sec ${selectedSection.name}` : undefined}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {sections.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    Sec {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {hasFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-muted-foreground hover:text-foreground"
+                onClick={clearFilters}
+              >
+                <RotateCcw className="size-3.5" /> Clear all filters
+              </Button>
+            )}
+          </div>
+
+          <DataTable
+            columns={columns}
+            data={data?.results ?? []}
+            count={data?.count ?? 0}
+            page={page}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            loading={isLoading}
+            prefetchNextPage={prefetchNextPage}
+            rowKey={(r) => r.id}
+            emptyTitle="No resumes found"
+            emptyDescription="Students haven't uploaded resumes yet, or none match your filters."
           />
-        </div>
-        <Button
-          variant="outline"
-          className="gap-2"
-          disabled={!data?.count || markAll.isPending}
-          onClick={() => setMarkAllOpen(true)}
-        >
-          <CheckCheck className="size-4" /> Mark all reviewed
-        </Button>
-        <Button
-          variant="outline"
-          className="gap-2"
-          onClick={handleZip}
-          disabled={zipping}
-          title={
-            (data?.count ?? 0) > 100
-              ? "ZIP includes the first 100 resumes in the current view"
-              : "Download every resume in the current view as a ZIP"
-          }
-        >
-          <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
-        </Button>
-        {isAdmin && (
-          <Select value={branch} onValueChange={(v) => setFilter("branch", v ?? "")}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="Branch">
-                {branches.find((b) => String(b.id) === branch)?.name}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {branches.map((b) => (
-                <SelectItem key={b.id} value={String(b.id)}>
-                  {b.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <Select value={section} onValueChange={(v) => setFilter("section", v ?? "")}>
-          <SelectTrigger className="w-36">
-            <SelectValue placeholder="Section">
-              {selectedSection ? `Sec ${selectedSection.name}` : undefined}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {sections.map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                Sec {s.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {hasFilters && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-muted-foreground hover:text-foreground"
-            onClick={clearFilters}
-          >
-            <RotateCcw className="size-3.5" /> Clear all filters
-          </Button>
-        )}
-      </div>
 
-      <DataTable
-        columns={columns}
-        data={data?.results ?? []}
-        count={data?.count ?? 0}
-        page={page}
-        pageSize={pageSize}
-        onPageChange={setPage}
-        loading={isLoading}
-        prefetchNextPage={prefetchNextPage}
-        rowKey={(r) => r.id}
-        emptyTitle="No resumes found"
-        emptyDescription="Students haven't uploaded resumes yet, or none match your filters."
-      />
-
-      <p className="mt-4 text-xs text-muted-foreground">
-        Students manage their own resumes — they can upload, preview, replace or delete them from their profile. Viewing or downloading a resume marks it as reviewed.
-      </p>
+          <p className="mt-4 text-xs text-muted-foreground">
+            Students manage their own resumes — they can upload, preview, replace or delete them from their profile. Viewing or downloading a resume marks it as reviewed.
+          </p>
+        </TabsContent>
+      </Tabs>
 
       <ConfirmDialog
         open={markAllOpen}

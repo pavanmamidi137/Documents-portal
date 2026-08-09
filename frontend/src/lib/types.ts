@@ -1,11 +1,19 @@
 export type Role = "SUPER_ADMIN" | "CR" | "FACULTY" | "STUDENT";
 
+export type Gender = "MALE" | "FEMALE" | "OTHER" | "";
+export type FacultyAccess = "RESUME" | "PLACEMENT" | "BOTH" | "";
+
 export interface User {
   id: number;
   roll_number: string;
   full_name: string;
   email: string | null;
   phone: string;
+  gender: Gender;
+  gender_label: string;
+  avatar_url: string;
+  faculty_access: FacultyAccess;
+  faculty_access_label: string;
   passout_year: number | null;
   role: Role;
   role_label: string;
@@ -18,6 +26,7 @@ export interface User {
   is_cr: boolean;
   is_faculty: boolean;
   is_student: boolean;
+  profile_completion: number;
   date_joined: string;
 }
 
@@ -80,6 +89,7 @@ export interface DocumentItem {
   id: number;
   title: string;
   description: string;
+  submission_deadline: string | null;
   file_name: string;
   file_size: number;
   cloudinary_url: string;
@@ -164,6 +174,15 @@ export interface ResumeAiAnalysis {
   ats_keywords: string[];
 }
 
+export interface ResumeLimits {
+  daily_ai_requests: number;
+  ats_view_interval_days: number | null;
+  daily_resume_uploads: number;
+  unlimited_ai: boolean;
+  ai_requests_used_today: number;
+  resume_uploads_used_today: number;
+}
+
 export interface Resume {
   id: number;
   student: number;
@@ -185,8 +204,43 @@ export interface Resume {
   ai_match: Record<string, { score: number; reason: string; company_name: string }> | null;
   ai_error: string;
   ai_analyzed_at: string | null;
+  ats_viewed_at: string | null;
+  limits?: ResumeLimits;
   created_at: string;
   updated_at: string;
+}
+
+export interface AiAccessConfig {
+  id: number;
+  student: number;
+  daily_ai_requests: number | null;
+  unlimited_ai: boolean;
+  ats_view_interval_days: number | null;
+  daily_resume_uploads: number | null;
+  effective: {
+    daily_ai_requests: number;
+    ats_view_interval_days: number | null;
+    daily_resume_uploads: number;
+    unlimited_ai: boolean;
+  };
+  ai_requests_used_today: number;
+  resume_uploads_used_today: number;
+  updated_at: string;
+}
+
+export interface StudentStatusRow {
+  student_id: number;
+  roll_number: string;
+  full_name: string;
+  branch_name: string | null;
+  section_name: string | null;
+  passout_year: number | null;
+  has_resume: boolean;
+  is_reviewed: boolean;
+  resume_id: number | null;
+  file_name: string | null;
+  updated_at: string | null;
+  ai_status: "PENDING" | "COMPLETE" | "FAILED" | null;
 }
 
 export interface ImportResult {
@@ -310,8 +364,10 @@ export interface DocumentShareRequest {
   from_section: number;
   from_section_name: string;
   from_branch_name: string;
+  from_branch_code: string;
   to_section: number;
   to_section_name: string;
+  to_branch_code: string;
   requested_by: number | null;
   requested_by_name: string | null;
   requested_by_roll: string | null;

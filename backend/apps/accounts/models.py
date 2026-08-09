@@ -57,10 +57,33 @@ class User(AbstractBaseUser, PermissionsMixin):
         FACULTY = "FACULTY", "Faculty"
         STUDENT = "STUDENT", "Student"
 
+    class Gender(models.TextChoices):
+        MALE = "MALE", "Male"
+        FEMALE = "FEMALE", "Female"
+        OTHER = "OTHER", "Other"
+
+    # Which portal each faculty account may access. Admin decides per faculty
+    # member: resume review only, placement drives only, or both.
+    class FacultyAccess(models.TextChoices):
+        RESUME = "RESUME", "Resume Portal"
+        PLACEMENT = "PLACEMENT", "Placement Portal"
+        BOTH = "BOTH", "Both"
+
     roll_number = models.CharField(max_length=30, unique=True)
     full_name = models.CharField(max_length=150)
     email = models.EmailField(unique=True, null=True, blank=True)
     phone = models.CharField(max_length=20, blank=True, default="")
+    gender = models.CharField(
+        max_length=10, choices=Gender.choices, blank=True, default="",
+        help_text="Optional - collected during student import or profile edits.",
+    )
+    # Optional profile picture (Cloudinary URL) for every role.
+    avatar_url = models.URLField(max_length=500, blank=True, default="")
+    # Only meaningful for FACULTY: which portal(s) they can use.
+    faculty_access = models.CharField(
+        max_length=10, choices=FacultyAccess.choices,
+        default=FacultyAccess.BOTH, blank=True,
+    )
     passout_year = models.PositiveSmallIntegerField(
         null=True, blank=True,
         help_text="Batch pass-out year (e.g. 2025) - shown next to every student.",
@@ -122,6 +145,39 @@ class User(AbstractBaseUser, PermissionsMixin):
             return True
         return bool(self.is_faculty and branch and self.branch_id == branch.id)
 
+    # ------------------------------------------------------------------
+    # Faculty portal access helpers
+    # ------------------------------------------------------------------
+    @property
+    def has_resume_portal(self) -> bool:
+        """Faculty may use the resume review portal."""
+        return self.is_super_admin or (
+            self.is_faculty and self.faculty_access in (self.FacultyAccess.RESUME, self.FacultyAccess.BOTH)
+        )
+
+    @property
+    def has_placement_portal(self) -> bool:
+        """Faculty may use the placement drives portal."""
+        return self.is_super_admin or (
+            self.is_faculty and self.faculty_access in (self.FacultyAccess.PLACEMENT, self.FacultyAccess.BOTH)
+        )
+
+    @property
+    def profile_completion(self) -> int:
+        """0-100 percentage of profile fields filled in (student profile card)."""
+        checks = [
+            bool((self.full_name or "").strip()),
+            bool(self.email),
+            bool((self.phone or "").strip()),
+            bool(self.gender),
+            bool(self.passout_year),
+            bool(self.avatar_url),
+            bool(getattr(self, "resume", None) and not getattr(self.resume, "is_missing", True)),
+        ]
+        if not checks:
+            return 0
+        return int(round(sum(1 for c in checks if c) / len(checks) * 100))
+
 
 class Resume(models.Model):
     """A student's resume (PDF) stored on Cloudinary.
@@ -169,6 +225,10 @@ class Resume(models.Model):
     ai_match = models.JSONField(null=True, blank=True)
     ai_error = models.CharField(max_length=500, blank=True, default="")
     ai_analyzed_at = models.DateTimeField(null=True, blank=True)
+    # ATS report viewing gate: the full ATS report can only be opened once per
+    # interval (default 10 days, admin-adjustable per student). This records
+    # the last time the report was actually opened by the student.
+    ats_viewed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -177,3 +237,35 @@ class Resume(models.Model):
 
     def __str__(self) -> str:
         return f"Resume: {self.student.roll_number}"
+
+
+class AiAccessConfig(models.Model):
+    """Per-student overrides for the AI usage limits.
+
+    Every student gets the portal-wide defaults (daily AI requests = 5,
+    ATS report view interval = 10 days, resume uploads per day = 2). The
+    Super Admin can adjust these for a specific roll number - raise/lower the
+    numbers or grant unlimited AI requests - via the Students admin page.
+    """
+
+    student = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="ai_access"
+    )
+    # None => use the portal default (settings.AI_DAILY_REQUEST_LIMIT).
+    daily_ai_requests = models.PositiveSmallIntegerField(null=True, blank=True)
+    unlimited_ai = models.BooleanField(default=False)
+    # None => use the portal default (settings.ATS_VIEW_INTERVAL_DAYS).
+    ats_view_interval_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    # None => use the portal default (settings.RESUME_DAILY_UPLOAD_LIMIT).
+    daily_resume_uploads = models.PositiveSmallIntegerField(null=True, blank=True)
+    updated_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ai_access_updates",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["student__roll_number"]
+
+    def __str__(self) -> str:
+        return f"AiAccessConfig({self.student.roll_number})"

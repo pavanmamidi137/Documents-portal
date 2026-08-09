@@ -152,6 +152,26 @@ export default function FacultyPage() {
       cell: (f) => (f.branch_name ? <Badge variant="secondary">{f.branch_name}</Badge> : "—"),
     },
     {
+      key: "access",
+      header: "Portal Access",
+      cell: (f) => (
+        <Badge variant="outline" className="gap-1">
+          {f.faculty_access === "BOTH" ? (
+            <>
+              <Badge variant="secondary" className="gap-1 text-[10px]">Resume</Badge>
+              <Badge variant="secondary" className="gap-1 text-[10px]">Placement</Badge>
+            </>
+          ) : f.faculty_access === "RESUME" ? (
+            <Badge variant="secondary" className="gap-1 text-[10px]">Resume</Badge>
+          ) : f.faculty_access === "PLACEMENT" ? (
+            <Badge variant="secondary" className="gap-1 text-[10px]">Placement</Badge>
+          ) : (
+            <span className="text-xs text-muted-foreground">—</span>
+          )}
+        </Badge>
+      ),
+    },
+    {
       key: "active",
       header: "Active",
       cell: (f) => (

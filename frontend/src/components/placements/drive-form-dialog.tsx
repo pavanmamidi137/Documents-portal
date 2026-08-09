@@ -30,7 +30,8 @@ const schema = z.object({
   location: z.string(),
   package: z.string(),
   drive_link: z.string().url("Enter a valid link (e.g. https://...").or(z.literal("")),
-  last_date_to_apply: z.string().min(1, "Last date to apply is required"),
+  // Optional: a drive without a date stays open until the placement cell closes it.
+  last_date_to_apply: z.string().optional(),
   description: z.string(),
   eligibility: z.string(),
   eligible_roll_numbers: z.string(),
@@ -162,7 +163,7 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
         location: values.location.trim(),
         package: values.package.trim(),
         drive_link: values.drive_link.trim(),
-        last_date_to_apply: values.last_date_to_apply,
+        last_date_to_apply: values.last_date_to_apply || null,
         description: values.description.trim(),
         eligibility: values.eligibility.trim(),
         eligible_roll_numbers: values.eligible_roll_numbers.trim(),
@@ -248,11 +249,11 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
               <Input id="package" placeholder="e.g. 6 LPA" {...register("package")} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="last_date">Last Date to Apply *</Label>
+              <Label htmlFor="last_date">Last Date to Apply (optional)</Label>
               <Input id="last_date" type="date" {...register("last_date_to_apply")} />
-              {errors.last_date_to_apply && (
-                <p className="text-xs text-destructive">{errors.last_date_to_apply.message}</p>
-              )}
+              <p className="text-xs text-muted-foreground">
+                Leave blank if no deadline was shared — the drive stays open until you close it.
+              </p>
             </div>
           </div>
 

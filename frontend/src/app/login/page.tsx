@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { BookOpenCheck, Eye, EyeOff, GraduationCap, Loader2 } from "lucide-react";
+import { BookOpenCheck, Eye, EyeOff, Handshake, Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -63,9 +63,9 @@ export default function LoginPage() {
         <div className="rounded-2xl border bg-card/80 p-8 shadow-2xl backdrop-blur-xl">
           <div className="mb-8 flex flex-col items-center text-center">
             <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/60 shadow-lg shadow-primary/30">
-              <GraduationCap className="size-8 text-primary-foreground" />
+              <Handshake className="size-8 text-primary-foreground" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight">College Document Portal</h1>
+            <h1 className="text-2xl font-bold tracking-tight">PlaceMate</h1>
             <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
               <BookOpenCheck className="size-4" />
               Sign in with your roll number

@@ -59,6 +59,16 @@ const COMMON: NavItem[] = [
   { href: "/placements", label: "Placements", icon: Briefcase },
 ];
 
+// Faculty portal access: admin picks per faculty member whether they get the
+// resume review portal, the placement portal, or both.
+const canResumePortal = (u: { is_super_admin?: boolean; is_faculty?: boolean; faculty_access?: string }) =>
+  Boolean(u?.is_super_admin) ||
+  Boolean(u?.is_faculty && (u.faculty_access === "RESUME" || u.faculty_access === "BOTH"));
+
+const canPlacementPortal = (u: { is_super_admin?: boolean; is_faculty?: boolean; faculty_access?: string }) =>
+  Boolean(u?.is_super_admin) ||
+  Boolean(u?.is_faculty && (u.faculty_access === "PLACEMENT" || u.faculty_access === "BOTH"));
+
 const STUDENT_ONLY: NavItem[] = [{ href: "/resume", label: "My Resume", icon: FileUser }];
 
 const FACULTY_ONLY: NavItem[] = [{ href: "/faculty/resumes", label: "Resumes", icon: FileUser }];
@@ -139,13 +149,16 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
     ];
   } else if (user?.is_cr) {
     groups = [
-      { items: [COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2]] },
+      { items: [COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2], COMMON[3]] },
       { label: "Support", items: SUPPORT_ONLY },
     ];
   } else if (user?.is_faculty) {
+    const facultyTools: NavItem[] = [];
+    if (canResumePortal(user)) facultyTools.push(...FACULTY_ONLY);
+    if (canPlacementPortal(user)) facultyTools.push({ href: "/placements", label: "Placements", icon: Briefcase });
     groups = [
       { items: [COMMON[0], COMMON[2]] },
-      { label: "Faculty", items: FACULTY_ONLY },
+      ...(facultyTools.length > 0 ? [{ label: "Faculty", items: facultyTools }] : []),
       { label: "Support", items: SUPPORT_ONLY },
     ];
   } else {
@@ -210,8 +223,8 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
           </div>
           {!compact && (
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold leading-tight">Document Portal</p>
-              <p className="truncate text-[11px] text-muted-foreground">College Management</p>
+              <p className="truncate text-sm font-semibold leading-tight">PlaceMate</p>
+              <p className="truncate text-[11px] text-muted-foreground">College Portal</p>
             </div>
           )}
         </Link>
