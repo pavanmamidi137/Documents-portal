@@ -453,9 +453,9 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         }
       />
 
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="mb-4 flex min-w-0 flex-wrap gap-2">
         <Select value={filters.semester ?? ""} onValueChange={(v) => setFilter("semester", v ?? "")}>
-          <SelectTrigger className="w-36">
+          <SelectTrigger className="w-full sm:w-36">
             <SelectValue placeholder="Semester">{semesterName}</SelectValue>
           </SelectTrigger>
           <SelectContent>
@@ -467,7 +467,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
           </SelectContent>
         </Select>
         <Select value={filters.category ?? ""} onValueChange={(v) => setFilter("category", v ?? "")}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-full sm:w-40">
             <SelectValue placeholder="Category">{categoryName}</SelectValue>
           </SelectTrigger>
           <SelectContent>
@@ -479,7 +479,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
           </SelectContent>
         </Select>
         <Select value={filters.subject ?? ""} onValueChange={(v) => setFilter("subject", v ?? "")}>
-          <SelectTrigger className="w-52">
+          <SelectTrigger className="w-full sm:w-52">
             <SelectValue placeholder="Subject">{subjectName}</SelectValue>
           </SelectTrigger>
           <SelectContent>

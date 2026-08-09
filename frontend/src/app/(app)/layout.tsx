@@ -78,8 +78,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           sidebarMode={sidebarMode}
           onSidebarModeChange={changeSidebarMode}
         />
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">{children}</div>
+        <main className="flex-1 overflow-x-hidden overflow-y-auto">
+          <div className="mx-auto w-full min-w-0 max-w-7xl p-4 sm:p-6 lg:p-8">{children}</div>
         </main>
       </div>
     </div>

@@ -235,7 +235,7 @@ export function DataTable<T>({
       {(onSearchChange || toolbar) && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           {onSearchChange ? (
-            <div className="relative w-full max-w-xs">
+            <div className="relative w-full min-w-0 max-w-xs">
               <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={searchValue}
@@ -264,7 +264,7 @@ export function DataTable<T>({
         </motion.div>
       )}
 
-      <div className="rounded-xl border bg-card">
+      <div className="min-w-0 rounded-xl border bg-card">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
@@ -328,8 +328,8 @@ export function DataTable<T>({
         </Table>
       </div>
 
-      <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
-        <p>
+      <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <p className="min-w-0">
           Showing{" "}
           <span className="font-medium text-foreground">
             {count === 0 ? 0 : (page - 1) * pageSize + 1}–{Math.min(page * pageSize, count)}
@@ -341,21 +341,23 @@ export function DataTable<T>({
             </span>
           )}
         </p>
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 items-center justify-between gap-1 sm:justify-end">
           <Button
             variant="outline"
             size="sm"
+            className="flex-1 sm:flex-none"
             disabled={page <= 1 || loading}
             onClick={() => changePage(page - 1)}
           >
             <ChevronLeft className="size-4" /> Previous
           </Button>
-          <span className="px-2">
+          <span className="px-2 whitespace-nowrap">
             Page {page} / {totalPages}
           </span>
           <Button
             variant="outline"
             size="sm"
+            className="flex-1 sm:flex-none"
             disabled={page >= totalPages || loading}
             onClick={() => changePage(page + 1)}
           >

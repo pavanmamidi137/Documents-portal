@@ -314,7 +314,7 @@ export function StudentBrowser() {
   if (step.level === "subjects") {
     return (
       <div className="space-y-6">
-        <div className="relative max-w-md">
+        <div className="relative w-full min-w-0 max-w-md">
           <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={subjectSearch}
@@ -344,7 +344,7 @@ export function StudentBrowser() {
             description="Try a different search term."
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {filteredSubjects.map((subject, i) => {
               const count = subjectCount(subject);
               return (
@@ -354,19 +354,21 @@ export function StudentBrowser() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.35, delay: i * 0.04 }}
                   onClick={() => goTo({ level: "categories", subjectId: subject.id })}
-                  className="group relative overflow-hidden rounded-2xl border bg-card p-5 text-left shadow-sm transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
+                  className="group relative min-w-0 overflow-hidden rounded-2xl border bg-card p-5 text-left shadow-sm transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg"
                 >
                   <div className="absolute -top-10 -right-10 size-28 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-2xl" />
-                  <div className="relative">
+                  <div className="relative min-w-0">
                     <div className="flex size-11 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
                       <BookOpen className="size-5" />
                     </div>
-                    <p className="mt-4 text-lg leading-tight font-bold">{subject.name}</p>
+                    <p className="mt-4 text-lg leading-tight font-bold [overflow-wrap:anywhere] [word-break:break-word]">
+                      {subject.name}
+                    </p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {count} document{count === 1 ? "" : "s"}
                     </p>
-                    <Badge variant="secondary" className="mt-2">
-                      {subject.semester_name}
+                    <Badge variant="secondary" className="mt-2 max-w-full">
+                      <span className="block max-w-full truncate">{subject.semester_name}</span>
                     </Badge>
                     <p className="mt-3 text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
                       Browse categories →
@@ -390,7 +392,7 @@ export function StudentBrowser() {
           <span className="min-w-0 break-words">{currentSubject.name}</span>
           <Badge variant="secondary">{currentSubject.semester_name}</Badge>
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {currentSubject.categories.map((category, i) => {
             const count = category.units.reduce((n, u) => n + u.documents.length, 0);
             return (
@@ -400,9 +402,9 @@ export function StudentBrowser() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: i * 0.05 }}
                 onClick={() => goTo({ level: "units", subjectId: currentSubject.id, categoryId: category.id })}
-                className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+                className="group flex min-w-0 items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
               >
-                <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                   <Tag className="size-5" />
                 </div>
                 <div className="min-w-0">
@@ -435,7 +437,7 @@ export function StudentBrowser() {
           <span className="min-w-0 break-words">{currentSubject.name}</span>
           <Badge variant="secondary">{currentCategory.name}</Badge>
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {currentCategory.units.map((unit, i) => (
             <motion.button
               key={unit.label}
@@ -450,9 +452,9 @@ export function StudentBrowser() {
                   unitLabel: unit.label,
                 })
               }
-              className="group flex items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+              className="group flex min-w-0 items-center gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
             >
-              <div className="flex size-10 items-center justify-center rounded-lg bg-violet-500/10 text-violet-500">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-500">
                 <Layers className="size-5" />
               </div>
               <div className="min-w-0">
@@ -492,7 +494,7 @@ export function StudentBrowser() {
         </h2>
         <p className="mb-5 text-sm text-muted-foreground">{unitDocs.length} documents</p>
 
-        <div className="relative mb-4 max-w-md">
+        <div className="relative mb-4 w-full min-w-0 max-w-md">
           <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={docSearch}
@@ -503,7 +505,7 @@ export function StudentBrowser() {
         </div>
 
         {selectionToolbar(filteredDocs)}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filteredDocs.map((doc, i) => (
             <DocumentCard
               key={doc.id}

@@ -69,7 +69,7 @@ export function DocumentCard({
       transition={{ duration: 0.3, delay: index * 0.04 }}
       onClick={handleCardClick}
       className={cn(
-        "group relative flex flex-col rounded-xl border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
+        "group relative flex min-w-0 flex-col rounded-xl border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
         selecting && "cursor-pointer hover:border-primary/40",
         selected && "border-primary/50 bg-primary/5 ring-1 ring-primary/30"
       )}
@@ -91,19 +91,24 @@ export function DocumentCard({
           <FileIcon className="size-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold" title={document.title}>
+          <p
+            className="line-clamp-2 font-semibold [overflow-wrap:anywhere] [word-break:break-word] sm:line-clamp-1"
+            title={document.title}
+          >
             {document.title}
           </p>
-          <p className="truncate text-xs text-muted-foreground">{document.file_name}</p>
+          <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground [overflow-wrap:anywhere] [word-break:break-word]">
+            {document.file_name}
+          </p>
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <Badge variant="secondary" className="text-[11px]">
-          {document.subject_name}
+      <div className="mt-3 flex min-w-0 flex-wrap gap-1.5">
+        <Badge variant="secondary" className="max-w-full text-[11px]">
+          <span className="block max-w-full truncate">{document.subject_name}</span>
         </Badge>
-        <Badge variant="outline" className="text-[11px]">
-          {document.category_name}
+        <Badge variant="outline" className="max-w-full text-[11px]">
+          <span className="block max-w-full truncate">{document.category_name}</span>
         </Badge>
         <Badge variant="outline" className="text-[11px]">
           {document.semester_name}
@@ -133,11 +138,12 @@ export function DocumentCard({
         <span className="truncate text-right">{formatDate(document.created_at)}</span>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      {/* Buttons stack full-width on mobile, side-by-side from sm up. */}
+      <div className="mt-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
         <Button
           size="sm"
           variant="outline"
-          className="min-w-28 flex-1 whitespace-nowrap"
+          className="w-full whitespace-nowrap sm:w-auto sm:min-w-28 sm:flex-1"
           onClick={(e) => {
             e.stopPropagation();
             window.open(document.cloudinary_url, "_blank", "noopener");
@@ -147,7 +153,7 @@ export function DocumentCard({
         </Button>
         <Button
           size="sm"
-          className="min-w-28 flex-1 whitespace-nowrap"
+          className="w-full whitespace-nowrap sm:w-auto sm:min-w-28 sm:flex-1"
           onClick={(e) => {
             e.stopPropagation();
             handleDownload();
@@ -159,13 +165,14 @@ export function DocumentCard({
           <Button
             size="sm"
             variant="ghost"
-            className="size-8 shrink-0 text-destructive hover:text-destructive"
+            className="w-full shrink-0 justify-center gap-1.5 text-destructive hover:text-destructive sm:w-auto sm:size-8 sm:gap-0"
             onClick={(e) => {
               e.stopPropagation();
               handleDelete();
             }}
           >
             <Trash2 className="size-3.5" />
+            <span className="sm:hidden">Delete</span>
           </Button>
         )}
       </div>
