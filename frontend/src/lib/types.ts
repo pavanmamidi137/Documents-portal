@@ -19,6 +19,7 @@ export interface User {
   role_label: string;
   branch: number | null;
   branch_name: string | null;
+  branch_code: string;
   section: number | null;
   section_name: string | null;
   is_active: boolean;
@@ -81,6 +82,7 @@ export interface Subject {
   semester_name: string;
   branch: number | null;
   branch_name: string | null;
+  branch_code: string;
   documents_count: number;
   created_at: string;
 }
@@ -98,6 +100,7 @@ export interface DocumentItem {
   created_at: string;
   branch: number;
   branch_name: string;
+  branch_code: string;
   section: number;
   section_name: string;
   semester: number;
@@ -160,8 +163,21 @@ export interface MetaData {
   subjects: Subject[];
 }
 
+export interface SearchStudent {
+  id: number;
+  roll_number: string;
+  full_name: string;
+  email: string | null;
+  phone: string;
+  role: Role;
+  branch_name: string | null;
+  branch_code: string;
+  section_name: string | null;
+  is_active: boolean;
+}
+
 export interface SearchResults {
-  students: User[];
+  students: SearchStudent[];
   documents: DocumentItem[];
   announcements: Announcement[];
 }
@@ -189,7 +205,9 @@ export interface Resume {
   student_roll: string;
   student_name: string;
   student_avatar_url?: string;
+  student_gender_label?: string;
   branch_name: string | null;
+  branch_code: string;
   section_name: string | null;
   file_name: string;
   file_size: number;
@@ -235,7 +253,9 @@ export interface StudentStatusRow {
   full_name: string;
   role?: string;
   avatar_url?: string;
+  gender_label?: string;
   branch_name: string | null;
+  branch_code: string;
   section_name: string | null;
   passout_year: number | null;
   has_resume: boolean;

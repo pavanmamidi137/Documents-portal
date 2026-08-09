@@ -689,6 +689,13 @@ class ResumeViewSet(viewsets.ModelViewSet):
             qs = qs.filter(student__branch_id=params["branch"])
         if params.get("section"):
             qs = qs.filter(student__section_id=params["section"])
+        # Review-status filter: reviewed = faculty already marked it, pending = uploaded but not yet reviewed.
+        status = params.get("status", "").strip().lower()
+        if status in ("reviewed", "pending"):
+            qs = qs.filter(is_reviewed=(status == "reviewed"))
+        # CR-only filter: CRs are students too, so their resumes show alongside everyone else.
+        if params.get("cr"):
+            qs = qs.filter(student__role=User.Role.CR)
         return qs
 
     @action(detail=False, methods=["get"])
@@ -1062,6 +1069,17 @@ class ResumeViewSet(viewsets.ModelViewSet):
             students = students.filter(branch_id=params["branch"])
         if params.get("section"):
             students = students.filter(section_id=params["section"])
+        # Same status/CR filters as the resume list, applied to every student.
+        # Pending excludes Cloudinary-missing resumes (those render as "Not
+        # uploaded", not "Pending").
+        status = params.get("status", "").strip().lower()
+        if status in ("reviewed", "pending"):
+            students = students.filter(
+                resume__is_reviewed=(status == "reviewed"),
+                resume__is_missing=False,
+            )
+        if params.get("cr"):
+            students = students.filter(role=User.Role.CR)
 
         from apps.core.utils import get_or_set_list_cache
 
@@ -1077,7 +1095,9 @@ class ResumeViewSet(viewsets.ModelViewSet):
                     "full_name": s.full_name,
                     "role": s.role,
                     "avatar_url": s.avatar_url,
+                    "gender_label": s.get_gender_display() or "",
                     "branch_name": s.branch.name if s.branch else None,
+                    "branch_code": s.branch.code if s.branch else "",
                     "section_name": s.section.name if s.section else None,
                     "passout_year": s.passout_year,
                     "has_resume": bool(resume and not resume.is_missing),

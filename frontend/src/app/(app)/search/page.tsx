@@ -94,7 +94,8 @@ function SearchContent() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium">{s.full_name}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {s.roll_number} · {s.branch_name ?? "—"} {s.section_name ? `/ ${s.section_name}` : ""}
+                      {s.roll_number} · {s.branch_code || s.branch_name || "—"}{" "}
+                      {s.section_name ? `/ ${s.section_name}` : ""}
                     </p>
                   </div>
                   <Badge variant="outline" className={roleColor(s.role)}>
@@ -121,7 +122,7 @@ function SearchContent() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium">{d.title}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {d.subject_name} · {d.category_name} · {d.branch_name} {d.section_name} ·{" "}
+                      {d.subject_name} · {d.category_name} · {d.branch_code || d.branch_name} {d.section_name} ·{" "}
                       {formatBytes(d.file_size)}
                     </p>
                   </div>

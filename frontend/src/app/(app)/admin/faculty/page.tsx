@@ -149,7 +149,7 @@ export default function FacultyPage() {
     {
       key: "branch",
       header: "Branch",
-      cell: (f) => (f.branch_name ? <Badge variant="secondary">{f.branch_name}</Badge> : "—"),
+      cell: (f) => (f.branch_name ? <Badge variant="secondary">{f.branch_code || f.branch_name}</Badge> : "—"),
     },
     {
       key: "access",

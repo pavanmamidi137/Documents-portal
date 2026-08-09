@@ -439,7 +439,7 @@ export default function DashboardPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{doc.title}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {doc.subject_name} · {doc.branch_name} {doc.section_name} ·{" "}
+                      {doc.subject_name} · {doc.branch_code || doc.branch_name} {doc.section_name} ·{" "}
                       {formatBytes(doc.file_size)}
                     </p>
                   </div>

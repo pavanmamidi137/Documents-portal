@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   keepPreviousData,
   useMutation,
@@ -61,6 +61,8 @@ export default function FacultyResumesPage() {
   const debouncedQ = useDebouncedValue(q);
   const [branch, setBranch] = useState("");
   const [section, setSection] = useState("");
+  const [status, setStatus] = useState("");
+  const [crOnly, setCrOnly] = useState("");
   const [markAllOpen, setMarkAllOpen] = useState(false);
   const [zipping, setZipping] = useState(false);
 
@@ -76,10 +78,22 @@ export default function FacultyResumesPage() {
     setPage(1);
     if (key === "branch") setSection("");
     if (key === "branch") setBranch(value);
-    else setSection(value);
+    else if (key === "section") setSection(value);
+    else if (key === "status") setStatus(value);
+    else if (key === "cr") setCrOnly(value);
   };
 
-  const currentQueryKey = ["resumes", "list", page, pageSize, debouncedQ, branch, section] as const;
+  const currentQueryKey = [
+    "resumes",
+    "list",
+    page,
+    pageSize,
+    debouncedQ,
+    branch,
+    section,
+    status,
+    crOnly,
+  ] as const;
 
   // Resumes deleted directly in Cloudinary are removed from this view instantly.
   useCloudinaryCheck<Resume>({
@@ -88,6 +102,8 @@ export default function FacultyResumesPage() {
       search: debouncedQ || undefined,
       branch: branch || undefined,
       section: section || undefined,
+      status: status || undefined,
+      cr: crOnly || undefined,
     },
     queryKey: currentQueryKey,
     kind: "resume",
@@ -102,6 +118,8 @@ export default function FacultyResumesPage() {
         search: debouncedQ || undefined,
         branch: branch || undefined,
         section: section || undefined,
+        status: status || undefined,
+        cr: crOnly || undefined,
       }),
     placeholderData: keepPreviousData,
   });
@@ -145,7 +163,20 @@ export default function FacultyResumesPage() {
 
   // Bulk action: mark every resume in the current filtered view as reviewed.
   const markAll = useMutation({
-    mutationFn: () => http.post<{ updated: number }>("/resumes/mark_all_reviewed/", {}),
+    // Send the current filter params so the backend marks exactly the resumes
+    // visible in this filtered view (search/branch/section/status/CR).
+    mutationFn: () =>
+      http.post<{ updated: number }>(
+        "/resumes/mark_all_reviewed/",
+        {},
+        {
+          search: q || undefined,
+          branch: branch || undefined,
+          section: section || undefined,
+          status: status || undefined,
+          cr: crOnly || undefined,
+        }
+      ),
     onSuccess: (res) => {
       setMarkAllOpen(false);
       toast.success(`Marked ${res.updated} resume${res.updated === 1 ? "" : "s"} as reviewed.`);
@@ -156,7 +187,17 @@ export default function FacultyResumesPage() {
 
   const prefetchNextPage = (next: number) => {
     void queryClient.prefetchQuery({
-      queryKey: ["resumes", "list", next, pageSize, debouncedQ, branch, section],
+      queryKey: [
+        "resumes",
+        "list",
+        next,
+        pageSize,
+        debouncedQ,
+        branch,
+        section,
+        status,
+        crOnly,
+      ],
       queryFn: () =>
         http.get<Paginated<Resume>>("/resumes/", {
           page: next,
@@ -164,6 +205,8 @@ export default function FacultyResumesPage() {
           search: debouncedQ || undefined,
           branch: branch || undefined,
           section: section || undefined,
+          status: status || undefined,
+          cr: crOnly || undefined,
         }),
       staleTime: 30_000,
     });
@@ -189,6 +232,8 @@ export default function FacultyResumesPage() {
           search: q || undefined,
           branch: branch || undefined,
           section: section || undefined,
+          status: status || undefined,
+          cr: crOnly || undefined,
         },
         "resumes.zip"
       );
@@ -201,23 +246,27 @@ export default function FacultyResumesPage() {
     }
   };
 
-  const hasFilters = q !== "" || branch !== "" || section !== "";
+  const hasFilters = q !== "" || branch !== "" || section !== "" || status !== "" || crOnly !== "";
   const clearFilters = () => {
     setQ("");
     setBranch("");
     setSection("");
+    setStatus("");
+    setCrOnly("");
     setPage(1);
   };
 
   // Every student of the branch with their resume upload/review status - the
   // faculty member can see at a glance who has uploaded and who hasn't.
   const { data: statusRows, isLoading: statusLoading } = useQuery({
-    queryKey: ["resumes", "student-status", debouncedQ, branch, section],
+    queryKey: ["resumes", "student-status", debouncedQ, branch, section, status, crOnly],
     queryFn: () =>
       http.get<{ results: StudentStatusRow[] }>("/resumes/student_status/", {
         search: debouncedQ || undefined,
         branch: branch || undefined,
         section: section || undefined,
+        status: status || undefined,
+        cr: crOnly || undefined,
       }),
     enabled: tab === "students",
   });
@@ -248,7 +297,10 @@ export default function FacultyResumesPage() {
                 </Badge>
               )}
             </p>
-            <p className="truncate text-xs text-muted-foreground">{s.roll_number}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {s.roll_number}
+              {s.gender_label ? ` · ${s.gender_label}` : ""}
+            </p>
           </div>
         </div>
       ),
@@ -258,7 +310,7 @@ export default function FacultyResumesPage() {
       header: "Section",
       cell: (s) => (
         <div className="flex flex-wrap gap-1">
-          <Badge variant="secondary">{s.branch_name ?? "—"}</Badge>
+          <Badge variant="secondary">{s.branch_code || s.branch_name || "—"}</Badge>
           <Badge variant="outline">{s.section_name ? `Sec ${s.section_name}` : "—"}</Badge>
         </div>
       ),
@@ -337,7 +389,10 @@ export default function FacultyResumesPage() {
           </Avatar>
           <div className="min-w-0">
             <p className="truncate font-medium">{r.student_name}</p>
-            <p className="truncate text-xs text-muted-foreground">{r.student_roll}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {r.student_roll}
+              {r.student_gender_label ? ` · ${r.student_gender_label}` : ""}
+            </p>
           </div>
         </div>
       ),
@@ -347,7 +402,7 @@ export default function FacultyResumesPage() {
       header: "Branch / Section",
       cell: (r) => (
         <div className="flex flex-wrap gap-1">
-          <Badge variant="secondary">{r.branch_name ?? "—"}</Badge>
+          <Badge variant="secondary">{r.branch_code || r.branch_name || "—"}</Badge>
           <Badge variant="outline">{r.section_name ? `Sec ${r.section_name}` : "—"}</Badge>
         </div>
       ),
@@ -447,6 +502,86 @@ export default function FacultyResumesPage() {
     },
   ];
 
+  // Shared filter bar - shown on both tabs. Search, review status, CR-only,
+  // branch (admins) and section filters apply to whichever list is visible.
+  const filtersBar = (actions?: ReactNode) => (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="relative w-full max-w-xs">
+        <Input
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setPage(1);
+          }}
+          placeholder="Search by name or roll number…"
+          className="h-9 bg-muted/50 pl-3"
+        />
+      </div>
+      <Select value={status} onValueChange={(v) => setFilter("status", v ?? "")}>
+        <SelectTrigger className="w-36">
+          <SelectValue placeholder="Status">
+            {status === "reviewed" ? "Reviewed" : status === "pending" ? "Pending" : undefined}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="reviewed">Reviewed</SelectItem>
+          <SelectItem value="pending">Pending</SelectItem>
+        </SelectContent>
+      </Select>
+      <Select value={crOnly} onValueChange={(v) => setFilter("cr", v ?? "")}>
+        <SelectTrigger className="w-36">
+          <SelectValue placeholder="All students">
+            {crOnly ? "CRs only" : undefined}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="1">CRs only</SelectItem>
+        </SelectContent>
+      </Select>
+      {isAdmin && (
+        <Select value={branch} onValueChange={(v) => setFilter("branch", v ?? "")}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Branch">
+              {branches.find((b) => String(b.id) === branch)?.name}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {branches.map((b) => (
+              <SelectItem key={b.id} value={String(b.id)}>
+                {b.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      <Select value={section} onValueChange={(v) => setFilter("section", v ?? "")}>
+        <SelectTrigger className="w-36">
+          <SelectValue placeholder="Section">
+            {selectedSection ? `Sec ${selectedSection.name}` : undefined}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {sections.map((s) => (
+            <SelectItem key={s.id} value={String(s.id)}>
+              Sec {s.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {actions}
+      {hasFilters && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1.5 text-muted-foreground hover:text-foreground"
+          onClick={clearFilters}
+        >
+          <RotateCcw className="size-3.5" /> Clear all filters
+        </Button>
+      )}
+    </div>
+  );
+
   return (
     <RoleGuard roles={["FACULTY", "SUPER_ADMIN"]}>
       <PageHeader
@@ -454,7 +589,7 @@ export default function FacultyResumesPage() {
         description={
           isAdmin
             ? "Browse resumes uploaded by students across every branch, or see every student's upload status."
-            : `Resumes of every student in the ${user?.branch_name ?? ""} branch, organised by section.`
+            : `Resumes of every student in the ${user?.branch_code || user?.branch_name || ""} branch, organised by section.`
         }
       />
 
@@ -472,6 +607,7 @@ export default function FacultyResumesPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="students" className="mt-4">
+          {filtersBar()}
           {statusLoading ? (
             <div className="flex justify-center py-16">
               <Loader2 className="size-6 animate-spin text-primary" />
@@ -512,80 +648,31 @@ export default function FacultyResumesPage() {
           )}
         </TabsContent>
         <TabsContent value="uploaded" className="mt-4">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <div className="relative w-full max-w-xs">
-              <Input
-                value={q}
-                onChange={(e) => {
-                  setQ(e.target.value);
-                  setPage(1);
-                }}
-                placeholder="Search by name or roll number…"
-                className="h-9 bg-muted/50 pl-3"
-              />
-            </div>
-            <Button
-              variant="outline"
-              className="gap-2"
-              disabled={!data?.count || markAll.isPending}
-              onClick={() => setMarkAllOpen(true)}
-            >
-              <CheckCheck className="size-4" /> Mark all reviewed
-            </Button>
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={handleZip}
-              disabled={zipping}
-              title={
-                (data?.count ?? 0) > 100
-                  ? "ZIP includes the first 100 resumes in the current view"
-                  : "Download every resume in the current view as a ZIP"
-              }
-            >
-              <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
-            </Button>
-            {isAdmin && (
-              <Select value={branch} onValueChange={(v) => setFilter("branch", v ?? "")}>
-                <SelectTrigger className="w-40">
-                  <SelectValue placeholder="Branch">
-                    {branches.find((b) => String(b.id) === branch)?.name}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {branches.map((b) => (
-                    <SelectItem key={b.id} value={String(b.id)}>
-                      {b.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <Select value={section} onValueChange={(v) => setFilter("section", v ?? "")}>
-              <SelectTrigger className="w-36">
-                <SelectValue placeholder="Section">
-                  {selectedSection ? `Sec ${selectedSection.name}` : undefined}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {sections.map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>
-                    Sec {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {hasFilters && (
+          {filtersBar(
+            <>
               <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1.5 text-muted-foreground hover:text-foreground"
-                onClick={clearFilters}
+                variant="outline"
+                className="gap-2"
+                disabled={!data?.count || markAll.isPending}
+                onClick={() => setMarkAllOpen(true)}
               >
-                <RotateCcw className="size-3.5" /> Clear all filters
+                <CheckCheck className="size-4" /> Mark all reviewed
               </Button>
-            )}
-          </div>
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={handleZip}
+                disabled={zipping}
+                title={
+                  (data?.count ?? 0) > 100
+                    ? "ZIP includes the first 100 resumes in the current view"
+                    : "Download every resume in the current view as a ZIP"
+                }
+              >
+                <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
+              </Button>
+            </>
+          )}
 
           <DataTable
             columns={columns}

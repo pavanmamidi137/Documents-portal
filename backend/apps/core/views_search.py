@@ -52,8 +52,9 @@ class SearchView(APIView):
                 "email": s.email,
                 "phone": s.phone,
                 "role": s.role,
-                "branch": s.branch.name if s.branch else None,
-                "section": s.section.name if s.section else None,
+                "branch_name": s.branch.name if s.branch else None,
+                "branch_code": s.branch.code if s.branch else "",
+                "section_name": s.section.name if s.section else None,
                 "is_active": s.is_active,
             }
             for s in qs

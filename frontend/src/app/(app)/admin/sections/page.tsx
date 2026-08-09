@@ -11,6 +11,7 @@ interface SectionRow {
   id: number;
   branch: number;
   branch_name: string;
+  branch_code: string;
   name: string;
   students_count: number;
 }
@@ -23,7 +24,7 @@ export default function SectionsPage() {
     {
       key: "branch",
       header: "Branch",
-      cell: (s) => <Badge variant="secondary">{s.branch_name}</Badge>,
+      cell: (s) => <Badge variant="secondary">{s.branch_code || s.branch_name}</Badge>,
     },
     { key: "students", header: "Students", cell: (s) => <span className="tabular-nums">{s.students_count}</span> },
   ];

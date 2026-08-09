@@ -358,7 +358,7 @@ export function ShareRequestsDialog({ open, onOpenChange, onResponded }: ShareRe
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{req.document_title}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {req.subject_name} · {req.from_branch_name} Sec {req.from_section_name}
+                        {req.subject_name} · {req.from_branch_code || req.from_branch_name} Sec {req.from_section_name}
                       </p>
                       <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <Badge variant="outline" className="text-[10px]">
@@ -422,7 +422,7 @@ export function ShareRequestsDialog({ open, onOpenChange, onResponded }: ShareRe
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{req.document_title}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {req.subject_name} · Sent to {req.from_branch_name} Sec {req.to_section_name}
+                        {req.subject_name} · Sent to {req.from_branch_code || req.from_branch_name} Sec {req.to_section_name}
                       </p>
                       <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <span>{formatDate(req.created_at)}</span>

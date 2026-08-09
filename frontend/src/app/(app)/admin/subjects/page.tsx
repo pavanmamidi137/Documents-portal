@@ -21,6 +21,7 @@ interface SubjectRow {
   semester_name: string;
   branch: number | null;
   branch_name: string | null;
+  branch_code: string;
   documents_count: number;
 }
 
@@ -44,7 +45,7 @@ export default function SubjectsPage() {
     {
       key: "branch",
       header: "Branch",
-      cell: (s) => (s.branch_name ? <Badge variant="outline">{s.branch_name}</Badge> : <span className="text-muted-foreground">All branches</span>),
+      cell: (s) => (s.branch_name ? <Badge variant="outline">{s.branch_code || s.branch_name}</Badge> : <span className="text-muted-foreground">All branches</span>),
     },
     { key: "docs", header: "Documents", cell: (s) => <span className="tabular-nums">{s.documents_count}</span> },
   ];

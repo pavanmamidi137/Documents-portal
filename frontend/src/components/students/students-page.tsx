@@ -337,7 +337,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       header: "Branch / Section",
       cell: (s) => (
         <div className="flex flex-wrap gap-1">
-          <Badge variant="secondary">{s.branch_name ?? "—"}</Badge>
+          <Badge variant="secondary">{s.branch_code || s.branch_name || "—"}</Badge>
           <Badge variant="outline">{s.section_name ?? "—"}</Badge>
         </div>
       ),

@@ -329,7 +329,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
       header: "Branch / Section",
       cell: (d) => (
         <div className="flex flex-wrap gap-1">
-          <Badge variant="secondary">{d.branch_name}</Badge>
+          <Badge variant="secondary">{d.branch_code || d.branch_name}</Badge>
           <Badge variant="outline">{d.section_name}</Badge>
         </div>
       ),

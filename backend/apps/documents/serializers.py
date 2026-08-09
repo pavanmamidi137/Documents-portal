@@ -7,6 +7,7 @@ from .models import Document, DocumentShareRequest
 
 class DocumentListSerializer(serializers.ModelSerializer):
     branch_name = serializers.CharField(source="branch.name", read_only=True)
+    branch_code = serializers.CharField(source="branch.code", read_only=True, default="")
     section_name = serializers.CharField(source="section.name", read_only=True)
     semester_name = serializers.CharField(source="semester.name", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True)
@@ -27,7 +28,7 @@ class DocumentListSerializer(serializers.ModelSerializer):
             "id", "title", "description", "submission_deadline",
             "file_name", "file_size",
             "cloudinary_url", "download_url", "downloads", "created_at",
-            "branch", "branch_name", "section", "section_name",
+            "branch", "branch_name", "branch_code", "section", "section_name",
             "semester", "semester_name", "category", "category_name",
             "subject", "subject_name", "uploaded_by", "uploaded_by_name",
             "forked_from", "is_missing", "restored_at",

@@ -19,6 +19,7 @@ import {
   Phone,
   ShieldCheck,
   Trash2,
+  VenusAndMars,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -54,6 +55,7 @@ const editSchema = z.object({
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   phone: z.string().optional(),
   gender: z.string().optional(),
+  passout_year: z.string().optional(),
 });
 
 type EditFormValues = z.infer<typeof editSchema>;
@@ -154,6 +156,7 @@ function EditDetailsCard() {
         email: user.email ?? "",
         phone: user.phone ?? "",
         gender: user.gender ?? "",
+        passout_year: user.passout_year ? String(user.passout_year) : "",
       });
     }
   }, [user, reset]);
@@ -166,6 +169,7 @@ function EditDetailsCard() {
         email: values.email?.trim() || null,
         phone: values.phone?.trim() ?? "",
         gender: values.gender || "",
+        passout_year: values.passout_year ? Number(values.passout_year) : null,
       });
       toast.success("Profile updated.");
       await refreshUser();
@@ -174,6 +178,7 @@ function EditDetailsCard() {
         email: values.email?.trim() ?? "",
         phone: values.phone?.trim() ?? "",
         gender: values.gender ?? "",
+        passout_year: values.passout_year ?? "",
       });
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -224,6 +229,19 @@ function EditDetailsCard() {
               <option value="OTHER">Other</option>
             </select>
           </div>
+          {(user.is_student || user.is_cr) && (
+            <div className="space-y-2">
+              <Label htmlFor="edit-passout">Pass-Out Year</Label>
+              <Input
+                id="edit-passout"
+                type="number"
+                min={1980}
+                max={2100}
+                placeholder="e.g. 2027"
+                {...register("passout_year")}
+              />
+            </div>
+          )}
           <Button type="submit" disabled={saving || !isDirty} className="w-full">
             {saving && <Loader2 className="size-4 animate-spin" />}
             Save Changes
@@ -470,8 +488,23 @@ export default function ProfilePage() {
                 <div className="min-w-0">
                   <p className="text-[10px] text-muted-foreground uppercase">Branch / Section</p>
                   <p className="truncate text-sm font-medium">
-                    {user.branch_name ?? "—"} {user.section_name ? `/ Sec ${user.section_name}` : ""}
+                    {user.branch_code || user.branch_name || "—"}{" "}
+                    {user.section_name ? `/ Sec ${user.section_name}` : ""}
                   </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2">
+                <VenusAndMars className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-[10px] text-muted-foreground uppercase">Gender</p>
+                  <p className="truncate text-sm font-medium">{user.gender_label || "—"}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2">
+                <CalendarDays className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-[10px] text-muted-foreground uppercase">Pass-Out Year</p>
+                  <p className="truncate text-sm font-medium">{user.passout_year ?? "—"}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2">

@@ -7,6 +7,7 @@ from .models import AiAccessConfig, Resume, User, derive_passout_year
 class UserSerializer(serializers.ModelSerializer):
     role_label = serializers.CharField(read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    branch_code = serializers.CharField(source="branch.code", read_only=True, default="")
     section_name = serializers.CharField(source="section.name", read_only=True, default=None)
     gender_label = serializers.CharField(source="get_gender_display", read_only=True, default="")
     faculty_access_label = serializers.CharField(
@@ -19,7 +20,7 @@ class UserSerializer(serializers.ModelSerializer):
             "id", "roll_number", "full_name", "email", "phone", "gender",
             "gender_label", "avatar_url", "passout_year",
             "role", "role_label", "faculty_access", "faculty_access_label",
-            "branch", "branch_name", "section", "section_name",
+            "branch", "branch_name", "branch_code", "section", "section_name",
             "is_active", "is_staff", "is_super_admin", "is_cr", "is_faculty",
             "is_student", "profile_completion", "date_joined",
         ]
@@ -75,7 +76,14 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["full_name", "email", "phone", "gender"]
+        fields = ["full_name", "email", "phone", "gender", "passout_year"]
+
+    def validate_passout_year(self, value):
+        if value is None:
+            return None
+        if not (1980 <= value <= 2100):
+            raise serializers.ValidationError("Enter a valid pass-out year.")
+        return value
 
     def validate_full_name(self, value):
         value = value.strip()
@@ -282,7 +290,13 @@ class ResumeSerializer(serializers.ModelSerializer):
     student_roll = serializers.CharField(source="student.roll_number", read_only=True)
     student_name = serializers.CharField(source="student.full_name", read_only=True)
     student_avatar_url = serializers.CharField(source="student.avatar_url", read_only=True)
+    student_gender_label = serializers.CharField(
+        source="student.get_gender_display", read_only=True, default=""
+    )
     branch_name = serializers.CharField(source="student.branch.name", read_only=True, default=None)
+    branch_code = serializers.CharField(
+        source="student.branch.code", read_only=True, default=""
+    )
     section_name = serializers.CharField(source="student.section.name", read_only=True, default=None)
     reviewed_by_name = serializers.CharField(
         source="reviewed_by.full_name", read_only=True, default=None
@@ -293,7 +307,8 @@ class ResumeSerializer(serializers.ModelSerializer):
         model = Resume
         fields = [
             "id", "student", "student_roll", "student_name", "student_avatar_url",
-            "branch_name", "section_name",
+            "student_gender_label",
+            "branch_name", "branch_code", "section_name",
             "file_name", "file_size", "cloudinary_url",
             "is_reviewed", "reviewed_by_name", "reviewed_at",
             "is_missing", "restored_at",

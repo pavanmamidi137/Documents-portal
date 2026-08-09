@@ -597,6 +597,42 @@ class ProfileUpdateTests(TestCase):
         self.assertEqual(self.student.roll_number, "21IT01")
         self.assertEqual(self.student.role, "STUDENT")
 
+    def test_student_updates_passout_year_and_completion(self):
+        before = self.student.profile_completion
+        client = self._client()
+        response = client.patch(
+            "/api/auth/me/", {"passout_year": 2027}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.passout_year, 2027)
+        # Filling the pass-out year counts toward the profile completion score.
+        self.assertGreater(self.student.profile_completion, before)
+        # Clearing it back to null is allowed.
+        response = client.patch(
+            "/api/auth/me/", {"passout_year": None}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertIsNone(self.student.passout_year)
+
+    def test_passout_year_range_validated(self):
+        client = self._client()
+        for bad in (1979, 2101):
+            response = client.patch(
+                "/api/auth/me/", {"passout_year": bad}, format="json"
+            )
+            self.assertEqual(response.status_code, 400, f"{bad} should be rejected")
+        self.student.refresh_from_db()
+        self.assertIsNone(self.student.passout_year)
+
+    def test_me_returns_branch_code(self):
+        client = self._client()
+        me = client.get("/api/auth/me/")
+        self.assertEqual(me.status_code, 200)
+        self.assertIn("branch_code", me.data)
+        self.assertEqual(me.data["branch_name"], "IT")
+
 
 class LoginTests(TestCase):
     def setUp(self):
@@ -1026,6 +1062,76 @@ class ResumeTests(TestCase):
         self.assertEqual(rows["CR01"]["role"], "CR")
         # The CR hasn't uploaded yet - faculty see that status too.
         self.assertFalse(rows["CR01"]["has_resume"])
+
+    # -- filters: review status, CR-only, gender -----------------------------
+
+    def _make_resume(self, student, reviewed=False):
+        return Resume.objects.create(
+            student=student, file_name=f"{student.roll_number}.pdf", file_size=10,
+            cloudinary_url=f"https://x.example/{student.roll_number}.pdf",
+            public_id=f"r_{student.roll_number}", is_reviewed=reviewed,
+        )
+
+    def test_resume_list_filters_by_review_status(self):
+        other = User.objects.create_user(
+            roll_number="21IT02", password="x", full_name="Ravi",
+            branch=self.branch, section=self.section_a,
+        )
+        self._make_resume(self.student, reviewed=True)
+        self._make_resume(other, reviewed=False)
+        client = self._client(self.faculty)
+        reviewed = client.get("/api/resumes/?status=reviewed")
+        self.assertEqual(reviewed.status_code, 200)
+        self.assertEqual(
+            {r["student_roll"] for r in reviewed.data["results"]}, {"21IT01"}
+        )
+        pending = client.get("/api/resumes/?status=pending")
+        self.assertEqual(
+            {r["student_roll"] for r in pending.data["results"]}, {"21IT02"}
+        )
+
+    def test_resume_list_filters_cr_only(self):
+        cr = User.objects.create_user(
+            roll_number="CR01", password="x", full_name="Class Rep",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        self._make_resume(cr)
+        self._make_resume(self.student)
+        client = self._client(self.faculty)
+        response = client.get("/api/resumes/?cr=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {r["student_roll"] for r in response.data["results"]}, {"CR01"}
+        )
+
+    def test_resume_list_includes_gender_label(self):
+        self.student.gender = User.Gender.FEMALE
+        self.student.save(update_fields=["gender"])
+        self._make_resume(self.student)
+        client = self._client(self.faculty)
+        response = client.get("/api/resumes/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["results"][0]["student_gender_label"], "Female"
+        )
+
+    def test_student_status_gender_and_filters(self):
+        cr = User.objects.create_user(
+            roll_number="CR01", password="x", full_name="Class Rep",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+            gender=User.Gender.MALE,
+        )
+        self._make_resume(cr, reviewed=True)
+        self._make_resume(self.student, reviewed=False)
+        client = self._client(self.faculty)
+        rows = client.get("/api/resumes/student_status/?cr=1").data["results"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["roll_number"], "CR01")
+        self.assertEqual(rows[0]["gender_label"], "Male")
+        pending = client.get(
+            "/api/resumes/student_status/?status=pending"
+        ).data["results"]
+        self.assertEqual({r["roll_number"] for r in pending}, {"21IT01"})
 
     # -- review workflow -----------------------------------------------------
 

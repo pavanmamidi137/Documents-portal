@@ -173,7 +173,7 @@ export function AnnouncementFormDialog({ open, onOpenChange, announcement, meta,
                 <SelectContent>
                   {meta.sections.map((s) => (
                     <SelectItem key={s.id} value={String(s.id)}>
-                      {s.branch_name} - {s.name}
+                      {s.branch_code || s.branch_name} - {s.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

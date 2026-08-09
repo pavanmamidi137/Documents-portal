@@ -150,8 +150,12 @@ export function UploadDocumentDialog({
   );
   const subjectName =
     meta.subjects.find((s) => s.id === Number(selectedSubject))?.name ?? "";
-  const branchName =
-    meta.branches.find((b) => b.id === Number(selectedBranch))?.name ?? "";
+  // Branch codes only (per the portal-wide convention) with the full name as
+  // a fallback for branches that don't have a code set.
+  const branchName = (() => {
+    const b = meta.branches.find((x) => x.id === Number(selectedBranch));
+    return b?.code || b?.name || "";
+  })();
   const semesterName =
     meta.semesters.find((s) => s.id === Number(selectedSemester))?.name ?? "";
   // Other sections in the CR's branch they can request a share with.
@@ -339,7 +343,7 @@ export function UploadDocumentDialog({
                   <SelectContent>
                     {sections.map((s) => (
                       <SelectItem key={s.id} value={String(s.id)}>
-                        {s.branch_name} - {s.name}
+                        {s.branch_code || s.branch_name} - {s.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

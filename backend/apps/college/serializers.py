@@ -74,14 +74,15 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class SubjectSerializer(serializers.ModelSerializer):
     semester_name = serializers.CharField(source="semester.name", read_only=True)
-    branch_name = serializers.CharField(source="branch.name", read_only=True)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    branch_code = serializers.CharField(source="branch.code", read_only=True, default="")
     documents_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Subject
         fields = [
             "id", "name", "code", "semester", "semester_name",
-            "branch", "branch_name", "documents_count", "created_at",
+            "branch", "branch_name", "branch_code", "documents_count", "created_at",
         ]
         read_only_fields = ["created_at"]
 
