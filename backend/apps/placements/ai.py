@@ -352,6 +352,46 @@ def _chat_completion(
     )
 
 
+def env_json_fallback(system_prompt, user_text, max_tokens=1024,
+                      reasoning_budget=0, documents=None, temperature=0.3,
+                      raw_json=False, usage_callback=None):
+    """Last-resort answer using ONLY the environment NVIDIA client.
+
+    Used by the AI Router when every configured provider failed or returned
+    unreadable output: as long as ``NVIDIA_API_KEY`` is set on the server, the
+    env NVIDIA client (NVIDIA_MODEL - a JSON-capable chat model) is tried once
+    before the router gives up. Documents are injected straight into the
+    prompt (no RAG NIM dependency). ``usage_callback`` is forwarded to the
+    client so rescued calls still record token usage and count against the
+    student's daily AI quota.
+
+    Returns ``{}`` (JSON tasks) / ``""`` (plain text) when no env key is
+    configured or the call failed - it never raises.
+    """
+    try:
+        if not get_api_keys():
+            return {} if raw_json else ""
+        grounded = system_prompt
+        if documents:
+            grounded = (
+                system_prompt
+                + "\n\nDOCUMENTS (answer using ONLY these):\n\n"
+                + "\n\n---\n\n".join(documents)
+            )
+        raw = _chat_completion_inner(
+            grounded, user_text, max_tokens,
+            reasoning_budget=reasoning_budget,
+            temperature=temperature,
+            raw_json=raw_json,
+            usage_callback=usage_callback,
+        )
+        if raw_json:
+            return extract_json_object(raw) if isinstance(raw, str) else (raw or {})
+        return raw
+    except Exception:
+        return {} if raw_json else ""
+
+
 # Shared robust parser (markdown fences, prose wrapping, truncation, key
 # aliases) - see ai_parse.py. Kept as an alias so existing callers keep
 # working.

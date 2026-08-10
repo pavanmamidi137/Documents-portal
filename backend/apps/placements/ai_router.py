@@ -205,14 +205,10 @@ class AIService:
                     return cached
 
         chain = _task_chain(task)
-        if not chain:
-            raise AIServiceUnavailable(
-                "No AI provider is configured. Ask the admin to add one."
-            )
-
         primary_name = chain[0].name if chain else ""
         fallback_used = False
         saw_unreadable = False
+        last_error: Exception | None = None
 
         for provider in chain:
             if not provider.enabled:
@@ -271,12 +267,14 @@ class AIService:
                 _record_log(user, task, primary_name, (provider.name, provider.pk),
                             AIRequestLog.Status.FAILED, fallback_used,
                             error_type=exc.error_type)
+                last_error = exc
                 break  # auth error - retrying the same provider is pointless
             except RecoverableProviderError as exc:
                 _mark_failure(provider, exc.error_type)
                 _record_log(user, task, primary_name, (provider.name, provider.pk),
                             AIRequestLog.Status.FAILED, fallback_used,
                             error_type=exc.error_type)
+                last_error = exc
                 if not st.enable_fallback:
                     break
                 # Fail over to the next provider (no sleep - the adapter's SDK
@@ -288,13 +286,52 @@ class AIService:
                 _record_log(user, task, primary_name, (provider.name, provider.pk),
                             AIRequestLog.Status.FAILED, fallback_used,
                             error_type=exc.error_type)
+                last_error = exc
                 break
+
+        # ---- last-resort safety net ----------------------------------------
+        # No configured provider produced a usable answer (unreadable JSON,
+        # a transport failure, or no provider rows at all). If the server has
+        # a legacy NVIDIA_API_KEY in the environment, call the env NVIDIA
+        # client (NVIDIA_MODEL - a JSON-capable chat model) once before giving
+        # up. This keeps resume analysis and chat working even when the
+        # admin-page provider/model is misconfigured (e.g. a RAG NIM assigned
+        # to a JSON task). Image-bearing OCR calls are never sent here.
+        if not images:
+            try:
+                from .ai import env_json_fallback
+
+                result = env_json_fallback(
+                    system_prompt, user_text, max_tokens,
+                    reasoning_budget=reasoning_budget,
+                    documents=documents, temperature=temperature,
+                    raw_json=raw_json, usage_callback=usage_callback,
+                )
+                if result:
+                    _record_log(
+                        user, task, "env-NVIDIA", ("env-NVIDIA", None),
+                        AIRequestLog.Status.SUCCESS, True,
+                        error_type="ENV_FALLBACK",
+                    )
+                    if st.enable_caching and cacheable:
+                        cache.set(
+                            _cache_key(task, system_prompt, user_text),
+                            json.dumps(result) if raw_json else result,
+                            timeout=300,
+                        )
+                    return result
+            except Exception:  # pragma: no cover - safety net must never crash
+                pass
 
         if saw_unreadable:
             raise AIUnreadableResponse(
                 "The AI provider returned a response that could not be read as "
                 "a report. Check the provider's model under Admin > AI "
                 "Management > AI Tasks, then try again."
+            )
+        if not chain:
+            raise AIServiceUnavailable(
+                "No AI provider is configured. Ask the admin to add one."
             )
         raise AIServiceUnavailable(
             "AI service is temporarily unavailable. Please try again shortly."

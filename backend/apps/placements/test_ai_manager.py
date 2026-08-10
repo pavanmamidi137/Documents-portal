@@ -245,19 +245,21 @@ class AiRouterFailoverTests(AiManagerBase):
             return SimpleAdapter(generate)
 
         mock_adapter.side_effect = fake_adapter
-        # First call: bad JSON -> every provider tried -> unreadable error.
-        with self.assertRaises(AIUnreadableResponse):
-            AIService.generate(
-                task="RESUME_ANALYSIS", system_prompt="s", user_text="q",
-                user=self.student, cacheable=True, raw_json=True,
-            )
-        # Second call with the same inputs must hit the provider again (no
-        # stale garbage served from cache).
-        with self.assertRaises(AIUnreadableResponse):
-            AIService.generate(
-                task="RESUME_ANALYSIS", system_prompt="s", user_text="q",
-                user=self.student, cacheable=True, raw_json=True,
-            )
+        # No env NVIDIA key available to the safety net in this test.
+        with patch("apps.placements.ai.env_json_fallback", return_value={}):
+            # First call: bad JSON -> every provider tried -> unreadable error.
+            with self.assertRaises(AIUnreadableResponse):
+                AIService.generate(
+                    task="RESUME_ANALYSIS", system_prompt="s", user_text="q",
+                    user=self.student, cacheable=True, raw_json=True,
+                )
+            # Second call with the same inputs must hit the provider again (no
+            # stale garbage served from cache).
+            with self.assertRaises(AIUnreadableResponse):
+                AIService.generate(
+                    task="RESUME_ANALYSIS", system_prompt="s", user_text="q",
+                    user=self.student, cacheable=True, raw_json=True,
+                )
         self.assertEqual(calls["n"], 2)
 
     def test_ai_json_returns_empty_when_all_providers_unreadable(self):
@@ -270,9 +272,12 @@ class AiRouterFailoverTests(AiManagerBase):
         AISettings.get()
         AISettings.objects.update(enable_caching=False)
 
-        with patch(
-            "apps.placements.ai_router.adapter_for"
-        ) as mock_adapter:
+        with (
+            patch(
+                "apps.placements.ai_router.adapter_for"
+            ) as mock_adapter,
+            patch("apps.placements.ai.env_json_fallback", return_value={}),
+        ):
             def fake_adapter(provider):
                 def generate(*a, **kw):
                     return "Sorry, I cannot return JSON.", 5, 5
@@ -358,12 +363,80 @@ class AiRouterFailoverTests(AiManagerBase):
             return Fake()
 
         mock_adapter.side_effect = fake_adapter
-        with self.assertRaises(AIServiceUnavailable):
-            AIService.generate(
-                task="STUDENT_CHAT", system_prompt="sys", user_text="hello",
-                user=self.student, cacheable=False,
-            )
+        # No env NVIDIA key available to the safety net in this test.
+        with patch("apps.placements.ai.env_json_fallback", return_value={}):
+            with self.assertRaises(AIServiceUnavailable):
+                AIService.generate(
+                    task="STUDENT_CHAT", system_prompt="sys", user_text="hello",
+                    user=self.student, cacheable=False,
+                )
         self.assertEqual(AIRequestLog.objects.filter(status="FAILED").count(), 2)
+
+    def test_env_fallback_rescues_unreadable_provider(self):
+        """When every configured provider returns unreadable JSON, the router
+        falls back to the legacy NVIDIA_API_KEY client (30B chat model) so
+        resume analysis still works even with a misconfigured admin-page
+        provider/model."""
+        self._provider(name="Gemini")
+        AISettings.get()
+        AISettings.objects.update(enable_caching=False)
+
+        collected = []
+        with (
+            patch("apps.placements.ai_router.adapter_for") as mock_adapter,
+            patch(
+                "apps.placements.ai.env_json_fallback",
+                return_value={"score": 77, "summary": "rescued"},
+            ) as mock_env,
+        ):
+            def fake_adapter(provider):
+                def generate(*a, **kw):
+                    return "I cannot return JSON.", 5, 5
+
+                return SimpleAdapter(generate)
+
+            mock_adapter.side_effect = fake_adapter
+            result = AIService.generate(
+                task="RESUME_ANALYSIS", system_prompt="s", user_text="resume",
+                user=self.student, cacheable=False, raw_json=True,
+                usage_callback=lambda pt, ct: collected.append((pt, ct)),
+            )
+        self.assertEqual(result, {"score": 77, "summary": "rescued"})
+        # The usage callback is forwarded so rescued runs still count against
+        # the student's daily AI quota and AI usage.
+        self.assertTrue(
+            mock_env.call_args.kwargs.get("usage_callback") is not None
+        )
+        log = AIRequestLog.objects.latest("id")
+        self.assertEqual(log.provider_used, "env-NVIDIA")
+        self.assertEqual(log.error_type, "ENV_FALLBACK")
+        self.assertTrue(log.fallback_used)
+
+    def test_env_fallback_never_fires_for_images(self):
+        """Image-bearing OCR calls must not hit the env fallback (the legacy
+        client can't read images) - the provider response is used directly."""
+        self._provider(name="Gemini")
+        AISettings.get()
+        AISettings.objects.update(enable_caching=False)
+
+        with (
+            patch("apps.placements.ai_router.adapter_for") as mock_adapter,
+            patch("apps.placements.ai.env_json_fallback") as mock_env,
+        ):
+            def fake_adapter(provider):
+                def generate(*a, **kw):
+                    return "NO TEXT", 5, 5
+
+                return SimpleAdapter(generate)
+
+            mock_adapter.side_effect = fake_adapter
+            result = AIService.generate(
+                task="RESUME_OCR", system_prompt="s", user_text="ocr",
+                images=["data:image/png;base64,AAAA"], user=self.student,
+                cacheable=False,
+            )
+        self.assertEqual(result, "NO TEXT")
+        mock_env.assert_not_called()
 
     @patch("apps.placements.ai_router.adapter_for")
     def test_disabled_provider_is_skipped(self, mock_adapter):
@@ -929,6 +1002,53 @@ class AiParseTests(AiManagerBase):
             mock_adapter.side_effect = fake_adapter
             result = ai_json("sys", "resume", task="RESUME_ANALYSIS")
         self.assertEqual(result["score"], 66)
+
+    def test_env_json_fallback_uses_env_key_and_parses(self):
+        """env_json_fallback calls the env NVIDIA client (30B chat model) with
+        the env key and parses fenced JSON - the router's last-resort safety
+        net for resume analysis."""
+        from types import SimpleNamespace
+
+        from .ai import env_json_fallback
+
+        captured = {}
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                captured["kwargs"] = kwargs
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content='```json\n{"score": 58, "summary": "ok"}\n```'
+                            )
+                        )
+                    ],
+                    usage=SimpleNamespace(prompt_tokens=2, completion_tokens=2),
+                )
+
+        class FakeChat:
+            def __init__(self, client):
+                self.completions = FakeCompletions()
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.api_key = kwargs["api_key"]
+                self.chat = FakeChat(self)
+
+        with (
+            patch("apps.placements.ai.OpenAI", side_effect=FakeClient),
+            patch("apps.placements.ai.get_api_keys", return_value=["env-key"]),
+        ):
+            result = env_json_fallback("sys", "resume", 200, raw_json=True)
+        self.assertEqual(result["score"], 58)
+        # It requested structured JSON from the 30B model.
+        self.assertEqual(
+            captured["kwargs"].get("response_format"), {"type": "json_object"}
+        )
+        # Without an env key it returns {} and never raises.
+        with patch("apps.placements.ai.get_api_keys", return_value=[]):
+            self.assertEqual(env_json_fallback("sys", "u", 200, raw_json=True), {})
 
     def test_legacy_env_path_requests_json_and_parses_fenced_output(self):
         """The env-key (no-provider) path asks for structured JSON and parses
