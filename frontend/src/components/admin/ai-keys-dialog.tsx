@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,10 @@ export function AiKeysDialog({ open, onOpenChange, provider, onSaved }: Props) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<number | null>(null);
+  const [showNewKey, setShowNewKey] = useState(false);
+  const [revealed, setRevealed] = useState<Record<number, string>>({});
+  const [revealingId, setRevealingId] = useState<number | null>(null);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
 
   // Refetch the provider row on every open/mutation so the key list is always
   // current (the parent's `keysFor` holds a snapshot from the table query).
@@ -68,6 +72,69 @@ export function AiKeysDialog({ open, onOpenChange, provider, onSaved }: Props) {
       toast.error(getErrorMessage(error));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Reveal (or hide) one saved extra key by fetching it on demand.
+  const revealKey = async (keyId: number) => {
+    if (revealed[keyId]) {
+      setRevealed((r) => ({ ...r, [keyId]: "" }));
+      return;
+    }
+    if (!provider) return;
+    setRevealingId(keyId);
+    try {
+      const data = await http.post<{ key: string }>(
+        `/admin/ai/providers/${provider.id}/reveal_key/`,
+        { key_id: keyId }
+      );
+      setRevealed((r) => ({ ...r, [keyId]: data.key }));
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setRevealingId(null);
+    }
+  };
+
+  // Copy a key - reveals it first when not already shown.
+  const copyKey = async (keyId: number) => {
+    if (!provider) return;
+    let text = revealed[keyId];
+    if (!text) {
+      try {
+        const data = await http.post<{ key: string }>(
+          `/admin/ai/providers/${provider.id}/reveal_key/`,
+          { key_id: keyId }
+        );
+        text = data.key;
+        setRevealed((r) => ({ ...r, [keyId]: text }));
+      } catch (error) {
+        toast.error(getErrorMessage(error));
+        return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(keyId);
+      setTimeout(() => setCopiedId(null), 1500);
+      toast.success("API key copied to clipboard");
+    } catch {
+      toast.error("Could not copy the key - select it manually.");
+    }
+  };
+
+  const copyNewKey = async () => {
+    if (!apiKey) {
+      toast.error("Paste an API key first.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(apiKey);
+      setCopiedId(-1);
+      setTimeout(() => setCopiedId(null), 1500);
+      toast.success("API key copied to clipboard");
+    } catch {
+      toast.error("Could not copy the key - select it manually.");
     }
   };
 
@@ -114,25 +181,58 @@ export function AiKeysDialog({ open, onOpenChange, provider, onSaved }: Props) {
                   className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2"
                 >
                   <div className="min-w-0">
-                    <code className="font-mono text-sm">{k.masked}</code>
+                    {revealed[k.id] ? (
+                      <code className="block break-all font-mono text-xs">{revealed[k.id]}</code>
+                    ) : (
+                      <code className="font-mono text-sm">{k.masked}</code>
+                    )}
                     {k.note && (
                       <p className="truncate text-xs text-muted-foreground">{k.note}</p>
                     )}
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    title="Remove key"
-                    className="shrink-0 text-destructive"
-                    disabled={removing === k.id}
-                    onClick={() => removeKey(k.id)}
-                  >
-                    {removing === k.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
-                    )}
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title={revealed[k.id] ? "Hide key" : "View key"}
+                      disabled={revealingId === k.id}
+                      onClick={() => revealKey(k.id)}
+                    >
+                      {revealingId === k.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : revealed[k.id] ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Copy key"
+                      onClick={() => copyKey(k.id)}
+                    >
+                      {copiedId === k.id ? (
+                        <Check className="h-4 w-4 text-emerald-500" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Remove key"
+                      className="text-destructive"
+                      disabled={removing === k.id}
+                      onClick={() => removeKey(k.id)}
+                    >
+                      {removing === k.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -140,13 +240,42 @@ export function AiKeysDialog({ open, onOpenChange, provider, onSaved }: Props) {
 
           <div className="space-y-2 rounded-lg border p-3">
             <Label htmlFor="new-key">Add an extra API key</Label>
-            <Input
-              id="new-key"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-..."
-            />
+            <div className="relative">
+              <Input
+                id="new-key"
+                type={showNewKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="sk-..."
+                className="pr-14"
+              />
+              <div className="absolute inset-y-0 right-0 flex items-center gap-0.5 pr-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  title={showNewKey ? "Hide key" : "Show key"}
+                  onClick={() => setShowNewKey((v) => !v)}
+                >
+                  {showNewKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  title="Copy key"
+                  onClick={copyNewKey}
+                >
+                  {copiedId === -1 ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+            </div>
             <Input
               value={note}
               onChange={(e) => setNote(e.target.value)}

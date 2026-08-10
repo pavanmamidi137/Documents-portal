@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, PlugZap } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, Loader2, PlugZap } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -75,6 +75,10 @@ export function AiProviderFormDialog({ open, onOpenChange, provider, onSaved }: 
   const editing = Boolean(provider);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [copied, setCopied] = useState(false);
   // The parent remounts this dialog via a changing `key` when a provider is
   // selected, so the initial state is always fresh - no effect needed.
   const [form, setForm] = useState<AiProviderPayload & { enabled: boolean }>({
@@ -127,6 +131,64 @@ export function AiProviderFormDialog({ open, onOpenChange, provider, onSaved }: 
       toast.error(getErrorMessage(error));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+      toast.success("API key copied to clipboard");
+    } catch {
+      toast.error("Could not copy the key - select it manually.");
+    }
+  };
+
+  // Reveal the saved key (fetching it from the backend on demand) or hide it.
+  const toggleReveal = async () => {
+    if (revealedKey) {
+      setRevealedKey(null);
+      return;
+    }
+    if (!provider) return;
+    setRevealing(true);
+    try {
+      const data = await http.post<{ key: string }>(
+        `/admin/ai/providers/${provider.id}/reveal_key/`
+      );
+      setRevealedKey(data.key);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setRevealing(false);
+    }
+  };
+
+  // Copy the typed key, or fall back to the saved key when nothing is typed.
+  const copyKey = async () => {
+    if (form.api_key) {
+      await copyToClipboard(form.api_key);
+      return;
+    }
+    await copySavedKey();
+  };
+
+  // Always copy the saved (stored) key - used by the "Current key" row so a
+  // newly typed key in the input never replaces it unexpectedly.
+  const copySavedKey = async () => {
+    if (!provider) return;
+    setRevealing(true);
+    try {
+      const data = await http.post<{ key: string }>(
+        `/admin/ai/providers/${provider.id}/reveal_key/`
+      );
+      setRevealedKey(data.key);
+      await copyToClipboard(data.key);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setRevealing(false);
     }
   };
 
@@ -231,17 +293,84 @@ export function AiProviderFormDialog({ open, onOpenChange, provider, onSaved }: 
             <Label htmlFor="p-key">
               API key {editing && "(leave empty to keep the saved key)"}
             </Label>
-            <Input
-              id="p-key"
-              type="password"
-              value={form.api_key}
-              onChange={(e) => set("api_key", e.target.value)}
-              placeholder={editing ? "••••••••••••" : "sk-..."}
-            />
+            <div className="relative">
+              <Input
+                id="p-key"
+                type={showKey ? "text" : "password"}
+                value={form.api_key}
+                onChange={(e) => set("api_key", e.target.value)}
+                placeholder={editing ? "••••••••••••" : "sk-..."}
+                className="pr-16"
+              />
+              <div className="absolute inset-y-0 right-0 flex items-center gap-0.5 pr-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  title={showKey ? "Hide key" : "Show key"}
+                  onClick={() => setShowKey((v) => !v)}
+                >
+                  {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  title="Copy key"
+                  onClick={copyKey}
+                  disabled={!form.api_key && !editing}
+                >
+                  {copied ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+            </div>
             {editing && provider?.api_key_masked && (
-              <p className="text-xs text-muted-foreground">
-                Current key: <code className="font-mono">{provider.api_key_masked}</code>
-              </p>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <span className="min-w-0">
+                  Current key:{" "}
+                  {revealedKey ? (
+                    <code className="break-all font-mono text-foreground">{revealedKey}</code>
+                  ) : (
+                    <code className="font-mono">{provider.api_key_masked}</code>
+                  )}
+                </span>
+                <span className="ml-auto flex items-center gap-0.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    title={revealedKey ? "Hide key" : "View key"}
+                    onClick={toggleReveal}
+                    disabled={revealing}
+                  >
+                    {revealing ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : revealedKey ? (
+                      <EyeOff className="h-3 w-3" />
+                    ) : (
+                      <Eye className="h-3 w-3" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    title="Copy key"
+                    onClick={copySavedKey}
+                    disabled={revealing}
+                  >
+                    <Copy className="h-3 w-3" />
+                  </Button>
+                </span>
+              </div>
             )}
             <p className="text-xs text-muted-foreground">
               When a key hits its rate limit, the portal automatically tries the

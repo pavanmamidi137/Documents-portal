@@ -1099,6 +1099,86 @@ class AiProviderKeyApiTests(AiManagerBase):
         self.assertEqual(mask_secret(long), "*********7890")
         self.assertEqual(mask_secret(""), "")
 
+    def test_reveal_key_returns_decrypted_key_for_admin(self):
+        """The view/copy buttons fetch the full key through the reveal
+        endpoint - only the Super Admin can do this."""
+        provider = self._provider(name="Gemini")
+        resp = self._client(self.admin).post(
+            f"/api/admin/ai/providers/{provider.id}/reveal_key/"
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["key"], "sk-test-abcdef-1234")
+
+    def test_reveal_key_supports_extra_keys(self):
+        """Passing key_id reveals one of the extra keys (with its note)."""
+        provider = self._provider(name="Gemini")
+        key = AIProviderKey(provider=provider, note="backup account")
+        key.set_api_key("extra-secret-999")
+        key.save()
+        resp = self._client(self.admin).post(
+            f"/api/admin/ai/providers/{provider.id}/reveal_key/",
+            {"key_id": key.id},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["key"], "extra-secret-999")
+        self.assertEqual(resp.data["note"], "backup account")
+
+    def test_reveal_key_unknown_extra_key_404(self):
+        provider = self._provider(name="Gemini")
+        resp = self._client(self.admin).post(
+            f"/api/admin/ai/providers/{provider.id}/reveal_key/",
+            {"key_id": 99999},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_reveal_key_rejects_non_integer_key_id(self):
+        """A malformed key_id must not raise a 500 - it returns a 400 like
+        the remove_key action."""
+        provider = self._provider(name="Gemini")
+        resp = self._client(self.admin).post(
+            f"/api/admin/ai/providers/{provider.id}/reveal_key/",
+            {"key_id": "abc"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_reveal_key_no_stored_key_404(self):
+        """Env-only providers (no stored key) report a friendly 404 instead
+        of revealing anything."""
+        provider = AIProvider(
+            name="EnvOnly",
+            provider_type=AIProvider.ProviderType.NVIDIA,
+            model="nvidia/nemotron-3-nano-30b-a3b",
+            base_url="https://integrate.api.nvidia.com/v1",
+        )
+        provider.save()
+        AIProviderHealth.objects.get_or_create(provider=provider)
+        resp = self._client(self.admin).post(
+            f"/api/admin/ai/providers/{provider.id}/reveal_key/"
+        )
+        self.assertEqual(resp.status_code, 404)
+        self.assertNotIn("env", resp.data.get("key", ""))
+
+    def test_student_cannot_reveal_key(self):
+        provider = self._provider(name="Gemini")
+        resp = self._client(self.student).post(
+            f"/api/admin/ai/providers/{provider.id}/reveal_key/"
+        )
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_reveal_key_never_appears_in_regular_listing(self):
+        """The plain list/retrieve responses still mask keys - reveal is the
+        only endpoint that returns plaintext, and only on demand."""
+        provider = self._provider(name="Gemini")
+        resp = self._client(self.admin).get("/api/admin/ai/providers/")
+        self.assertNotIn("sk-test-abcdef-1234", str(resp.data))
+        resp = self._client(self.admin).get(
+            f"/api/admin/ai/providers/{provider.id}/"
+        )
+        self.assertNotIn("sk-test-abcdef-1234", str(resp.data))
+
 
 class AiParseTests(AiManagerBase):
     """Robust JSON parsing + report/matches normalization (ai_parse.py).

@@ -33,6 +33,7 @@ from .ai_models import (
     AIRequestLog,
     AISettings,
     AITaskConfiguration,
+    decrypt_secret,
 )
 from .ai_router import AIService
 
@@ -212,6 +213,46 @@ class AIProviderViewSet(ModelViewSet):
         if not deleted:
             return Response({"detail": "Key not found."}, status=404)
         return Response(status=204)
+
+    @action(detail=True, methods=["post"])
+    def reveal_key(self, request, pk=None):
+        """Return the full API key for the admin's view/copy buttons.
+
+        Keys are never returned by the list/retrieve responses - this is the
+        one explicit reveal endpoint (Super Admin only), used by the eye and
+        copy buttons in the provider editor. Pass ``key_id`` to reveal one of
+        the extra keys instead of the primary key. The key itself is never
+        logged - only the REVEAL_KEY action is.
+        """
+        provider = self.get_object()
+        key_id = request.data.get("key_id")
+        plain = ""
+        note = ""
+        if key_id is not None:
+            try:
+                key_id = int(key_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "A valid key id is required."}, status=400)
+        if key_id:
+            key_obj = provider.keys.filter(pk=key_id).first()
+            if not key_obj:
+                return Response({"detail": "Key not found."}, status=404)
+            plain = decrypt_secret(key_obj.encrypted_api_key)
+            note = key_obj.note
+        else:
+            plain = decrypt_secret(provider.encrypted_api_key)
+        if not plain:
+            return Response(
+                {
+                    "detail": (
+                        "No stored key to reveal - this provider uses a key from "
+                        "the server environment (e.g. NVIDIA_API_KEY on Render)."
+                    )
+                },
+                status=404,
+            )
+        self._log("REVEAL_KEY", provider, request)
+        return Response({"key": plain, "note": note})
 
     @action(detail=True, methods=["post"])
     def test(self, request, pk=None):
