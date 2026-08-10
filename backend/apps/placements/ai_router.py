@@ -59,27 +59,42 @@ def _settings() -> AISettings:
 
 
 def _task_chain(task: str):
-    """Provider chain for a task: explicit config if present, else all enabled.
+    """Provider chain for a task: the explicit task config first, then every
+    other enabled provider by priority.
 
-    Extra keys are prefetched so the adapters can fail over between a
-    provider's stored keys without extra queries.
+    Appending the remaining enabled providers guarantees a misconfigured or
+    rate-limited provider pinned to a task (e.g. an expired Gemini key on
+    Student Chat) can never leave the portal unable to answer - the router
+    fails over to the healthy providers before giving up.
     """
+    ordered_ids: list[int] = []
+    seen: set[int] = set()
+
     config = AITaskConfiguration.objects.filter(task=task).first()
     if config:
-        chain = config.provider_chain()
-        if chain:
-            # Re-fetch with keys prefetched while preserving the configured order.
-            by_id = {
-                p.pk: p
-                for p in AIProvider.objects.filter(pk__in=[p.pk for p in chain])
-                .prefetch_related("keys")
-            }
-            return [by_id[p.pk] for p in chain if p.pk in by_id]
-    return list(
+        for p in config.provider_chain():
+            if p.pk not in seen:
+                seen.add(p.pk)
+                ordered_ids.append(p.pk)
+    # Append every other enabled provider (by priority) as a safety net.
+    for p in (
         AIProvider.objects.filter(enabled=True)
         .order_by("priority", "id")
         .prefetch_related("keys")
-    )
+    ):
+        if p.pk not in seen:
+            seen.add(p.pk)
+            ordered_ids.append(p.pk)
+
+    if not ordered_ids:
+        return []
+    # Re-fetch with keys prefetched while preserving the chosen order.
+    by_id = {
+        p.pk: p
+        for p in AIProvider.objects.filter(pk__in=ordered_ids)
+        .prefetch_related("keys")
+    }
+    return [by_id[pk] for pk in ordered_ids if pk in by_id]
 
 
 def _attempt(provider: AIProvider, adapter, system_prompt, user_text, max_tokens,
@@ -262,13 +277,20 @@ class AIService:
                         timeout=300,
                     )
                 return result
-            except AuthProviderError as exc:
+            except (AuthProviderError, RouterError) as exc:
+                # This provider's config/key is bad - retrying the SAME
+                # provider is pointless, but the next provider in the chain
+                # (including the safety-net providers appended by _task_chain)
+                # may be perfectly healthy. So fail over instead of giving up.
                 _mark_failure(provider, exc.error_type)
                 _record_log(user, task, primary_name, (provider.name, provider.pk),
                             AIRequestLog.Status.FAILED, fallback_used,
                             error_type=exc.error_type)
                 last_error = exc
-                break  # auth error - retrying the same provider is pointless
+                if not st.enable_fallback:
+                    break
+                fallback_used = True
+                continue
             except RecoverableProviderError as exc:
                 _mark_failure(provider, exc.error_type)
                 _record_log(user, task, primary_name, (provider.name, provider.pk),
@@ -281,13 +303,6 @@ class AIService:
                 # already handled transient retries internally).
                 fallback_used = True
                 continue
-            except RouterError as exc:
-                _mark_failure(provider, exc.error_type)
-                _record_log(user, task, primary_name, (provider.name, provider.pk),
-                            AIRequestLog.Status.FAILED, fallback_used,
-                            error_type=exc.error_type)
-                last_error = exc
-                break
 
         # ---- last-resort safety net ----------------------------------------
         # No configured provider produced a usable answer (unreadable JSON,

@@ -71,6 +71,19 @@ def _status_code_from_error(exc) -> int:
     return 0
 
 
+def _is_rag_model(provider: AIProvider) -> bool:
+    """True when the provider's model id looks like a hosted RAG NIM.
+
+    Only RAG NIMs accept the ``documents`` request field. Everything else
+    (NVIDIA 30B, Groq, Cerebras, custom OpenAI-compatible models) grounds
+    documents via prompt injection instead - sending the field to a non-RAG
+    model returns a 400 'unsupported parameter(s): documents'.
+    """
+    model = (provider.model or "").lower()
+    name = (provider.name or "").lower()
+    return ("rag" in model) or ("rag" in name and "nim" in name)
+
+
 def _raise_for_status(exc, message: str) -> None:
     status = _status_code_from_error(exc)
     if status in (401, 403):
@@ -121,6 +134,19 @@ class OpenAICompatAdapter:
                 "No API key configured for this provider.", error_type="NO_KEY"
             )
         base_url = self.provider.base_url or "https://api.openai.com/v1"
+        # Grounding documents are ALWAYS injected straight into the system
+        # prompt - that works with every OpenAI-compatible model. The separate
+        # ``documents`` request field (RAG NIMs) is only sent for actual RAG
+        # models; a regular chat model (e.g. NVIDIA's 30B) rejects the field
+        # with a 400, which used to kill the whole drive chat.
+        grounded_system = system_prompt
+        if documents:
+            grounded_system = (
+                system_prompt
+                + "\n\nDOCUMENTS (answer using ONLY these):\n\n"
+                + "\n\n---\n\n".join(documents)
+            )
+
         if images:
             # Multimodal request (vision models only): the user message becomes
             # text + image parts (base64 data URIs). A text-only model rejects
@@ -130,12 +156,12 @@ class OpenAICompatAdapter:
             for uri in images:
                 content.append({"type": "image_url", "image_url": {"url": uri}})
             messages = [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": grounded_system},
                 {"role": "user", "content": content},
             ]
         else:
             messages = [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": grounded_system},
                 {"role": "user", "content": user_text},
             ]
         kwargs: dict = {
@@ -148,9 +174,9 @@ class OpenAICompatAdapter:
         extra: dict = {}
         if reasoning_budget and reasoning_budget > 0:
             extra["reasoning_budget"] = reasoning_budget
-        if documents:
-            # Some hosted RAG NIMs accept grounding documents; prompt-injection
-            # below is the portable fallback so documents always work.
+        if documents and _is_rag_model(self.provider):
+            # Actual RAG NIMs additionally get the grounding field; the prompt
+            # injection above remains the portable fallback for everything else.
             extra["documents"] = [{"content": d} for d in documents]
         if extra:
             kwargs["extra_body"] = extra
@@ -209,6 +235,23 @@ class OpenAICompatAdapter:
                     # retry once as a plain completion (the prompt still asks
                     # for JSON and the parser tolerates loose output).
                     kwargs.pop("response_format", None)
+                    try:
+                        completion = client.chat.completions.create(**kwargs)
+                    except Exception as retry_exc:
+                        raise UnavailableProviderError(
+                            f"AI API error: {detail[:200]}", error_type="BAD_REQUEST"
+                        ) from retry_exc
+                elif "document" in detail and documents:
+                    # A non-RAG model rejected the grounding documents field -
+                    # retry once; the documents are already injected into the
+                    # system prompt above, so nothing is lost. Drop only the
+                    # documents key so a reasoning budget survives the retry.
+                    extra_body = kwargs.get("extra_body") or {}
+                    extra_body.pop("documents", None)
+                    if extra_body:
+                        kwargs["extra_body"] = extra_body
+                    else:
+                        kwargs.pop("extra_body", None)
                     try:
                         completion = client.chat.completions.create(**kwargs)
                     except Exception as retry_exc:

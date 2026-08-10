@@ -788,6 +788,174 @@ class AiVisionImageTests(AiManagerBase):
         self.assertEqual(calls[0]["images"], ["data:image/png;base64,AAAA"])
 
 
+class AiDocumentsGroundingTests(AiManagerBase):
+    """Grounding documents must work with every OpenAI-compatible model.
+
+    The drive chat sends drive details as documents. A regular chat model
+    (e.g. NVIDIA 30B) rejects the ``documents`` request field with a 400 -
+    so the adapter injects the documents into the system prompt instead and
+    only sends the field to actual RAG NIMs. This was the drive chatbot's
+    'AI service is temporarily unavailable' bug.
+    """
+
+    @patch("apps.placements.ai_models.provider_key_chain")
+    def test_documents_are_prompt_injected_not_sent_as_field(self, mock_chain):
+        from .ai_adapters import OpenAICompatAdapter
+
+        provider = self._provider(
+            name="NVIDIA", provider_type="NVIDIA",
+            model="nvidia/nemotron-3-nano-30b-a3b",
+        )
+        mock_chain.return_value = ["sk-key"]
+        captured = {}
+
+        class FakeCompletions:
+            def __init__(self, client):
+                self.client = client
+
+            def create(self, **kwargs):
+                captured["kwargs"] = kwargs
+                from types import SimpleNamespace
+
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(message=SimpleNamespace(content="7 LPA"))
+                    ],
+                    usage=SimpleNamespace(prompt_tokens=5, completion_tokens=2),
+                )
+
+        class FakeChat:
+            def __init__(self, client):
+                self.completions = FakeCompletions(client)
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.api_key = kwargs["api_key"]
+                self.chat = FakeChat(self)
+
+        docs = ["Drive: TCS, 7 LPA.", "Eligibility: 60%."]
+        with patch("openai.OpenAI", side_effect=FakeClient):
+            text, _, _ = OpenAICompatAdapter(provider).generate(
+                "sys", "what package?", 50, documents=docs
+            )
+
+        self.assertEqual(text, "7 LPA")
+        # The documents field must NOT be sent (30B model rejects it).
+        extra = captured["kwargs"].get("extra_body") or {}
+        self.assertNotIn("documents", extra)
+        # The documents are injected into the system prompt instead.
+        system = captured["kwargs"]["messages"][0]["content"]
+        self.assertIn("Drive: TCS, 7 LPA.", system)
+        self.assertIn("Eligibility: 60%.", system)
+
+    @patch("apps.placements.ai_models.provider_key_chain")
+    def test_rag_nim_still_receives_documents_field(self, mock_chain):
+        from .ai_adapters import OpenAICompatAdapter, _is_rag_model
+
+        rag = self._provider(
+            name="NVIDIA RAG", provider_type="NVIDIA", model="nvidia/nim-rag"
+        )
+        regular = self._provider(
+            name="NVIDIA", provider_type="NVIDIA",
+            model="nvidia/nemotron-3-nano-30b-a3b",
+        )
+        self.assertTrue(_is_rag_model(rag))
+        self.assertFalse(_is_rag_model(regular))
+
+        mock_chain.return_value = ["sk-key"]
+        captured = {}
+
+        class FakeCompletions:
+            def __init__(self, client):
+                self.client = client
+
+            def create(self, **kwargs):
+                captured["kwargs"] = kwargs
+                from types import SimpleNamespace
+
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+                    usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+                )
+
+        class FakeChat:
+            def __init__(self, client):
+                self.completions = FakeCompletions(client)
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.api_key = kwargs["api_key"]
+                self.chat = FakeChat(self)
+
+        with patch("openai.OpenAI", side_effect=FakeClient):
+            OpenAICompatAdapter(rag).generate(
+                "sys", "question", 50, documents=["d1"]
+            )
+        extra = captured["kwargs"].get("extra_body") or {}
+        self.assertIn("documents", extra)
+
+    @patch("apps.placements.ai_models.provider_key_chain")
+    def test_documents_field_rejection_retries_with_prompt_injection(self, mock_chain):
+        """If a model rejects the documents field, the adapter retries once -
+        the documents are already injected into the system prompt."""
+        from .ai_adapters import OpenAICompatAdapter
+
+        provider = self._provider(
+            name="NVIDIA RAG", provider_type="NVIDIA", model="nvidia/nim-rag"
+        )
+        mock_chain.return_value = ["sk-key"]
+        captured = []
+
+        class FakeCompletions:
+            def __init__(self, client):
+                self.client = client
+
+            def create(self, **kwargs):
+                captured.append(kwargs)
+                if len(captured) == 1:
+                    from openai import BadRequestError
+
+                    # The SDK needs a response-like object to build the error.
+                    response = type(
+                        "Resp", (), {"status_code": 400, "headers": {}, "text": "bad", "json": lambda: {}, "request": None}
+                    )()
+                    raise BadRequestError(
+                        "bad request",
+                        body={"message": "validation: unsupported parameter(s): documents"},
+                        response=response,
+                    )
+                from types import SimpleNamespace
+
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(message=SimpleNamespace(content="retried ok"))
+                    ],
+                    usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+                )
+
+        class FakeChat:
+            def __init__(self, client):
+                self.completions = FakeCompletions(client)
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.api_key = kwargs["api_key"]
+                self.chat = FakeChat(self)
+
+        with patch("openai.OpenAI", side_effect=FakeClient):
+            text, _, _ = OpenAICompatAdapter(provider).generate(
+                "sys", "question", 50, documents=["d1"]
+            )
+        self.assertEqual(text, "retried ok")
+        self.assertEqual(len(captured), 2)
+        # The retried request dropped the documents field but kept the
+        # injected documents in the system prompt.
+        self.assertNotIn(
+            "documents", (captured[1].get("extra_body") or {})
+        )
+        self.assertIn("d1", captured[1]["messages"][0]["content"])
+
+
 class _FakeSDKRateLimit(RateLimitError):
     """RateLimitError without the SDK's constructor requirements."""
 
@@ -1257,6 +1425,105 @@ class AiTaskRoutingTests(AiManagerBase):
             user=self.student, cacheable=False,
         )
         self.assertEqual(used, ["ChatLLM", "ExtractLLM"])
+
+    @patch("apps.placements.ai_router.adapter_for")
+    def test_broken_pinned_provider_falls_through_to_healthy_provider(self, mock_adapter):
+        """A provider pinned to a task that is down/rate-limited must not take
+        the whole task down - the router fails over to the other enabled
+        providers (the drive chatbot 'AI service is temporarily unavailable'
+        bug)."""
+        from .ai_adapters import RateLimitedProviderError
+
+        broken = self._provider(name="Gemini", priority=1)
+        healthy = self._provider(name="NVIDIA", priority=2, provider_type="NVIDIA")
+        AITaskConfiguration.objects.create(
+            task=AITaskConfiguration.Task.STUDENT_CHAT, primary=broken
+        )
+        AISettings.get()
+        AISettings.objects.update(enable_caching=False)
+
+        def fake_adapter(provider):
+            class Fake:
+                def generate(self, *a, **kw):
+                    if provider.pk == broken.pk:
+                        raise RateLimitedProviderError(
+                            "busy", error_type="RATE_LIMITED"
+                        )
+                    return "answer from healthy provider", 10, 5
+
+            return Fake()
+
+        mock_adapter.side_effect = fake_adapter
+        answer = AIService.generate(
+            task="STUDENT_CHAT", system_prompt="sys", user_text="hello",
+            user=self.student, cacheable=False,
+        )
+        self.assertEqual(answer, "answer from healthy provider")
+        log = AIRequestLog.objects.latest("id")
+        self.assertEqual(log.provider_used, "NVIDIA")
+        self.assertTrue(log.fallback_used)
+
+    @patch("apps.placements.ai_router.adapter_for")
+    def test_auth_error_on_pinned_provider_fails_over(self, mock_adapter):
+        """A bad/expired key on the pinned provider must not take the task
+        down - the router continues to the other enabled providers instead of
+        breaking the whole chain (the safety-net chain is useless if auth
+        errors stop it)."""
+        from .ai_adapters import AuthProviderError
+
+        broken = self._provider(name="Gemini", priority=1)
+        healthy = self._provider(name="NVIDIA", priority=2, provider_type="NVIDIA")
+        AITaskConfiguration.objects.create(
+            task=AITaskConfiguration.Task.STUDENT_CHAT, primary=broken
+        )
+        AISettings.get()
+        AISettings.objects.update(enable_caching=False)
+
+        def fake_adapter(provider):
+            class Fake:
+                def generate(self, *a, **kw):
+                    if provider.pk == broken.pk:
+                        raise AuthProviderError("bad key", error_type="AUTH")
+                    return "healthy answer", 10, 5
+
+            return Fake()
+
+        mock_adapter.side_effect = fake_adapter
+        answer = AIService.generate(
+            task="STUDENT_CHAT", system_prompt="sys", user_text="hello",
+            user=self.student, cacheable=False,
+        )
+        self.assertEqual(answer, "healthy answer")
+        log = AIRequestLog.objects.latest("id")
+        self.assertEqual(log.provider_used, "NVIDIA")
+        self.assertTrue(log.fallback_used)
+
+    @patch("apps.placements.ai_router.adapter_for")
+    def test_task_chain_prefers_configured_provider(self, mock_adapter):
+        """The task's configured provider is still tried first; other enabled
+        providers only come after it (fallthrough safety net)."""
+        configured = self._provider(name="ChatLLM", priority=10)
+        other = self._provider(name="BackupLLM", priority=1, provider_type="GROQ")
+        AITaskConfiguration.objects.create(
+            task=AITaskConfiguration.Task.STUDENT_CHAT, primary=configured
+        )
+
+        used = []
+
+        def fake_adapter(provider):
+            def generate(*a, **kw):
+                used.append(provider.name)
+                return "answer", 5, 5
+
+            return SimpleAdapter(generate)
+
+        mock_adapter.side_effect = fake_adapter
+        AIService.generate(
+            task="STUDENT_CHAT", system_prompt="s", user_text="q",
+            user=self.student, cacheable=False,
+        )
+        # The configured primary answers - the backup is never called.
+        self.assertEqual(used, ["ChatLLM"])
 
 
 class AiRouterCacheAndSettingsTests(AiManagerBase):
