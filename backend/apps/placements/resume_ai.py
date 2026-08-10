@@ -90,13 +90,19 @@ def _deferred_usage(actor):
     return callback, commit
 
 
-def extract_resume_text(resume) -> str:
-    """Download the resume from Cloudinary and pull plain text out of it.
+# Human reason when a resume file can't be turned into text. Kept separate so
+# the student gets the REAL cause (blocked download vs scanned PDF vs legacy
+# format) instead of one generic message that fits nothing.
+def _extract_resume_text(resume) -> tuple[str, str]:
+    """Download the resume and pull plain text out of it.
 
-    PDFs are parsed with pypdf; DOCX is a ZIP of XML so the stdlib handles it;
-    legacy DOC is a binary format and returns ''. Returns '' whenever the file
-    can't be read, so callers degrade gracefully instead of failing the review.
+    Returns ``(text, "")`` on success, or ``("", reason)`` with a short
+    human-readable reason when the file cannot be read. PDFs are parsed with
+    pypdf then PyMuPDF; DOCX is a ZIP of XML so the stdlib handles it. Legacy
+    .doc (binary OLE) has no pure-Python text layer here and is reported as
+    such so the student knows to re-save as PDF/DOCX.
     """
+    import urllib.error
     import urllib.request
 
     from apps.documents.services import signed_raw_url
@@ -105,43 +111,57 @@ def extract_resume_text(resume) -> str:
     try:
         with urllib.request.urlopen(signed_raw_url(resume.public_id), timeout=30) as resp:
             content = resp.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return "", "storage blocked the download - the file may have been deleted or access removed"
+        return "", f"could not download the file from storage (HTTP {exc.code})"
     except Exception:
-        return ""
-    try:
-        if name.endswith(".pdf"):
-            # pypdf first (fast, handles most text PDFs), then PyMuPDF as a
-            # much stronger fallback for tricky/skewed/compressed PDFs.
-            try:
-                from pypdf import PdfReader
+        return "", "could not download the file from storage"
 
-                reader = PdfReader(io.BytesIO(content))
-                text = "\n".join(page.extract_text() or "" for page in reader.pages)
-                if text.strip():
-                    return text
-            except Exception:
-                pass  # fall through to PyMuPDF
+    if name.endswith(".pdf"):
+        # pypdf first (fast, handles most text PDFs), then PyMuPDF as a much
+        # stronger fallback for tricky/skewed/compressed PDFs.
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(content))
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception:
+            text = ""
+        if not text.strip():
             try:
                 import fitz  # PyMuPDF
 
                 doc = fitz.open(stream=content, filetype="pdf")
                 try:
-                    return "\n".join(page.get_text() or "" for page in doc)
+                    text = "\n".join(page.get_text() or "" for page in doc)
                 finally:
                     doc.close()
             except Exception:
-                return ""
-        if name.endswith(".docx"):
+                text = ""
+        if not text.strip():
+            # A valid PDF with no extractable text layer is a scanned/image PDF.
+            return "", "this PDF has no readable text - it looks like a scanned image; upload a text-based PDF"
+        return text, ""
+
+    if name.endswith(".docx"):
+        try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
             # Paragraphs become line breaks, then strip every remaining tag.
             text = re.sub(r"<w:p[ >]", "\n", xml)
             text = re.sub(r"<[^>]+>", "", text)
-            return html.unescape(text)
-        if name.endswith(".txt"):
-            return content.decode("utf-8", errors="replace")
-    except Exception:
-        return ""
-    return ""
+            return html.unescape(text), ""
+        except Exception:
+            return "", "could not read this DOCX file"
+
+    if name.endswith(".doc"):
+        return "", "legacy .doc files can't be read by the AI; re-save the file as PDF or DOCX and upload it again"
+
+    if name.endswith(".txt"):
+        return content.decode("utf-8", errors="replace"), ""
+
+    return "", "this file format is not supported by the AI; upload a PDF or DOCX"
 
 
 def _drive_brief(drive) -> str:
@@ -408,15 +428,20 @@ def analyze_resume(resume, actor) -> dict:
     from apps.core.models import Notification
     from apps.core.utils import notify
 
-    text = extract_resume_text(resume)
+    text, read_error = _extract_resume_text(resume)
     if not text or not text.strip():
-        # Nothing readable in the file (scanned image, binary DOC, download
-        # failure). Fail fast WITHOUT calling the AI so no credits are spent.
+        # The file itself can't be turned into text (scanned image PDF, legacy
+        # .doc, blocked download...). Fail fast WITHOUT calling the AI so no
+        # credits are spent, and tell the student the real reason.
         resume.ai_status = Resume.AiStatus.FAILED
         resume.ai_score = None
         resume.ai_analysis = None
         resume.ai_match = None
-        resume.ai_error = "The AI could not read this resume. Try a text-based PDF."
+        resume.ai_error = (
+            "The AI could not read this resume - " + read_error
+            if read_error
+            else "The AI could not read this resume. Try a text-based PDF."
+        )
         resume.ai_analyzed_at = timezone.now()
         resume.save(update_fields=[
             "ai_status", "ai_score", "ai_analysis", "ai_match", "ai_error",
@@ -508,12 +533,17 @@ def analyze_resume(resume, actor) -> dict:
     else:
         # The AI answered but produced nothing usable - surface as a failure
         # WITHOUT charging credits (the report is worthless, so the run is
-        # refunded before the student ever sees the error).
+        # refunded before the student ever sees the error). This is an AI/
+        # provider issue, NOT a resume problem - say so instead of blaming the
+        # file (the file clearly had readable text or we'd have stopped above).
         resume.ai_status = Resume.AiStatus.FAILED
         resume.ai_score = None
         resume.ai_analysis = None
         resume.ai_match = None
-        resume.ai_error = "The AI could not read this resume. Try a text-based PDF."
+        resume.ai_error = (
+            "The AI service returned an unreadable report. Please try again "
+            "in a moment - no credits were used for this attempt."
+        )
         resume.ai_analyzed_at = timezone.now()
     resume.save(update_fields=[
         "ai_status", "ai_score", "ai_analysis", "ai_match", "ai_error",

@@ -1665,7 +1665,7 @@ class ResumeTests(TestCase):
         fake_ai.responses = [quality, matches]
 
         with (
-            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python project, SQL."),
+            patch("apps.placements.resume_ai._extract_resume_text", return_value=("Python project, SQL.", "")),
             patch("apps.placements.resume_ai.ai_json", side_effect=fake_ai),
         ):
             client = self._client(self.student)
@@ -1722,7 +1722,7 @@ class ResumeTests(TestCase):
         resume = Resume.objects.get(student=self.student)
 
         client = self._client(self.student)
-        with patch("apps.placements.resume_ai.extract_resume_text", return_value=""):
+        with patch("apps.placements.resume_ai._extract_resume_text", return_value=("", "scanned image")):
             with patch("apps.placements.resume_ai.ai_json") as mock_ai:
                 response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
 
@@ -1747,7 +1747,7 @@ class ResumeTests(TestCase):
 
         client = self._client(self.student)
         with (
-            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python project."),
+            patch("apps.placements.resume_ai._extract_resume_text", return_value=("Python project.", "")),
             patch("apps.placements.resume_ai.ai_json", return_value={}),
         ):
             response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
@@ -1815,7 +1815,7 @@ class ResumeTests(TestCase):
 
         AiUsageLog.objects.update(created_at=timezone.now() - __import__("datetime").timedelta(days=1))
         with (
-            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python"),
+            patch("apps.placements.resume_ai._extract_resume_text", return_value=("Python", "")),
             patch("apps.placements.resume_ai.ai_json", return_value={"score": 60, "summary": "ok", "strengths": [], "improvements": [], "skills": [], "ats_keywords": []}),
         ):
             allowed = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
@@ -1838,7 +1838,7 @@ class ResumeTests(TestCase):
             )
         client = self._client(self.student)
         with (
-            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python"),
+            patch("apps.placements.resume_ai._extract_resume_text", return_value=("Python", "")),
             patch("apps.placements.resume_ai.ai_json", return_value={"score": 60, "summary": "ok", "strengths": [], "improvements": [], "skills": [], "ats_keywords": []}),
         ):
             response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
@@ -1954,7 +1954,7 @@ class ResumeTests(TestCase):
         services.upload_resume(self.student, self._resume_file())
         resume = Resume.objects.get(student=self.student)
         with (
-            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python"),
+            patch("apps.placements.resume_ai._extract_resume_text", return_value=("Python", "")),
             patch("apps.placements.resume_ai.ai_json", side_effect=AiError("quota exceeded")),
         ):
             client = self._client(self.student)
