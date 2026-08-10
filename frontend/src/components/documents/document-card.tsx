@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarClock, Download, Eye, RotateCcw, Trash2 } from "lucide-react";
+import { CalendarClock, Download, Eye, FileText, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentTypeMeta } from "@/lib/document-types";
@@ -12,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { http } from "@/lib/api";
 import type { DocumentItem } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
+import { DocumentTextDialog } from "./document-text-dialog";
 
 interface Props {
   document: DocumentItem;
@@ -33,6 +35,9 @@ export function DocumentCard({
   selected = false,
   onToggleSelect,
 }: Props) {
+  const [textOpen, setTextOpen] = useState(false);
+  const isPdf = document.file_name.toLowerCase().endsWith(".pdf");
+
   const handleCardClick = (e: React.MouseEvent) => {
     if (!selecting) return;
     const target = e.target as HTMLElement;
@@ -131,6 +136,15 @@ export function DocumentCard({
             <CalendarClock className="size-3" /> Submit by {formatDate(document.submission_deadline)}
           </Badge>
         )}
+        {document.ocr_status === "COMPLETE" && (
+          <Badge
+            variant="outline"
+            className="gap-1 border-sky-500/30 bg-sky-500/10 text-[11px] text-sky-600 dark:text-sky-400"
+            title='Readable text is available - click "Read text" to view it.'
+          >
+            <FileText className="size-3" /> Text
+          </Badge>
+        )}
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -161,21 +175,41 @@ export function DocumentCard({
         >
           <Download className="size-3.5" /> Download
         </Button>
-        {canDelete && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="w-full shrink-0 justify-center gap-1.5 text-destructive hover:text-destructive sm:w-auto sm:size-8 sm:gap-0"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDelete();
-            }}
-          >
-            <Trash2 className="size-3.5" />
-            <span className="sm:hidden">Delete</span>
-          </Button>
-        )}
+        {/* Secondary actions sit side-by-side on mobile, inline on desktop. */}
+        <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:contents">
+          {isPdf && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full shrink-0 justify-center gap-1.5 sm:w-auto sm:size-8 sm:gap-0"
+              title="Extract readable text from this PDF (OCR for scanned files)"
+              onClick={(e) => {
+                e.stopPropagation();
+                setTextOpen(true);
+              }}
+            >
+              <FileText className="size-3.5" />
+              <span className="sm:hidden">Read text</span>
+            </Button>
+          )}
+          {canDelete && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="w-full shrink-0 justify-center gap-1.5 text-destructive hover:text-destructive sm:w-auto sm:size-8 sm:gap-0"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDelete();
+              }}
+            >
+              <Trash2 className="size-3.5" />
+              <span className="sm:hidden">Delete</span>
+            </Button>
+          )}
+        </div>
       </div>
+
+      <DocumentTextDialog document={document} open={textOpen} onOpenChange={setTextOpen} />
     </motion.div>
   );
 }

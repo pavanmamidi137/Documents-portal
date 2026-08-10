@@ -16,6 +16,8 @@ import threading
 
 from django.utils import timezone
 
+from apps.core.ocr import ocr_pdf_content as _ocr_pdf_content
+
 from .ai import AiError, ai_json, get_api_key
 from .models import AiUsageLog, Drive
 
@@ -129,53 +131,6 @@ def _is_pdf_file(resume) -> bool:
     return (resume.file_name or "").lower().endswith(".pdf")
 
 
-def _pdf_to_page_images(content: bytes, max_pages: int | None = None,
-                        dpi: int | None = None) -> list[str]:
-    """Render PDF pages to base64 image data URIs for vision-capable models.
-
-    Scanned resumes are typically 1-2 pages; the cap keeps the OCR call cheap.
-    Oversized page renders are skipped so the request stays lean. Returns an
-    empty list when the PDF cannot be rendered (never raises).
-    """
-    import base64
-
-    if max_pages is None:
-        max_pages = max(1, int(os.environ.get("RESUME_OCR_MAX_PAGES", "4")))
-    if dpi is None:
-        dpi = max(72, int(os.environ.get("RESUME_OCR_DPI", "170")))
-    try:
-        import fitz  # PyMuPDF (already a dependency)
-
-        doc = fitz.open(stream=content, filetype="pdf")
-    except Exception:
-        return []
-    try:
-        uris: list[str] = []
-        for page in doc.pages:
-            if len(uris) >= max_pages:
-                break
-            try:
-                # alpha=False keeps the PNG as plain RGB - more widely accepted
-                # by vision providers and slightly smaller than RGBA.
-                pix = page.get_pixmap(dpi=dpi, alpha=False)
-                png = pix.tobytes("png")
-            except Exception:
-                continue
-            if not png or len(png) > 4_500_000:
-                continue
-            uris.append("data:image/png;base64," + base64.b64encode(png).decode("ascii"))
-        return uris
-    finally:
-        doc.close()
-
-
-_OCR_SYSTEM_PROMPT = """\
-You are a precise OCR engine. Transcribe ALL the text from the document image(s) \
-exactly as written, preserving order and line structure as best you can. \
-Output ONLY the transcribed text - no commentary, no headers, no markdown. \
-If an image contains no readable text, output exactly: NO TEXT"""
-
-
 def _ocr_resume_pdf(resume, usage_callback=None) -> str:
     """Transcribe a scanned/image resume PDF with a vision-capable AI provider.
 
@@ -193,37 +148,12 @@ def _ocr_resume_pdf(resume, usage_callback=None) -> str:
         content, _ = _download_resume_content(resume)
     if not content:
         return ""
-    images = _pdf_to_page_images(content)
-    if not images:
-        return ""
-    try:
-        from .ai_router import AIService
-
-        text = AIService.generate(
-            task="RESUME_OCR",
-            system_prompt=_OCR_SYSTEM_PROMPT,
-            user_text=(
-                "The attached images are pages of a scanned resume. "
-                "Transcribe all the text you can read."
-            ),
-            max_tokens=4096,
-            temperature=0,
-            images=images,
-            cacheable=False,
-            usage_callback=usage_callback,
-        )
-        text = str(text or "").strip()
-        # The model is told to output exactly "NO TEXT" for blank pages - treat
-        # that (and empty/symbol-only output) as an OCR failure so a blank page
-        # never reaches the quality model (which would still charge credits).
-        if not text:
-            return ""
-        stripped = re.sub(r"[^A-Za-z0-9]", "", text).lower()
-        if stripped in ("", "notext"):
-            return ""
-        return text
-    except Exception:  # OCR must never break the request - fail gracefully
-        return ""
+    return _ocr_pdf_content(
+        content,
+        usage_callback=usage_callback,
+        task="RESUME_OCR",
+        max_pages=max(1, int(os.environ.get("RESUME_OCR_MAX_PAGES", "4"))),
+    )
 
 
 def _extract_resume_text(resume) -> tuple[str, str]:
@@ -688,8 +618,11 @@ def analyze_resume(resume, actor) -> dict:
         resume.ai_analysis = None
         resume.ai_match = None
         resume.ai_error = (
-            "The AI service returned an unreadable report. Please try again "
-            "in a moment - no credits were used for this attempt."
+            "The AI service returned an unreadable report - the provider "
+            "answered, but its model output couldn't be read as a report. "
+            "Ask the admin to check the provider/model under Admin > AI "
+            "Management > AI Tasks (Resume Analysis). No credits were used "
+            "for this attempt."
         )
         resume.ai_analyzed_at = timezone.now()
     resume.save(update_fields=[

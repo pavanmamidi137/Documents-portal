@@ -1156,3 +1156,216 @@ class DocumentTreeTests(TestCase):
         self.assertEqual(data["count"], 1)
         self.assertEqual(data["results"][0]["id"], self.doc_in_a.id)
 
+
+class DocumentOcrTests(TestCase):
+    """Text extraction for documents: pypdf for text PDFs, AI OCR for scanned."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.student = User.objects.create_user(
+            roll_number="st1", password="x", full_name="Student A"
+        )
+        self.branch = Branch.objects.create(name="CSE", code="CS")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.semester = Semester.objects.create(name="3-1", order=5)
+        self.category = Category.objects.create(name="Notes")
+        self.subject = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.semester, branch=self.branch
+        )
+        self.student.branch = self.branch
+        self.student.section = self.section_a
+        self.student.save()
+
+    def _pdf_bytes(self, text: str = "") -> bytes:
+        """Build a tiny real PDF - with text for text-based, blank for scanned."""
+        import fitz
+
+        doc = fitz.open()
+        page = doc.new_page()
+        if text:
+            page.insert_text((72, 72), text, fontsize=11)
+        return doc.tobytes()
+
+    def _doc(self, file_name="notes.pdf", **overrides):
+        values = {
+            "title": "DBMS Unit 1", "description": "",
+            "file_name": file_name, "file_size": 1024,
+            "cloudinary_url": "https://x.example/n.pdf",
+            "public_id": "ocr-pid-1",
+            "branch": self.branch, "section": self.section_a,
+            "semester": self.semester, "category": self.category,
+            "subject": self.subject, "uploaded_by": self.admin,
+        }
+        values.update(overrides)
+        return Document.objects.create(**values)
+
+    def _client(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
+        return client
+
+    def test_text_pdf_read_directly_without_ai(self):
+        """A text-based PDF is read with pypdf - free, no OCR, no credits."""
+        from apps.placements.models import AiUsageLog
+
+        doc = self._doc()
+        client = self._client(self.admin)
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = (
+                self._pdf_bytes("Intro to Database Management Systems")
+            )
+            with patch("apps.core.ocr.ocr_pdf_content") as mock_ocr:
+                response = client.post(f"/api/documents/{doc.id}/extract_text/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["ocr_status"], "COMPLETE")
+        self.assertIn("Database Management Systems", response.data["ocr_text"])
+        mock_ocr.assert_not_called()
+        doc.refresh_from_db()
+        self.assertEqual(doc.ocr_status, "COMPLETE")
+        self.assertFalse(
+            AiUsageLog.objects.filter(action=AiUsageLog.Action.DOC_OCR).exists()
+        )
+
+    def test_scanned_pdf_uses_ocr_and_charges_college_admin(self):
+        """A scanned PDF is OCR'd via AI and the tokens charge the Super Admin."""
+        from apps.placements.models import AiUsageLog
+
+        doc = self._doc()
+        client = self._client(self.admin)
+
+        def fake_ocr(content, usage_callback=None, **kwargs):
+            if usage_callback:
+                usage_callback(120, 30)
+            return "OCR: student name, Python, SQL, projects"
+
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = self._pdf_bytes("")
+            with patch("apps.core.ocr.ocr_pdf_content", side_effect=fake_ocr):
+                response = client.post(f"/api/documents/{doc.id}/extract_text/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["ocr_status"], "COMPLETE")
+        self.assertIn("Python", response.data["ocr_text"])
+        doc.refresh_from_db()
+        self.assertEqual(doc.ocr_status, "COMPLETE")
+        # OCR tokens are charged to the college's Super Admin, not the caller.
+        usage = AiUsageLog.objects.filter(action=AiUsageLog.Action.DOC_OCR).first()
+        self.assertIsNotNone(usage)
+        self.assertEqual(usage.user_id, self.admin.id)
+        self.assertEqual(usage.prompt_tokens, 120)
+        self.assertEqual(usage.completion_tokens, 30)
+
+    def test_scanned_pdf_ocr_failure_charges_nothing(self):
+        """OCR that returns nothing marks FAILED without any credit charge."""
+        from apps.placements.models import AiUsageLog
+
+        doc = self._doc()
+        client = self._client(self.admin)
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = self._pdf_bytes("")
+            with patch("apps.core.ocr.ocr_pdf_content", return_value=""):
+                response = client.post(f"/api/documents/{doc.id}/extract_text/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["ocr_status"], "FAILED")
+        self.assertIn("OCR", response.data["ocr_error"])
+        doc.refresh_from_db()
+        self.assertEqual(doc.ocr_status, "FAILED")
+        self.assertFalse(
+            AiUsageLog.objects.filter(action=AiUsageLog.Action.DOC_OCR).exists()
+        )
+
+    def test_non_pdf_rejected(self):
+        doc = self._doc(file_name="notes.docx")
+        response = self._client(self.admin).post(f"/api/documents/{doc.id}/extract_text/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["ocr_status"], "FAILED")
+        self.assertIn("Only PDF", response.data["ocr_error"])
+        doc.refresh_from_db()
+        self.assertEqual(doc.ocr_status, "FAILED")
+
+    def test_complete_returns_cached_text_without_reprocessing(self):
+        doc = self._doc(ocr_status="COMPLETE", ocr_text="cached text")
+        with patch("apps.documents.ocr.extract_document_text") as mock_extract:
+            response = self._client(self.admin).post(f"/api/documents/{doc.id}/extract_text/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["ocr_text"], "cached text")
+        mock_extract.assert_not_called()
+
+    def test_pending_returns_409_until_finished(self):
+        from django.utils import timezone
+
+        doc = self._doc(ocr_status="PENDING", ocr_updated_at=timezone.now())
+        response = self._client(self.admin).post(f"/api/documents/{doc.id}/extract_text/")
+        self.assertEqual(response.status_code, 409)
+
+    def test_student_scoped_to_own_section(self):
+        doc = self._doc(public_id="ocr-pid-a")
+        # The document lives in section A - a section-B student can't see it.
+        self.student.section = self.section_b
+        self.student.save()
+        response = self._client(self.student).post(f"/api/documents/{doc.id}/extract_text/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_auto_extract_skips_non_pdf_uploads(self):
+        """maybe_auto_extract returns immediately for non-PDF files (no PENDING)."""
+        doc = self._doc(file_name="slides.pptx")
+        from .services import maybe_auto_extract
+
+        maybe_auto_extract(doc, self.admin)
+        doc.refresh_from_db()
+        self.assertEqual(doc.ocr_status, Document.OcrStatus.NONE)
+
+    def test_share_and_fork_copy_ocr_fields(self):
+        """Copies of the same file reuse the extracted text - no re-OCR."""
+        source = self._doc(ocr_status="COMPLETE", ocr_text="shared ocr text")
+        # Admin share to section B.
+        response = self._client(self.admin).post(
+            f"/api/documents/{source.id}/share/",
+            {"sections": [self.section_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        copy = Document.objects.get(section_id=self.section_b.id, public_id="ocr-pid-1")
+        self.assertEqual(copy.ocr_status, "COMPLETE")
+        self.assertEqual(copy.ocr_text, "shared ocr text")
+
+    def test_pdf_to_page_images_renders_real_pdf(self):
+        """The shared render helper turns a real PDF into base64 page images
+        (guards the PyMuPDF pages()/pages API drift)."""
+        from apps.core.ocr import pdf_to_page_images
+
+        images = pdf_to_page_images(self._pdf_bytes("Some text on the page"), max_pages=2)
+        self.assertEqual(len(images), 1)
+        self.assertTrue(images[0].startswith("data:image/png;base64,"))
+
+    def test_pdf_to_page_images_caps_pages(self):
+        import fitz
+
+        from apps.core.ocr import pdf_to_page_images
+
+        doc = fitz.open()
+        for _ in range(3):
+            doc.new_page()
+        pdf = doc.tobytes()
+        doc.close()
+        images = pdf_to_page_images(pdf, max_pages=2)
+        self.assertEqual(len(images), 2)
+
+    def test_global_search_matches_ocr_text(self):
+        """Words inside a scanned/OCR'd document are searchable."""
+        self._doc(title="Physics Lab Manual", ocr_status="COMPLETE",
+                  ocr_text="Ohm's law verification experiment kitna unique needle")
+        response = self._client(self.admin).get(
+            "/api/search/?q=needle"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["documents"]), 1)
+        self.assertEqual(response.data["documents"][0]["title"], "Physics Lab Manual")
+

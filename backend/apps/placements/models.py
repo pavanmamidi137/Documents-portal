@@ -134,6 +134,7 @@ class AiUsageLog(models.Model):
         CHAT = "AI_CHAT", "AI Chat"
         ASK = "AI_ASK", "AI Ask"
         RESUME = "AI_RESUME", "AI Resume Review"
+        DOC_OCR = "AI_DOC_OCR", "Document OCR"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

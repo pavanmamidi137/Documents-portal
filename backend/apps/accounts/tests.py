@@ -3,7 +3,7 @@ import urllib.error
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from apps.college.models import Branch, Section
@@ -1594,6 +1594,7 @@ class ResumeTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
+    @override_settings(RESUME_DAILY_UPLOAD_LIMIT=2)
     def test_replacing_resume_resets_review_status(self, mock_upload):
         mock_upload.side_effect = [
             {"secure_url": "https://x.example/old.pdf", "public_id": "old"},
@@ -1848,23 +1849,20 @@ class ResumeTests(TestCase):
     # -- AI usage limits ------------------------------------------------
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
-    def test_resume_upload_limit_blocks_third_upload_today(self, mock_upload):
-        from django.test import override_settings
-
+    def test_resume_upload_limit_blocks_second_upload_today(self, mock_upload):
         mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
         client = self._client(self.student)
-        # First two uploads succeed (default daily limit = 2).
-        for _ in range(2):
-            response = client.post(
-                "/api/resumes/", {"file": self._resume_file()}, format="multipart"
-            )
-            self.assertEqual(response.status_code, 201)
-        # The third upload of the day is blocked with a friendly message.
-        third = client.post(
+        # The first upload succeeds (default daily limit = 1).
+        first = client.post(
             "/api/resumes/", {"file": self._resume_file()}, format="multipart"
         )
-        self.assertEqual(third.status_code, 400)
-        self.assertIn("per day", str(third.data))
+        self.assertEqual(first.status_code, 201)
+        # The second upload of the day is blocked with a friendly message.
+        second = client.post(
+            "/api/resumes/", {"file": self._resume_file()}, format="multipart"
+        )
+        self.assertEqual(second.status_code, 400)
+        self.assertIn("per day", str(second.data))
         # An admin override raises the limit.
         from .models import AiAccessConfig
 
@@ -1966,8 +1964,9 @@ class ResumeTests(TestCase):
         url = f"/api/students/{self.student.id}/ai_access/"
         get = client.get(url)
         self.assertEqual(get.status_code, 200)
-        self.assertEqual(get.data["effective"]["daily_ai_requests"], 5)
-        self.assertEqual(get.data["effective"]["daily_resume_uploads"], 2)
+        # Portal default: one AI review per day (admin can raise per student).
+        self.assertEqual(get.data["effective"]["daily_ai_requests"], 1)
+        self.assertEqual(get.data["effective"]["daily_resume_uploads"], 1)
 
         patch_resp = client.patch(
             url,

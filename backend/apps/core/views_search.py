@@ -77,6 +77,9 @@ class SearchView(APIView):
             | Q(branch__name__icontains=q)
             | Q(section__name__icontains=q)
             | Q(uploaded_by__full_name__icontains=q)
+            # OCR'd documents (scanned assignments/lab manuals) match on the
+            # words inside the file, not just the title.
+            | Q(ocr_text__icontains=q)
         ).select_related("branch", "section", "semester", "category", "subject", "uploaded_by")[:25]
         return DocumentListSerializer(qs, many=True).data
 

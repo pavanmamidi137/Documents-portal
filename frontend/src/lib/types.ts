@@ -114,6 +114,10 @@ export interface DocumentItem {
   forked_from: number | null;
   is_missing: boolean;
   restored_at: string | null;
+  /** Extracted-text status: NONE | PENDING | COMPLETE | FAILED. */
+  ocr_status?: string;
+  ocr_error?: string;
+  ocr_updated_at?: string | null;
 }
 
 export interface Announcement {

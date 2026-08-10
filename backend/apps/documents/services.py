@@ -313,7 +313,56 @@ def create_document(data: dict, document_file, actor, request=None):
         request,
     )
     _notify_section_document(sections, primary)
+    # Scanned PDF documents are OCR'd in the background so their text is ready
+    # for search/reading shortly after upload (text PDFs are read for free).
+    maybe_auto_extract(primary, actor)
     return primary
+
+
+def maybe_auto_extract(document, actor):
+    """Auto-extract text from a freshly uploaded PDF document in the background.
+
+    Returns immediately for non-PDFs or when disabled (DOCUMENT_AUTO_OCR=0) so
+    uploads stay instant. The worker resolves the status to COMPLETE/FAILED
+    itself - a text PDF costs nothing (pypdf), a scanned one uses AI OCR
+    charged to the college's admin.
+    """
+    import os
+    import threading
+
+    from .models import Document
+    from .ocr import extract_document_text
+
+    if not (document.file_name or "").lower().endswith(".pdf"):
+        return
+    if os.environ.get("DOCUMENT_AUTO_OCR", "1") == "0":
+        return
+    Document.objects.filter(pk=document.pk).update(
+        ocr_status=Document.OcrStatus.PENDING, ocr_error="",
+        ocr_updated_at=timezone.now(),
+    )
+
+    def run():
+        # This thread outlives the request, so it needs its own DB connections:
+        # Django closes the request's connection when the response finishes.
+        from django.db import close_old_connections
+
+        close_old_connections()
+        try:
+            extract_document_text(document, actor)
+        except Exception:  # pragma: no cover - never leave the row stuck PENDING
+            try:
+                Document.objects.filter(pk=document.pk, ocr_status="PENDING").update(
+                    ocr_status=Document.OcrStatus.FAILED,
+                    ocr_error="Automatic text extraction failed.",
+                    ocr_updated_at=timezone.now(),
+                )
+            except Exception:
+                pass
+        finally:
+            close_old_connections()
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def share_document(document, sections, actor, request=None):
@@ -347,6 +396,11 @@ def share_document(document, sections, actor, request=None):
                 subject=document.subject,
                 uploaded_by=actor,
                 forked_from=document,
+                # Same file -> same extracted text (no re-OCR needed).
+                ocr_status=document.ocr_status,
+                ocr_text=document.ocr_text,
+                ocr_error=document.ocr_error,
+                ocr_updated_at=document.ocr_updated_at,
             )
         )
     log_audit(
@@ -465,6 +519,11 @@ def fork_document(document, section, actor, request=None):
         subject=document.subject,
         uploaded_by=actor,
         forked_from=document,
+        # Same file -> same extracted text (no re-OCR needed).
+        ocr_status=document.ocr_status,
+        ocr_text=document.ocr_text,
+        ocr_error=document.ocr_error,
+        ocr_updated_at=document.ocr_updated_at,
     )
     log_audit(
         actor, "DOCUMENT_FORK", "Document", document.id,

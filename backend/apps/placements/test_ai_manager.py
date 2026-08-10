@@ -17,7 +17,7 @@ from .ai_models import (
     decrypt_secret,
     mask_secret,
 )
-from .ai_router import AIService, AIServiceUnavailable
+from .ai_router import AIUnreadableResponse, AIService, AIServiceUnavailable
 
 
 class AiManagerBase(APITestCase):
@@ -190,6 +190,121 @@ class AiProviderTestConnectionTests(AiManagerBase):
 
 
 class AiRouterFailoverTests(AiManagerBase):
+    @patch("apps.placements.ai_router.adapter_for")
+    def test_bad_json_fails_over_to_next_provider(self, mock_adapter):
+        """A provider that answers with non-JSON for a JSON task is treated as
+        a failure - the router moves on to the next provider instead of
+        returning the unreadable output (the resume 'unreadable report' bug)."""
+        primary = self._provider(name="Gemini", priority=1)
+        fallback = self._provider(name="Groq", priority=2, provider_type="GROQ")
+        AISettings.get()
+        AISettings.objects.update(enable_caching=False)
+
+        def fake_adapter(provider):
+            def generate(*a, **kw):
+                if provider.pk == primary.pk:
+                    return "This is prose, not JSON", 10, 5
+                return '{"score": 82, "summary": "great"}', 20, 8
+
+            return SimpleAdapter(generate)
+
+        mock_adapter.side_effect = fake_adapter
+        result = AIService.generate(
+            task="RESUME_ANALYSIS", system_prompt="sys", user_text="resume",
+            user=self.student, cacheable=False, raw_json=True,
+        )
+        self.assertEqual(result, {"score": 82, "summary": "great"})
+        # The unreadable reply was recorded as a failure + fallback.
+        failed = AIRequestLog.objects.filter(status="FAILED")
+        self.assertEqual(failed.count(), 1)
+        self.assertEqual(failed.first().error_type, "UNREADABLE")
+        log = AIRequestLog.objects.latest("id")
+        self.assertTrue(log.fallback_used)
+        self.assertEqual(log.provider_used, "Groq")
+        self.assertEqual(log.primary_provider, "Gemini")
+        # The bad provider's health degraded instead of staying healthy.
+        primary.health_row.refresh_from_db()
+        self.assertIn(
+            primary.health_row.status, ("DEGRADED", "RATE_LIMITED", "UNAVAILABLE")
+        )
+
+    @patch("apps.placements.ai_router.adapter_for")
+    def test_bad_json_never_cached(self, mock_adapter):
+        """Garbage JSON must not be cached - a bad reply must not be served to
+        other students for the cache TTL."""
+        self._provider(name="Gemini")
+        AISettings.get()
+        AISettings.objects.update(enable_caching=True, enable_ai=True)
+        calls = {"n": 0}
+
+        def fake_adapter(provider):
+            def generate(*a, **kw):
+                calls["n"] += 1
+                return "garbage", 5, 5
+
+            return SimpleAdapter(generate)
+
+        mock_adapter.side_effect = fake_adapter
+        # First call: bad JSON -> every provider tried -> unreadable error.
+        with self.assertRaises(AIUnreadableResponse):
+            AIService.generate(
+                task="RESUME_ANALYSIS", system_prompt="s", user_text="q",
+                user=self.student, cacheable=True, raw_json=True,
+            )
+        # Second call with the same inputs must hit the provider again (no
+        # stale garbage served from cache).
+        with self.assertRaises(AIUnreadableResponse):
+            AIService.generate(
+                task="RESUME_ANALYSIS", system_prompt="s", user_text="q",
+                user=self.student, cacheable=True, raw_json=True,
+            )
+        self.assertEqual(calls["n"], 2)
+
+    def test_ai_json_returns_empty_when_all_providers_unreadable(self):
+        """ai_json returns {} (not an exception) when every provider answers
+        with unreadable output - the resume analyzer then marks the attempt
+        FAILED without charging credits."""
+        from .ai import ai_json
+
+        self._provider(name="Gemini")
+        AISettings.get()
+        AISettings.objects.update(enable_caching=False)
+
+        with patch(
+            "apps.placements.ai_router.adapter_for"
+        ) as mock_adapter:
+            def fake_adapter(provider):
+                def generate(*a, **kw):
+                    return "Sorry, I cannot return JSON.", 5, 5
+
+                return SimpleAdapter(generate)
+
+            mock_adapter.side_effect = fake_adapter
+            result = ai_json("sys", "resume text", task="RESUME_ANALYSIS")
+        self.assertEqual(result, {})
+
+    def test_ai_json_returns_parsed_dict_from_router(self):
+        """ai_json passes through the router's parsed dict when the provider
+        returns valid JSON."""
+        from .ai import ai_json
+
+        self._provider(name="Gemini")
+        AISettings.get()
+        AISettings.objects.update(enable_caching=False)
+
+        with patch(
+            "apps.placements.ai_router.adapter_for"
+        ) as mock_adapter:
+            def fake_adapter(provider):
+                def generate(*a, **kw):
+                    return '{"score": 91, "summary": "excellent"}', 5, 5
+
+                return SimpleAdapter(generate)
+
+            mock_adapter.side_effect = fake_adapter
+            result = ai_json("sys", "resume text", task="RESUME_ANALYSIS")
+        self.assertEqual(result, {"score": 91, "summary": "excellent"})
+
     @patch("apps.placements.ai_router.adapter_for")
     def test_failover_primary_429_then_fallback(self, mock_adapter):
         from .ai_adapters import RateLimitedProviderError
@@ -519,8 +634,8 @@ class AiVisionImageTests(AiManagerBase):
             patch.object(
                 resume_ai, "_download_resume_content", return_value=(b"%PDF-1.4", "")
             ),
-            patch.object(
-                resume_ai, "_pdf_to_page_images",
+            patch(
+                "apps.core.ocr.pdf_to_page_images",
                 return_value=["data:image/png;base64,x"],
             ),
             patch("apps.placements.ai_router.AIService") as mock_service,

@@ -32,6 +32,9 @@ class DocumentListSerializer(serializers.ModelSerializer):
             "semester", "semester_name", "category", "category_name",
             "subject", "subject_name", "uploaded_by", "uploaded_by_name",
             "forked_from", "is_missing", "restored_at",
+            # Extracted-text status (badge on cards) - the text itself is only
+            # returned by the extract_text endpoint to keep list payloads lean.
+            "ocr_status", "ocr_error", "ocr_updated_at",
         ]
         read_only_fields = fields
 

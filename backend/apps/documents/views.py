@@ -344,6 +344,57 @@ class DocumentViewSet(viewsets.ModelViewSet):
             "cloudinary_url": signed_raw_url(document.public_id),
         })
 
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def extract_text(self, request, pk=None):
+        """Extract readable text from a document PDF (OCR for scanned files).
+
+        Text-based PDFs are read directly (free, instant). Scanned PDFs are
+        OCR'd via the AI router (charged to the college's admin) and the result
+        is stored, so repeated requests are free. The caller must be able to
+        see the document (student/CR scoped to their section, admin everything).
+        Returns 409 while an extraction is already running.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from .ocr import extract_document_text
+
+        document = self.get_object()
+        if document.ocr_status == Document.OcrStatus.COMPLETE:
+            return Response({
+                "ocr_status": "COMPLETE",
+                "ocr_text": document.ocr_text,
+                "ocr_error": "",
+            })
+
+        # A stale PENDING (crashed background worker) resets so it can re-run.
+        stale = (
+            document.ocr_status == Document.OcrStatus.PENDING
+            and document.ocr_updated_at is not None
+            and document.ocr_updated_at < timezone.now() - timedelta(minutes=5)
+        )
+        if stale:
+            Document.objects.filter(pk=document.pk).update(
+                ocr_status=Document.OcrStatus.NONE
+            )
+        # Atomic claim: only NONE/FAILED rows can start a run - a concurrent
+        # request (or the upload worker) that already claimed it gets 409.
+        claimed = Document.objects.filter(
+            pk=document.pk, ocr_status__in=["NONE", "FAILED"]
+        ).update(
+            ocr_status=Document.OcrStatus.PENDING, ocr_error="",
+            ocr_updated_at=timezone.now(),
+        )
+        if not claimed:
+            return Response(
+                {"detail": "Text extraction is already running. Please wait a moment."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        document.refresh_from_db(fields=["ocr_status", "ocr_updated_at"])
+        return Response(extract_document_text(document, request.user))
+
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def tree(self, request):
         """Every document visible to the caller, unpaginated (capped at 1000).

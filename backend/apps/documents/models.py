@@ -33,6 +33,23 @@ class Document(models.Model):
     # and this marks when, so the UI can show a "Restored" badge for a while.
     restored_at = models.DateTimeField(null=True, blank=True)
 
+    class OcrStatus(models.TextChoices):
+        NONE = "NONE", "Not extracted"
+        PENDING = "PENDING", "Extracting..."
+        COMPLETE = "COMPLETE", "Text available"
+        FAILED = "FAILED", "Extraction failed"
+
+    # Readable text extracted from the PDF (pypdf for text PDFs, AI OCR for
+    # scanned ones). Populated on upload (scanned PDFs only, background) or on
+    # demand via the "Extract text" button. Shared copies (sections/forks) of
+    # the same file reuse the same text. Used for search + text viewing.
+    ocr_status = models.CharField(
+        max_length=10, choices=OcrStatus.choices, default=OcrStatus.NONE, db_index=True
+    )
+    ocr_text = models.TextField(blank=True, default="")
+    ocr_error = models.CharField(max_length=300, blank=True, default="")
+    ocr_updated_at = models.DateTimeField(null=True, blank=True)
+
     branch = models.ForeignKey(
         "college.Branch", on_delete=models.PROTECT, related_name="documents"
     )

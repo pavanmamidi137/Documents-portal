@@ -41,7 +41,12 @@ logger = logging.getLogger(__name__)
 # The AI Router (configured providers) takes over as soon as an admin has
 # configured at least one provider; until then this module keeps using the
 # environment-configured NVIDIA client so nothing breaks out of the box.
-from .ai_router import AIService, AIServiceUnavailable, generate_text  # noqa: E402
+from .ai_router import (  # noqa: E402
+    AIUnreadableResponse,
+    AIService,
+    AIServiceUnavailable,
+    generate_text,
+)
 from .ai_models import AIProvider  # noqa: E402
 
 
@@ -254,6 +259,7 @@ def _chat_completion(
     temperature: float = 0.3,
     documents: list[str] | None = None,
     task: str = "GENERAL",
+    raw_json: bool = False,
 ) -> str:
     """Route through the AI Router when providers are configured, otherwise
     the legacy NVIDIA client (RAG-aware).
@@ -278,7 +284,14 @@ def _chat_completion(
                 documents=documents,
                 user=None,
                 usage_callback=usage_callback,
+                raw_json=raw_json,
             )
+        except AIUnreadableResponse as exc:
+            # Every provider answered but with unreadable output - keep it
+            # distinct so ai_json returns {} (resume analysis then marks the
+            # attempt FAILED without charging credits) while chat surfaces a
+            # clear message.
+            raise
         except AIServiceUnavailable as exc:
             raise AiError(str(exc)) from exc
 
@@ -361,17 +374,31 @@ def ai_json(
     ``documents`` (optional) grounds the answer on the given material via the
     RAG service (or prompt injection when RAG is not configured). ``task``
     selects the provider chain (DRIVE_EXTRACTION, RESUME_ANALYSIS, ...).
+    When every configured provider answers but with unreadable output, an
+    empty dict is returned - the caller (resume analysis) surfaces that as a
+    clean FAILED attempt without charging credits.
     """
-    raw = _chat_completion(
-        system_prompt,
-        user_text,
-        max_tokens,
-        usage_callback=usage_callback,
-        reasoning_budget=reasoning_budget,
-        temperature=0.3,
-        documents=documents,
-        task=task,
-    )
+    try:
+        raw = _chat_completion(
+            system_prompt,
+            user_text,
+            max_tokens,
+            usage_callback=usage_callback,
+            reasoning_budget=reasoning_budget,
+            temperature=0.3,
+            documents=documents,
+            task=task,
+            raw_json=True,
+        )
+    except AIUnreadableResponse:
+        # Every provider answered but none returned usable JSON - return an
+        # empty dict so the caller (resume analysis) surfaces a clean FAILED
+        # attempt without charging credits.
+        return {}
+    # The router already parsed when providers are configured (it returns the
+    # dict); the legacy env path returns raw text that we parse here.
+    if isinstance(raw, dict):
+        return raw
     return _extract_json_object(raw)
 
 

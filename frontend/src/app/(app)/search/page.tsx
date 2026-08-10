@@ -126,9 +126,16 @@ function SearchContent() {
                       {formatBytes(d.file_size)}
                     </p>
                   </div>
-                  <span className="hidden text-xs text-muted-foreground sm:block">
-                    {formatDate(d.created_at)}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {d.ocr_status === "COMPLETE" && (
+                      <Badge variant="outline" className="hidden gap-1 border-sky-500/30 bg-sky-500/10 text-[11px] text-sky-600 sm:inline-flex dark:text-sky-400">
+                        <FileText className="size-3" /> Text
+                      </Badge>
+                    )}
+                    <span className="hidden text-xs text-muted-foreground sm:block">
+                      {formatDate(d.created_at)}
+                    </span>
+                  </div>
                 </a>
               ))}
             </SearchSection>

@@ -46,6 +46,13 @@ class AIServiceUnavailable(Exception):
     """All providers failed or AI is disabled - user-friendly message only."""
 
 
+class AIUnreadableResponse(AIServiceUnavailable):
+    """Every provider answered, but none returned usable output (e.g. the
+    resume-quality call expected JSON and every provider returned prose).
+    Kept distinct so JSON-requiring callers can surface a clear "unreadable
+    report" failure (and refund credits) instead of a generic outage."""
+
+
 def _settings() -> AISettings:
     return AISettings.get()
 
@@ -195,6 +202,7 @@ class AIService:
 
         primary_name = chain[0].name if chain else ""
         fallback_used = False
+        saw_unreadable = False
 
         for provider in chain:
             if not provider.enabled:
@@ -206,6 +214,25 @@ class AIService:
                     temperature, reasoning_budget, documents, timeout, images,
                 )
                 latency_ms = int((time.monotonic() - started) * 1000)
+                result = text if not raw_json else _extract_json(text)
+                if raw_json and not result:
+                    # The provider answered but its output was not usable JSON
+                    # (e.g. prose instead of the report structure). Treat it as
+                    # a provider failure so the next provider gets a chance,
+                    # and NEVER cache the garbage - a bad reply must not be
+                    # served to other students for the next 5 minutes.
+                    saw_unreadable = True
+                    _mark_failure(provider, "UNREADABLE")
+                    _record_log(
+                        user, task, primary_name, (provider.name, provider.pk),
+                        AIRequestLog.Status.FAILED, fallback_used,
+                        error_type="UNREADABLE", prompt_tokens=pt,
+                        completion_tokens=ct, latency_ms=latency_ms,
+                    )
+                    if not st.enable_fallback:
+                        break
+                    fallback_used = True
+                    continue
                 _mark_success(provider, pt, ct)
                 _record_log(
                     user, task, primary_name, (provider.name, provider.pk),
@@ -217,10 +244,9 @@ class AIService:
                         usage_callback(pt, ct)
                     except Exception:  # pragma: no cover
                         pass
-                result = text if not raw_json else _extract_json(text)
                 # Image-bearing calls skip the cache entirely (read AND write),
                 # so ``key`` is only ever used when it was defined above.
-                if st.enable_caching and cacheable and not images:
+                if st.enable_caching and cacheable and not images and result:
                     cache.set(key, result, timeout=300)
                 return result
             except AuthProviderError as exc:
@@ -247,6 +273,12 @@ class AIService:
                             error_type=exc.error_type)
                 break
 
+        if saw_unreadable:
+            raise AIUnreadableResponse(
+                "The AI provider returned a response that could not be read as "
+                "a report. Check the provider's model under Admin > AI "
+                "Management > AI Tasks, then try again."
+            )
         raise AIServiceUnavailable(
             "AI service is temporarily unavailable. Please try again shortly."
         )
