@@ -271,6 +271,18 @@ class AITaskViewSet(ModelViewSet):
     ).all()
     http_method_names = ["get", "post", "patch"]
 
+    def list(self, request, *args, **kwargs):
+        """Ensure one row exists for every known task (incl. new ones such as
+        RESUME_OCR) so the admin can route it without re-deploying code."""
+        known = [task[0] for task in AITaskConfiguration.Task.choices]
+        existing = set(
+            AITaskConfiguration.objects.values_list("task", flat=True)
+        )
+        for task in known:
+            if task not in existing:
+                AITaskConfiguration.objects.create(task=task)
+        return super().list(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         config = serializer.save()
         log_audit(self.request.user, "CREATE", "AITaskConfiguration", config.id,

@@ -264,6 +264,9 @@ class AITaskConfiguration(models.Model):
         STUDENT_CHAT = "STUDENT_CHAT", "Student Chat"
         ELIGIBILITY_ANALYSIS = "ELIGIBILITY_ANALYSIS", "Eligibility Analysis"
         RESUME_ANALYSIS = "RESUME_ANALYSIS", "Resume Analysis"
+        # Vision-capable OCR for scanned/image resume PDFs - the provider must
+        # accept image inputs (e.g. Gemini). Falls back to any enabled provider.
+        RESUME_OCR = "RESUME_OCR", "Resume OCR"
         WEB_RESEARCH = "WEB_RESEARCH", "Web Research"
         GENERAL = "GENERAL", "General Placement AI"
 

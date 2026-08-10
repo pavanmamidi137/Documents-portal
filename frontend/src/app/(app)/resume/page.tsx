@@ -364,7 +364,8 @@ function AiReviewCard({
 
         <div className="flex items-center justify-between gap-3 border-t pt-3">
           <p className="text-[11px] text-muted-foreground">
-            {resume.ai_analyzed_at ? `Analyzed ${formatDate(resume.ai_analyzed_at)}` : ""} · uses your AI credits
+            {resume.ai_analyzed_at ? `Analyzed ${formatDate(resume.ai_analyzed_at)}` : ""}
+            {analysis.ocr ? " · scanned PDF read via OCR" : ""} · uses your AI credits
           </p>
           <Button onClick={onAnalyze} disabled={analyzing} size="sm" variant="outline">
             {analyzing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-3.5" />}

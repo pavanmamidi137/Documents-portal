@@ -188,6 +188,8 @@ export interface ResumeAiAnalysis {
   improvements: string[];
   skills: string[];
   ats_keywords: string[];
+  /** True when the report was read from the page images (scanned PDF via OCR). */
+  ocr?: boolean;
 }
 
 export interface ResumeLimits {

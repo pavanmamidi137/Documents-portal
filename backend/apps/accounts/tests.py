@@ -1737,6 +1737,91 @@ class ResumeTests(TestCase):
         )
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_scanned_resume_is_analyzed_via_ocr(self, mock_upload):
+        """A scanned/image PDF (no text layer) is rescued by OCR and analyzed."""
+        from apps.placements.models import AiUsageLog
+        from apps.placements.resume_ai import _SCANNED_PDF_REASON
+
+        mock_upload.return_value = {
+            "secure_url": "https://storage.example/r.pdf", "public_id": "r"
+        }
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+
+        quality = {
+            "score": 70,
+            "summary": "Read via OCR.",
+            "strengths": ["Python"],
+            "improvements": ["Add results"],
+            "skills": ["Python", "SQL"],
+            "ats_keywords": ["Git"],
+        }
+        matches = {"matches": []}
+
+        def fake_ai(prompt, text, max_tokens=1024, usage_callback=None, **kwargs):
+            if usage_callback:
+                usage_callback(100, 40)
+            return fake_ai.responses.pop(0)
+
+        fake_ai.responses = [quality, matches]
+
+        client = self._client(self.student)
+        with (
+            patch("apps.placements.resume_ai._extract_resume_text",
+                  return_value=("", _SCANNED_PDF_REASON)),
+            patch("apps.placements.resume_ai._ocr_resume_pdf",
+                  return_value="Python OCR project, SQL."),
+            patch("apps.placements.resume_ai.ai_json", side_effect=fake_ai),
+        ):
+            response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        resume.refresh_from_db()
+        self.assertEqual(resume.ai_status, Resume.AiStatus.COMPLETE)
+        self.assertEqual(resume.ai_score, 70)
+        self.assertEqual(resume.ai_analysis["skills"], ["Python", "SQL"])
+        # The report metadata records that the text came from the page images.
+        self.assertTrue(resume.ai_analysis.get("ocr"))
+        # A successful OCR + analysis run is charged to the student.
+        self.assertTrue(
+            AiUsageLog.objects.filter(
+                user=self.student, action=AiUsageLog.Action.RESUME
+            ).exists()
+        )
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_scanned_resume_without_ocr_fails_without_credits(self, mock_upload):
+        """When OCR returns nothing the resume fails fast - no AI call, no credits."""
+        from apps.placements.models import AiUsageLog
+        from apps.placements.resume_ai import _SCANNED_PDF_REASON
+
+        mock_upload.return_value = {
+            "secure_url": "https://storage.example/r.pdf", "public_id": "r"
+        }
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+
+        client = self._client(self.student)
+        with (
+            patch("apps.placements.resume_ai._extract_resume_text",
+                  return_value=("", _SCANNED_PDF_REASON)),
+            patch("apps.placements.resume_ai._ocr_resume_pdf", return_value=""),
+            patch("apps.placements.resume_ai.ai_json") as mock_ai,
+        ):
+            response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        resume.refresh_from_db()
+        self.assertEqual(resume.ai_status, Resume.AiStatus.FAILED)
+        self.assertIn("could not read", resume.ai_error)
+        self.assertIn("scanned image", resume.ai_error)
+        # OCR failed, so the quality/match AI was never called and nothing is charged.
+        mock_ai.assert_not_called()
+        self.assertFalse(
+            AiUsageLog.objects.filter(user=self.student, action=AiUsageLog.Action.RESUME).exists()
+        )
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_unusable_ai_output_does_not_charge_credits(self, mock_upload):
         """AI that answers but produces no usable JSON marks FAILED without credits."""
         from apps.placements.models import AiUsageLog

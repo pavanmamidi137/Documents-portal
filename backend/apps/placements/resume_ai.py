@@ -93,6 +93,139 @@ def _deferred_usage(actor):
 # Human reason when a resume file can't be turned into text. Kept separate so
 # the student gets the REAL cause (blocked download vs scanned PDF vs legacy
 # format) instead of one generic message that fits nothing.
+#
+# The scanned-PDF reason doubles as the signal that OCR may rescue the file:
+# ``analyze_resume`` compares against this exact constant (not the user-facing
+# string) so a blocked download or legacy format never triggers OCR.
+_SCANNED_PDF_REASON = (
+    "this PDF has no readable text - it looks like a scanned image, and "
+    "automatic OCR could not be used (no vision-capable AI provider)"
+)
+
+
+def _download_resume_content(resume) -> tuple[bytes | None, str]:
+    """Download the raw resume bytes from Cloudinary.
+
+    Returns ``(content, "")`` on success or ``(None, reason)`` with a short
+    human-readable reason when the download failed.
+    """
+    import urllib.error
+    import urllib.request
+
+    from apps.documents.services import signed_raw_url
+
+    try:
+        with urllib.request.urlopen(signed_raw_url(resume.public_id), timeout=30) as resp:
+            return resp.read(), ""
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return None, "storage blocked the download - the file may have been deleted or access removed"
+        return None, f"could not download the file from storage (HTTP {exc.code})"
+    except Exception:
+        return None, "could not download the file from storage"
+
+
+def _is_pdf_file(resume) -> bool:
+    return (resume.file_name or "").lower().endswith(".pdf")
+
+
+def _pdf_to_page_images(content: bytes, max_pages: int | None = None,
+                        dpi: int | None = None) -> list[str]:
+    """Render PDF pages to base64 image data URIs for vision-capable models.
+
+    Scanned resumes are typically 1-2 pages; the cap keeps the OCR call cheap.
+    Oversized page renders are skipped so the request stays lean. Returns an
+    empty list when the PDF cannot be rendered (never raises).
+    """
+    import base64
+
+    if max_pages is None:
+        max_pages = max(1, int(os.environ.get("RESUME_OCR_MAX_PAGES", "4")))
+    if dpi is None:
+        dpi = max(72, int(os.environ.get("RESUME_OCR_DPI", "170")))
+    try:
+        import fitz  # PyMuPDF (already a dependency)
+
+        doc = fitz.open(stream=content, filetype="pdf")
+    except Exception:
+        return []
+    try:
+        uris: list[str] = []
+        for page in doc.pages:
+            if len(uris) >= max_pages:
+                break
+            try:
+                # alpha=False keeps the PNG as plain RGB - more widely accepted
+                # by vision providers and slightly smaller than RGBA.
+                pix = page.get_pixmap(dpi=dpi, alpha=False)
+                png = pix.tobytes("png")
+            except Exception:
+                continue
+            if not png or len(png) > 4_500_000:
+                continue
+            uris.append("data:image/png;base64," + base64.b64encode(png).decode("ascii"))
+        return uris
+    finally:
+        doc.close()
+
+
+_OCR_SYSTEM_PROMPT = """\
+You are a precise OCR engine. Transcribe ALL the text from the document image(s) \
+exactly as written, preserving order and line structure as best you can. \
+Output ONLY the transcribed text - no commentary, no headers, no markdown. \
+If an image contains no readable text, output exactly: NO TEXT"""
+
+
+def _ocr_resume_pdf(resume, usage_callback=None) -> str:
+    """Transcribe a scanned/image resume PDF with a vision-capable AI provider.
+
+    Renders each page to a PNG and asks the AI to extract the text. Returns ""
+    (never raises) when OCR is unavailable - disabled via RESUME_OCR_ENABLED,
+    no AI provider configured, or no vision-capable model - so callers fail
+    gracefully without charging credits.
+    """
+    if os.environ.get("RESUME_OCR_ENABLED", "1") == "0":
+        return ""
+    # Reuse the bytes _extract_resume_text already downloaded (avoids a second
+    # Cloudinary round-trip); only fetch again if they aren't available.
+    content = getattr(resume, "_download_cache", None)
+    if content is None:
+        content, _ = _download_resume_content(resume)
+    if not content:
+        return ""
+    images = _pdf_to_page_images(content)
+    if not images:
+        return ""
+    try:
+        from .ai_router import AIService
+
+        text = AIService.generate(
+            task="RESUME_OCR",
+            system_prompt=_OCR_SYSTEM_PROMPT,
+            user_text=(
+                "The attached images are pages of a scanned resume. "
+                "Transcribe all the text you can read."
+            ),
+            max_tokens=4096,
+            temperature=0,
+            images=images,
+            cacheable=False,
+            usage_callback=usage_callback,
+        )
+        text = str(text or "").strip()
+        # The model is told to output exactly "NO TEXT" for blank pages - treat
+        # that (and empty/symbol-only output) as an OCR failure so a blank page
+        # never reaches the quality model (which would still charge credits).
+        if not text:
+            return ""
+        stripped = re.sub(r"[^A-Za-z0-9]", "", text).lower()
+        if stripped in ("", "notext"):
+            return ""
+        return text
+    except Exception:  # OCR must never break the request - fail gracefully
+        return ""
+
+
 def _extract_resume_text(resume) -> tuple[str, str]:
     """Download the resume and pull plain text out of it.
 
@@ -102,21 +235,13 @@ def _extract_resume_text(resume) -> tuple[str, str]:
     .doc (binary OLE) has no pure-Python text layer here and is reported as
     such so the student knows to re-save as PDF/DOCX.
     """
-    import urllib.error
-    import urllib.request
-
-    from apps.documents.services import signed_raw_url
-
     name = (resume.file_name or "").lower()
-    try:
-        with urllib.request.urlopen(signed_raw_url(resume.public_id), timeout=30) as resp:
-            content = resp.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403):
-            return "", "storage blocked the download - the file may have been deleted or access removed"
-        return "", f"could not download the file from storage (HTTP {exc.code})"
-    except Exception:
-        return "", "could not download the file from storage"
+    content, download_error = _download_resume_content(resume)
+    if content is None:
+        return "", download_error
+    # Stash the bytes on the instance so OCR can reuse them without fetching
+    # the file a second time (never persisted to the database).
+    resume._download_cache = content
 
     if name.endswith(".pdf"):
         # pypdf first (fast, handles most text PDFs), then PyMuPDF as a much
@@ -141,7 +266,7 @@ def _extract_resume_text(resume) -> tuple[str, str]:
                 text = ""
         if not text.strip():
             # A valid PDF with no extractable text layer is a scanned/image PDF.
-            return "", "this PDF has no readable text - it looks like a scanned image; upload a text-based PDF"
+            return "", _SCANNED_PDF_REASON
         return text, ""
 
     if name.endswith(".docx"):
@@ -429,10 +554,30 @@ def analyze_resume(resume, actor) -> dict:
     from apps.core.utils import notify
 
     text, read_error = _extract_resume_text(resume)
+
+    # Defer credit recording until the analysis actually completes below - the
+    # OCR, quality and match calls all commit together, and a failed or
+    # unreadable run charges nothing (an unreadable file fails before any AI
+    # call, so it never burns the daily AI budget).
+    usage, commit_usage = _deferred_usage(actor)
+    ocr_used = False
+
     if not text or not text.strip():
-        # The file itself can't be turned into text (scanned image PDF, legacy
-        # .doc, blocked download...). Fail fast WITHOUT calling the AI so no
-        # credits are spent, and tell the student the real reason.
+        # A scanned/image PDF has no text layer - OCR it with a vision-capable
+        # provider before giving up. Only the real scanned-PDF case triggers
+        # this (never a blocked download or unsupported format).
+        if read_error == _SCANNED_PDF_REASON and _is_pdf_file(resume):
+            ocr_text = _ocr_resume_pdf(resume, usage)
+            if ocr_text and ocr_text.strip():
+                text = ocr_text.strip()
+                read_error = ""
+                ocr_used = True
+
+    if not text or not text.strip():
+        # The file itself can't be turned into text (scanned image PDF with no
+        # OCR available, legacy .doc, blocked download...). Fail fast WITHOUT
+        # calling the AI so no credits are spent, and tell the student the
+        # real reason.
         resume.ai_status = Resume.AiStatus.FAILED
         resume.ai_score = None
         resume.ai_analysis = None
@@ -455,8 +600,6 @@ def analyze_resume(resume, actor) -> dict:
             "ai_error": resume.ai_error,
         }
 
-    # Defer credit recording until the analysis succeeds below.
-    usage, commit_usage = _deferred_usage(actor)
     brief = text.strip()[:_MAX_TEXT_CHARS]
 
     try:
@@ -523,6 +666,10 @@ def analyze_resume(resume, actor) -> dict:
     if analysis or match_map:
         resume.ai_status = Resume.AiStatus.COMPLETE
         resume.ai_score = _clamp_score(quality.get("score")) if analysis else 0
+        if analysis and ocr_used:
+            # The report was read from the page images - useful metadata for
+            # the UI (e.g. an "Analyzed via OCR" chip).
+            analysis["ocr"] = True
         resume.ai_analysis = analysis
         resume.ai_match = match_map or None
         resume.ai_error = ""

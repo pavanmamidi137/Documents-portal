@@ -75,7 +75,7 @@ def _task_chain(task: str):
 
 
 def _attempt(provider: AIProvider, adapter, system_prompt, user_text, max_tokens,
-             temperature, reasoning_budget, documents, timeout):
+             temperature, reasoning_budget, documents, timeout, images):
     """One call to one provider. Returns (text, prompt_tokens, completion_tokens)."""
     return adapter.generate(
         system_prompt, user_text, max_tokens,
@@ -83,6 +83,7 @@ def _attempt(provider: AIProvider, adapter, system_prompt, user_text, max_tokens
         reasoning_budget=reasoning_budget,
         documents=documents,
         timeout=timeout,
+        images=images,
     )
 
 
@@ -164,8 +165,8 @@ class AIService:
     @classmethod
     def generate(cls, task, system_prompt, user_text, max_tokens=1024,
                  temperature=0.3, reasoning_budget=0, documents=None,
-                 user=None, cacheable=True, timeout=None, raw_json=False,
-                 usage_callback=None):
+                 images=None, user=None, cacheable=True, timeout=None,
+                 raw_json=False, usage_callback=None):
         st = _settings()
         if not st.enable_ai or st.maintenance_mode:
             raise AIServiceUnavailable(
@@ -175,7 +176,9 @@ class AIService:
         started = time.monotonic()
 
         # ---- cached answers for repeated non-personal questions -----------
-        if st.enable_caching and cacheable:
+        # Image-bearing calls (OCR etc.) are never cached - they carry
+        # document-specific content and are not repeated verbatim.
+        if st.enable_caching and cacheable and not images:
             key = _cache_key(task, system_prompt, user_text)
             cached = cache.get(key)
             if cached is not None:
@@ -200,7 +203,7 @@ class AIService:
             try:
                 text, pt, ct = _attempt(
                     provider, adapter, system_prompt, user_text, max_tokens,
-                    temperature, reasoning_budget, documents, timeout,
+                    temperature, reasoning_budget, documents, timeout, images,
                 )
                 latency_ms = int((time.monotonic() - started) * 1000)
                 _mark_success(provider, pt, ct)
@@ -215,7 +218,9 @@ class AIService:
                     except Exception:  # pragma: no cover
                         pass
                 result = text if not raw_json else _extract_json(text)
-                if st.enable_caching and cacheable:
+                # Image-bearing calls skip the cache entirely (read AND write),
+                # so ``key`` is only ever used when it was defined above.
+                if st.enable_caching and cacheable and not images:
                     cache.set(key, result, timeout=300)
                 return result
             except AuthProviderError as exc:
@@ -298,7 +303,8 @@ def _extract_json(raw: str) -> dict:
 # truth while keeping the old module-level API (ai_json/ai_plain_text/AiError)
 # working for every existing caller.
 def generate_text(task, system_prompt, user_text, max_tokens, temperature,
-                  reasoning_budget, documents, user, usage_callback=None, raw_json=False):
+                  reasoning_budget, documents, user, images=None,
+                  usage_callback=None, raw_json=False):
     """Convenience wrapper used by the legacy bridge in ai.py."""
     return AIService.generate(
         task=task,
@@ -308,6 +314,7 @@ def generate_text(task, system_prompt, user_text, max_tokens, temperature,
         temperature=temperature,
         reasoning_budget=reasoning_budget,
         documents=documents,
+        images=images,
         user=user,
         raw_json=raw_json,
         usage_callback=usage_callback,

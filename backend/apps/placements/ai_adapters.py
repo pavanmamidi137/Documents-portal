@@ -55,6 +55,15 @@ class EmptyResponseError(RecoverableProviderError):
     error_type = "EMPTY_RESPONSE"
 
 
+def _data_uri_parts(uri: str) -> tuple[str, str]:
+    """Split a ``data:image/png;base64,<b64>`` URI into (mime_type, b64)."""
+    prefix, _, payload = uri.partition(",")
+    mime = "image/png"
+    if ";" in prefix and prefix.startswith("data:"):
+        mime = prefix[len("data:") :].split(";", 1)[0] or "image/png"
+    return mime, payload
+
+
 def _status_code_from_error(exc) -> int:
     """Best-effort HTTP status from urllib/JSON decode errors."""
     if isinstance(exc, urllib.error.HTTPError):
@@ -89,7 +98,7 @@ class OpenAICompatAdapter:
 
     def generate(self, system_prompt, user_text, max_tokens, temperature=0.3,
                  reasoning_budget=0, documents=None, timeout=None,
-                 api_key: str | None = None):
+                 api_key: str | None = None, images: list[str] | None = None):
         from openai import (
             APIConnectionError,
             APIError,
@@ -111,10 +120,23 @@ class OpenAICompatAdapter:
                 "No API key configured for this provider.", error_type="NO_KEY"
             )
         base_url = self.provider.base_url or "https://api.openai.com/v1"
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text},
-        ]
+        if images:
+            # Multimodal request (vision models only): the user message becomes
+            # text + image parts (base64 data URIs). A text-only model rejects
+            # this with a 4xx which the router treats as a recoverable failure,
+            # so it naturally falls over to a vision-capable provider.
+            content: list[dict] = [{"type": "text", "text": user_text}]
+            for uri in images:
+                content.append({"type": "image_url", "image_url": {"url": uri}})
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content},
+            ]
+        else:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text},
+            ]
         kwargs: dict = {
             "model": self.provider.model,
             "messages": messages,
@@ -220,7 +242,7 @@ class GeminiAdapter:
 
     def generate(self, system_prompt, user_text, max_tokens, temperature=0.3,
                  reasoning_budget=0, documents=None, timeout=None,
-                 api_key: str | None = None):
+                 api_key: str | None = None, images: list[str] | None = None):
         from .ai_models import provider_key_chain
 
         # Try every key (stored primary, extra keys, then GEMINI_API_KEY env
@@ -231,7 +253,15 @@ class GeminiAdapter:
                 "No API key configured for this provider.", error_type="NO_KEY"
             )
         model = self.provider.model or "gemini-2.0-flash"
-        contents = [{"parts": [{"text": user_text}]}]
+        if images:
+            # Gemini accepts base64 images as inline_data parts (vision model).
+            parts: list[dict] = [{"text": user_text}]
+            for uri in images:
+                mime, b64 = _data_uri_parts(uri)
+                parts.append({"inline_data": {"mime_type": mime, "data": b64}})
+            contents = [{"parts": parts}]
+        else:
+            contents = [{"parts": [{"text": user_text}]}]
         if documents:
             parts = [{"text": d} for d in documents]
             contents.insert(0, {"role": "user", "parts": parts})

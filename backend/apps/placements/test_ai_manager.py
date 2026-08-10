@@ -423,6 +423,144 @@ class AiMultiKeyFailoverTests(AiManagerBase):
         self.assertIn("gkey-two", seen_urls[1])
 
 
+class AiVisionImageTests(AiManagerBase):
+    """Vision-capable calls: base64 page images flow through the router to the
+    adapter payloads used for OCR of scanned resume PDFs."""
+
+    @patch("apps.placements.ai_models.provider_key_chain")
+    def test_openai_adapter_sends_image_url_parts(self, mock_chain):
+        from .ai_adapters import OpenAICompatAdapter
+
+        provider = self._provider(name="Groq", provider_type="GROQ")
+        mock_chain.return_value = ["sk-key"]
+
+        captured = {}
+
+        class FakeCompletions:
+            def __init__(self, client):
+                self.client = client
+
+            def create(self, **kwargs):
+                captured["messages"] = kwargs["messages"]
+                from types import SimpleNamespace
+
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(message=SimpleNamespace(content="ok"))
+                    ],
+                    usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+                )
+
+        class FakeChat:
+            def __init__(self, client):
+                self.completions = FakeCompletions(client)
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.api_key = kwargs["api_key"]
+                self.chat = FakeChat(self)
+
+        with patch("openai.OpenAI", side_effect=FakeClient):
+            OpenAICompatAdapter(provider).generate(
+                "sys", "user", 50, images=["data:image/png;base64,AAAA"]
+            )
+
+        user_content = captured["messages"][1]["content"]
+        self.assertIsInstance(user_content, list)
+        self.assertEqual(user_content[0], {"type": "text", "text": "user"})
+        self.assertEqual(
+            user_content[1],
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        )
+
+    @patch("apps.placements.ai_models.provider_key_chain")
+    def test_gemini_adapter_sends_inline_data_parts(self, mock_chain):
+        import json
+
+        from .ai_adapters import GeminiAdapter
+
+        provider = self._provider(name="Gemini")
+        mock_chain.return_value = ["gkey"]
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=60):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            body = json.dumps(
+                {
+                    "candidates": [{"content": {"parts": [{"text": "transcribed"}]}}],
+                    "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 1},
+                }
+            ).encode("utf-8")
+            return _FakeHttpResponse(body)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            text, _, _ = GeminiAdapter(provider).generate(
+                "sys", "user", 50, images=["data:image/png;base64,QUJD"]
+            )
+
+        self.assertEqual(text, "transcribed")
+        parts = captured["body"]["contents"][0]["parts"]
+        self.assertEqual(parts[0], {"text": "user"})
+        self.assertEqual(
+            parts[1]["inline_data"],
+            {"mime_type": "image/png", "data": "QUJD"},
+        )
+
+    def test_ocr_blank_page_no_text_is_rejected(self):
+        """OCR output of exactly 'NO TEXT' (or empty/symbols) counts as a
+        failed read so a blank page never reaches the quality model."""
+        from unittest.mock import Mock
+
+        from apps.placements import resume_ai
+
+        resume = Mock(file_name="resume.pdf")
+        with (
+            patch.object(
+                resume_ai, "_download_resume_content", return_value=(b"%PDF-1.4", "")
+            ),
+            patch.object(
+                resume_ai, "_pdf_to_page_images",
+                return_value=["data:image/png;base64,x"],
+            ),
+            patch("apps.placements.ai_router.AIService") as mock_service,
+        ):
+            mock_service.generate.return_value = "NO TEXT"
+            self.assertEqual(resume_ai._ocr_resume_pdf(resume), "")
+            mock_service.generate.return_value = "  ...  "
+            self.assertEqual(resume_ai._ocr_resume_pdf(resume), "")
+            mock_service.generate.return_value = (
+                "Pavan Kumar - Python Developer\nHyderabad"
+            )
+            self.assertIn("Pavan Kumar", resume_ai._ocr_resume_pdf(resume))
+
+    @patch("apps.placements.ai_router.adapter_for")
+    def test_router_forwards_images_and_never_caches(self, mock_adapter):
+        AISettings.get()
+        AISettings.objects.update(enable_caching=True, enable_ai=True)
+        self._provider(name="Gemini")
+
+        calls = []
+
+        def fake_adapter(provider):
+            def generate(*a, **kw):
+                calls.append(kw)
+                return "ocr text", 5, 5
+
+            return SimpleAdapter(generate)
+
+        mock_adapter.side_effect = fake_adapter
+        for _ in range(2):
+            AIService.generate(
+                task="RESUME_OCR", system_prompt="sys", user_text="transcribe",
+                images=["data:image/png;base64,AAAA"], user=self.student,
+                cacheable=True,
+            )
+        # Image-bearing calls are never cached - both hit the provider.
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["images"], ["data:image/png;base64,AAAA"])
+
+
 class _FakeSDKRateLimit(RateLimitError):
     """RateLimitError without the SDK's constructor requirements."""
 
@@ -579,6 +717,21 @@ class AiDailyReportTests(AiManagerBase):
 
 
 class AiTaskRoutingTests(AiManagerBase):
+    def test_task_list_auto_creates_missing_task_rows(self):
+        """The tasks endpoint seeds a row for every known task (incl. RESUME_OCR)
+        so admins can route new AI work without re-deploying code."""
+        client = self._client(self.admin)
+        resp = client.get("/api/admin/ai/tasks/")
+        self.assertEqual(resp.status_code, 200)
+        tasks = {t["task"] for t in resp.data}
+        self.assertIn("RESUME_OCR", tasks)
+        self.assertEqual(len(tasks), len(AITaskConfiguration.Task.choices))
+        self.assertTrue(
+            AITaskConfiguration.objects.filter(
+                task=AITaskConfiguration.Task.RESUME_OCR
+            ).exists()
+        )
+
     def test_task_routing_patch_chain(self):
         primary = self._provider(name="Gemini", priority=1)
         fallback = self._provider(name="Groq", priority=2, provider_type="GROQ")
