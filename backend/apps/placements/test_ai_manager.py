@@ -510,6 +510,63 @@ class AiMultiKeyFailoverTests(AiManagerBase):
                 else:
                     os.environ[key] = value
 
+    def test_env_keys_for_new_provider_types(self):
+        """Each provider family reads its own env var (RAG -> NVIDIA_RAG_API_KEY,
+        OpenRouter/Mistral/DeepSeek/Together -> their own vars)."""
+        import os
+
+        from .ai_models import env_keys_for
+
+        old = {
+            k: os.environ.get(k)
+            for k in (
+                "NVIDIA_RAG_API_KEY", "OPENROUTER_API_KEY", "MISTRAL_API_KEY",
+                "DEEPSEEK_API_KEY", "TOGETHER_API_KEY",
+            )
+        }
+        os.environ["NVIDIA_RAG_API_KEY"] = "rag-key"
+        os.environ["OPENROUTER_API_KEY"] = "or-key"
+        os.environ["MISTRAL_API_KEY"] = "mi-key"
+        os.environ["DEEPSEEK_API_KEY"] = "ds-key"
+        os.environ["TOGETHER_API_KEY"] = "tg-key"
+        try:
+            self.assertEqual(
+                env_keys_for(AIProvider.ProviderType.RAG), ["rag-key"]
+            )
+            self.assertEqual(
+                env_keys_for(AIProvider.ProviderType.OPENROUTER), ["or-key"]
+            )
+            self.assertEqual(
+                env_keys_for(AIProvider.ProviderType.MISTRAL), ["mi-key"]
+            )
+            self.assertEqual(
+                env_keys_for(AIProvider.ProviderType.DEEPSEEK), ["ds-key"]
+            )
+            self.assertEqual(
+                env_keys_for(AIProvider.ProviderType.TOGETHER), ["tg-key"]
+            )
+        finally:
+            for key, value in old.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_create_rag_provider_via_api(self):
+        """The RAG provider type is accepted by the admin API and the adapter
+        treats it as a RAG NIM (documents field is sent)."""
+        from .ai_adapters import _is_rag_model
+
+        resp = self._client(self.admin).post(
+            "/api/admin/ai/providers/",
+            self._payload(name="NVIDIA RAG", provider_type="RAG", model="nvidia/nim-rag"),
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201)
+        provider = AIProvider.objects.get(name="NVIDIA RAG")
+        self.assertEqual(provider.provider_type, "RAG")
+        self.assertTrue(_is_rag_model(provider))
+
     def test_provider_key_chain_primary_extra_and_env(self):
         import os
 

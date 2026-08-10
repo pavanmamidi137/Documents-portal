@@ -107,8 +107,13 @@ def mask_secret(stored: str) -> str:
 _ENV_KEY_VARS = {
     "GEMINI": "GEMINI_API_KEY",
     "NVIDIA": "NVIDIA_API_KEY",
+    "RAG": "NVIDIA_RAG_API_KEY",
     "GROQ": "GROQ_API_KEY",
     "CEREBRAS": "CEREBRAS_API_KEY",
+    "OPENROUTER": "OPENROUTER_API_KEY",
+    "MISTRAL": "MISTRAL_API_KEY",
+    "DEEPSEEK": "DEEPSEEK_API_KEY",
+    "TOGETHER": "TOGETHER_API_KEY",
     "OPENAI_COMPATIBLE": "OPENAI_API_KEY",
 }
 
@@ -163,17 +168,23 @@ class AIProvider(models.Model):
     """A configured AI provider (Gemini, NVIDIA, Groq, Cerebras, custom...)."""
 
     class ProviderType(models.TextChoices):
-        OPENAI_COMPATIBLE = "OPENAI_COMPATIBLE", "OpenAI Compatible"
+        OPENAI_COMPATIBLE = "OPENAI_COMPATIBLE", "OpenAI Compatible (any)"
         GEMINI = "GEMINI", "Google Gemini"
         NVIDIA = "NVIDIA", "NVIDIA"
+        RAG = "RAG", "NVIDIA RAG NIM"
         GROQ = "GROQ", "Groq"
         CEREBRAS = "CEREBRAS", "Cerebras"
+        OPENROUTER = "OPENROUTER", "OpenRouter"
+        MISTRAL = "MISTRAL", "Mistral"
+        DEEPSEEK = "DEEPSEEK", "DeepSeek"
+        TOGETHER = "TOGETHER", "Together AI"
 
     class Purpose(models.TextChoices):
         GENERAL = "GENERAL", "General / All tasks"
         DRIVE_EXTRACTION = "DRIVE_EXTRACTION", "Drive Extraction"
         CHAT = "CHAT", "Student Chat"
         RESUME = "RESUME", "Resume Analysis"
+        RAG = "RAG", "RAG / Document Grounding"
         WEB = "WEB", "Web Research"
 
     class Health(models.TextChoices):

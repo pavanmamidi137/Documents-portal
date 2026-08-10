@@ -72,13 +72,17 @@ def _status_code_from_error(exc) -> int:
 
 
 def _is_rag_model(provider: AIProvider) -> bool:
-    """True when the provider's model id looks like a hosted RAG NIM.
+    """True when the provider is an explicit RAG NIM (or looks like one).
 
-    Only RAG NIMs accept the ``documents`` request field. Everything else
-    (NVIDIA 30B, Groq, Cerebras, custom OpenAI-compatible models) grounds
-    documents via prompt injection instead - sending the field to a non-RAG
-    model returns a 400 'unsupported parameter(s): documents'.
+    The ``RAG`` provider type is always treated as a RAG NIM; the model id /
+    name heuristic catches admins who picked another type but entered a RAG
+    model. Only RAG NIMs accept the ``documents`` request field - everything
+    else (NVIDIA 30B, Groq, OpenRouter, custom OpenAI-compatible models)
+    grounds documents via prompt injection instead, because sending the field
+    to a non-RAG model returns a 400 'unsupported parameter(s): documents'.
     """
+    if provider.provider_type == AIProvider.ProviderType.RAG:
+        return True
     model = (provider.model or "").lower()
     name = (provider.name or "").lower()
     return ("rag" in model) or ("rag" in name and "nim" in name)
@@ -424,7 +428,12 @@ class GeminiAdapter:
 
 
 def adapter_for(provider: AIProvider):
-    """Return the right adapter for a provider row."""
+    """Return the right adapter for a provider row.
+
+    Every type except GEMINI is an OpenAI-compatible chat-completions API
+    (NVIDIA, RAG NIMs, Groq, Cerebras, OpenRouter, Mistral, DeepSeek,
+    Together, and custom base URLs), so they all share the OpenAICompatAdapter.
+    """
     if provider.provider_type == AIProvider.ProviderType.GEMINI:
         return GeminiAdapter(provider)
     return OpenAICompatAdapter(provider)

@@ -370,8 +370,13 @@ export type AiProviderType =
   | "OPENAI_COMPATIBLE"
   | "GEMINI"
   | "NVIDIA"
+  | "RAG"
   | "GROQ"
-  | "CEREBRAS";
+  | "CEREBRAS"
+  | "OPENROUTER"
+  | "MISTRAL"
+  | "DEEPSEEK"
+  | "TOGETHER";
 
 export type AiHealthStatus =
   | "HEALTHY"

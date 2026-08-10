@@ -27,19 +27,40 @@ import { http } from "@/lib/api";
 import type { AiProvider, AiProviderPayload, AiProviderType } from "@/lib/types";
 import { getErrorMessage } from "@/lib/utils";
 
-const PROVIDER_TYPES: { value: AiProviderType; label: string; defaultBase: string }[] = [
-  { value: "OPENAI_COMPATIBLE", label: "OpenAI Compatible", defaultBase: "https://api.openai.com/v1" },
-  { value: "GEMINI", label: "Google Gemini", defaultBase: "" },
-  { value: "NVIDIA", label: "NVIDIA", defaultBase: "https://integrate.api.nvidia.com/v1" },
-  { value: "GROQ", label: "Groq", defaultBase: "https://api.groq.com/openai/v1" },
-  { value: "CEREBRAS", label: "Cerebras", defaultBase: "https://api.cerebras.ai/v1" },
+const PROVIDER_TYPES: { value: AiProviderType; label: string; defaultBase: string; modelHint?: string }[] = [
+  { value: "OPENAI_COMPATIBLE", label: "Custom / OpenAI Compatible (any model)", defaultBase: "https://api.openai.com/v1" },
+  { value: "GEMINI", label: "Google Gemini", defaultBase: "", modelHint: "gemini-2.0-flash" },
+  { value: "NVIDIA", label: "NVIDIA Nemotron", defaultBase: "https://integrate.api.nvidia.com/v1", modelHint: "nvidia/nemotron-3-nano-30b-a3b" },
+  { value: "RAG", label: "NVIDIA RAG NIM", defaultBase: "https://integrate.api.nvidia.com/v1", modelHint: "nvidia/nim-rag" },
+  { value: "GROQ", label: "Groq", defaultBase: "https://api.groq.com/openai/v1", modelHint: "llama-3.3-70b-versatile" },
+  { value: "CEREBRAS", label: "Cerebras", defaultBase: "https://api.cerebras.ai/v1", modelHint: "llama-3.3-70b" },
+  { value: "OPENROUTER", label: "OpenRouter", defaultBase: "https://openrouter.ai/api/v1", modelHint: "openai/gpt-4o-mini" },
+  { value: "MISTRAL", label: "Mistral", defaultBase: "https://api.mistral.ai/v1", modelHint: "mistral-large-latest" },
+  { value: "DEEPSEEK", label: "DeepSeek", defaultBase: "https://api.deepseek.com/v1", modelHint: "deepseek-chat" },
+  { value: "TOGETHER", label: "Together AI", defaultBase: "https://api.together.xyz/v1", modelHint: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
 ];
+
+// The server environment variable each provider family reads keys from, so
+// admins can also set keys on Render without opening this page.
+const ENV_KEY_VARS: Record<string, string> = {
+  OPENAI_COMPATIBLE: "OPENAI_API_KEY",
+  GEMINI: "GEMINI_API_KEY",
+  NVIDIA: "NVIDIA_API_KEY",
+  RAG: "NVIDIA_RAG_API_KEY",
+  GROQ: "GROQ_API_KEY",
+  CEREBRAS: "CEREBRAS_API_KEY",
+  OPENROUTER: "OPENROUTER_API_KEY",
+  MISTRAL: "MISTRAL_API_KEY",
+  DEEPSEEK: "DEEPSEEK_API_KEY",
+  TOGETHER: "TOGETHER_API_KEY",
+};
 
 const PURPOSES = [
   { value: "GENERAL", label: "General / All tasks" },
   { value: "DRIVE_EXTRACTION", label: "Drive Extraction" },
   { value: "CHAT", label: "Student Chat" },
   { value: "RESUME", label: "Resume Analysis" },
+  { value: "RAG", label: "RAG / Document Grounding" },
   { value: "WEB", label: "Web Research" },
 ];
 
@@ -77,10 +98,16 @@ export function AiProviderFormDialog({ open, onOpenChange, provider, onSaved }: 
     setForm((f) => ({
       ...f,
       provider_type: (value ?? "OPENAI_COMPATIBLE") as AiProviderType,
-      // Auto-fill the base URL for the well-known providers.
+      // Auto-fill the base URL + a sensible model for the well-known providers.
       base_url: f.base_url?.includes("api.") || f.base_url === "https://api.openai.com/v1"
         ? (type?.defaultBase ?? f.base_url)
         : f.base_url,
+      // Only auto-fill the model when the field is empty or still the
+      // previous type's hint - never clobber a model the admin typed.
+      model:
+        type?.modelHint && (!f.model || f.model === type.modelHint)
+          ? type.modelHint
+          : f.model,
     }));
   };
 
@@ -171,7 +198,7 @@ export function AiProviderFormDialog({ open, onOpenChange, provider, onSaved }: 
                 id="p-model"
                 value={form.model}
                 onChange={(e) => set("model", e.target.value)}
-                placeholder="e.g. gemini-2.0-flash"
+                placeholder={PROVIDER_TYPES.find((t) => t.value === form.provider_type)?.modelHint ?? "e.g. gemini-2.0-flash"}
               />
             </div>
             <div className="space-y-1.5">
@@ -194,7 +221,9 @@ export function AiProviderFormDialog({ open, onOpenChange, provider, onSaved }: 
               placeholder="https://api.example.com/v1"
             />
             <p className="text-xs text-muted-foreground">
-              Leave empty for Gemini (official API is used automatically).
+              Gemini leaves this empty (official API is used). Any other
+              provider - including custom OpenAI-compatible endpoints - uses
+              its own base URL.
             </p>
           </div>
 
@@ -218,11 +247,21 @@ export function AiProviderFormDialog({ open, onOpenChange, provider, onSaved }: 
               When a key hits its rate limit, the portal automatically tries the
               next one. Extra keys can be added here, or set in the server
               environment as comma-separated values (e.g.{" "}
-              <code className="font-mono">{form.provider_type === "GEMINI" ? "GEMINI_API_KEY" : "NVIDIA_API_KEY"}=k1,k2,k3</code>{" "}
+              <code className="font-mono">{ENV_KEY_VARS[form.provider_type ?? "OPENAI_COMPATIBLE"] ?? "OPENAI_API_KEY"}=k1,k2,k3</code>{" "}
               or numbered <code className="font-mono">…_2</code>,{" "}
               <code className="font-mono">…_3</code>).
             </p>
           </div>
+
+          {form.provider_type === "RAG" && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+              RAG NIMs ground answers on the documents you send (drive details,
+              resume text) via the <span className="font-medium text-foreground">documents</span>{" "}
+              field. To use one, assign it under{" "}
+              <span className="font-medium text-foreground">AI Tasks</span> — e.g. Student
+              Chat — as the primary or a fallback provider.
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="p-purpose">Purpose</Label>
