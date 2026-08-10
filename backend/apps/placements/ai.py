@@ -88,14 +88,34 @@ class AiError(Exception):
     """Raised when the AI service is unavailable or returns a bad result."""
 
 
+def get_api_keys() -> list[str]:
+    """Every NVIDIA API key configured in the environment.
+
+    Supports a comma-separated value (``NVIDIA_API_KEY=k1,k2,k3``) plus
+    numbered extras (``NVIDIA_API_KEY_2`` ... ``NVIDIA_API_KEY_9``). When one
+    key is rate-limited or invalid the client automatically rotates to the
+    next one, so admins can spread quota across several keys on Render.
+    """
+    keys: list[str] = []
+    seen: set[str] = set()
+    for i in range(1, 10):
+        raw = os.environ.get(f"NVIDIA_API_KEY_{i}" if i > 1 else "NVIDIA_API_KEY", "")
+        for part in (raw or "").split(","):
+            key = part.strip()
+            if key and key not in seen:
+                seen.add(key)
+                keys.append(key)
+    return keys
+
+
 def get_api_key() -> str:
-    key = os.environ.get("NVIDIA_API_KEY") or ""
-    if not key:
+    keys = get_api_keys()
+    if not keys:
         raise AiError(
             "The AI API key is not configured. Ask the admin to set "
             "NVIDIA_API_KEY in the server environment."
         )
-    return key
+    return keys[0]
 
 
 def _chat_completion_inner(
@@ -114,16 +134,17 @@ def _chat_completion_inner(
     ``documents`` (a list of dicts, e.g. [{"content": "..."}]) is sent to the
     RAG NIM as grounding. ``model``/``api_key`` override the defaults (used by
     the RAG path); otherwise the standard model + NVIDIA_API_KEY are used.
+
+    Multiple API keys are supported (comma-separated NVIDIA_API_KEY or
+    numbered extras) - a rate-limited or invalid key rotates to the next one
+    automatically, and only when every key fails does the call error out.
     """
-    client = OpenAI(
-        base_url=BASE_URL,
-        api_key=api_key or get_api_key(),
-        timeout=_TIMEOUT_SECONDS,
-        # Don't let the SDK silently retry on top of our own 429/connection
-        # retry loop (its default is 2) - one retry here keeps behavior
-        # predictable and matches the NVIDIA_429_RETRIES setting.
-        max_retries=1,
-    )
+    keys = [api_key] if api_key else get_api_keys()
+    if not keys:
+        raise AiError(
+            "The AI API key is not configured. Ask the admin to set "
+            "NVIDIA_API_KEY in the server environment."
+        )
     base_kwargs: dict = {
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -146,64 +167,81 @@ def _chat_completion_inner(
             extra["documents"] = documents
         if extra:
             kwargs["extra_body"] = extra
-        for attempt in range(_429_RETRIES + 1):
-            try:
-                completion = client.chat.completions.create(**kwargs)
-            except RateLimitError:
-                last_error = "the AI service is busy (rate limit) - try again in a moment"
-                if attempt < _429_RETRIES:
-                    time.sleep(_429_BACKOFF_SECONDS * (attempt + 1))
-                    continue
-                break
-            except AuthenticationError as exc:
-                raise AiError(
-                    "The AI API key is invalid or expired. Ask the admin to "
-                    "check the NVIDIA API keys on the server."
-                ) from exc
-            except APITimeoutError as exc:
-                raise AiError(
-                    "The AI service took too long to respond. Try again in a moment."
-                ) from exc
-            except APIConnectionError as exc:
-                raise AiError(f"Could not reach the AI service: {exc}") from exc
-            except BadRequestError as exc:
-                detail = str(getattr(exc, "body", "") or exc).lower()
-                # A model may not accept a reasoning budget - retry lean,
-                # keeping any grounding documents intact.
-                if "reasoning" in detail and reasoning_budget > 0:
-                    reasoning_budget = 0
-                    extra.pop("reasoning_budget", None)
-                    if extra:
-                        kwargs["extra_body"] = extra
-                    else:
-                        kwargs.pop("extra_body", None)
-                    continue
-                # The model doesn't accept grounding documents (not a RAG NIM)
-                # - surface it so the caller falls back to prompt injection.
-                if "document" in detail and documents:
-                    raise AiError(f"AI API error: {detail[:300]}") from exc
-                # A model that doesn't exist - fall through to the next one.
-                if "model" in detail and candidate is not models[-1]:
+        for key in keys:
+            client = OpenAI(
+                base_url=BASE_URL,
+                api_key=key,
+                timeout=_TIMEOUT_SECONDS,
+                # Don't let the SDK silently retry on top of our own
+                # 429/connection retry loop (its default is 2) - one retry
+                # here keeps behavior predictable and matches the
+                # NVIDIA_429_RETRIES setting.
+                max_retries=1,
+            )
+            for attempt in range(_429_RETRIES + 1):
+                try:
+                    completion = client.chat.completions.create(**kwargs)
+                except RateLimitError:
+                    last_error = (
+                        "the AI service is busy (rate limit) - try again in a moment"
+                    )
+                    if attempt < _429_RETRIES:
+                        time.sleep(_429_BACKOFF_SECONDS * (attempt + 1))
+                        continue
+                    # This key is exhausted - rotate to the next key.
                     break
-                raise AiError(f"AI API error: {detail[:300]}") from exc
-            except APIError as exc:
-                raise AiError(f"AI API error: {str(exc)[:300]}") from exc
+                except AuthenticationError as exc:
+                    # This key is invalid - move on to the next one before
+                    # giving up; only when every key is bad does it surface.
+                    last_error = "the NVIDIA API key is invalid or expired"
+                    break
+                except APITimeoutError as exc:
+                    raise AiError(
+                        "The AI service took too long to respond. Try again in a moment."
+                    ) from exc
+                except APIConnectionError as exc:
+                    raise AiError(f"Could not reach the AI service: {exc}") from exc
+                except BadRequestError as exc:
+                    detail = str(getattr(exc, "body", "") or exc).lower()
+                    # A model may not accept a reasoning budget - retry lean,
+                    # keeping any grounding documents intact.
+                    if "reasoning" in detail and reasoning_budget > 0:
+                        reasoning_budget = 0
+                        extra.pop("reasoning_budget", None)
+                        if extra:
+                            kwargs["extra_body"] = extra
+                        else:
+                            kwargs.pop("extra_body", None)
+                        continue
+                    # The model doesn't accept grounding documents (not a RAG
+                    # NIM) - surface it so the caller falls back to prompt
+                    # injection.
+                    if "document" in detail and documents:
+                        raise AiError(f"AI API error: {detail[:300]}") from exc
+                    # A model that doesn't exist - fall through to the next one.
+                    if "model" in detail and candidate is not models[-1]:
+                        break
+                    raise AiError(f"AI API error: {detail[:300]}") from exc
+                except APIError as exc:
+                    raise AiError(f"AI API error: {str(exc)[:300]}") from exc
 
-            choices = completion.choices or []
-            text = ""
-            if choices:
-                text = (choices[0].message.content or "").strip()
-            if not text:
-                raise AiError("The AI returned no answer (empty response).")
-            if usage_callback and getattr(completion, "usage", None):
-                usage_callback(
-                    int(completion.usage.prompt_tokens or 0),
-                    int(completion.usage.completion_tokens or 0),
-                )
-            return text
+                choices = completion.choices or []
+                text = ""
+                if choices:
+                    text = (choices[0].message.content or "").strip()
+                if not text:
+                    raise AiError("The AI returned no answer (empty response).")
+                if usage_callback and getattr(completion, "usage", None):
+                    usage_callback(
+                        int(completion.usage.prompt_tokens or 0),
+                        int(completion.usage.completion_tokens or 0),
+                    )
+                return text
 
     raise AiError(
-        f"The AI service could not complete the request. Last error: {last_error}"
+        f"The AI service could not complete the request. Last error: {last_error}. "
+        "If you keep hitting rate limits, add more NVIDIA API keys on the server "
+        "(comma-separated NVIDIA_API_KEY or NVIDIA_API_KEY_2, _3, ...)."
     )
 
 

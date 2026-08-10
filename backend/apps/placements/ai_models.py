@@ -95,6 +95,70 @@ def mask_secret(stored: str) -> str:
     return "*" * (len(plain) - 4) + plain[-4:]
 
 
+# ---------------------------------------------------------------------------
+# Multi-key support (automatic failover when one key is rate-limited/invalid)
+# ---------------------------------------------------------------------------
+# The env var each provider family reads its API keys from. A single value may
+# be comma-separated ("k1,k2,k3") and numbered extras are supported too
+# (e.g. NVIDIA_API_KEY_2, NVIDIA_API_KEY_3, ...) so admins can rotate keys on
+# Render without touching code. The same vars power the legacy NVIDIA client.
+# Keys are provider-type choice values (string literals so the table can live
+# above the AIProvider model definition).
+_ENV_KEY_VARS = {
+    "GEMINI": "GEMINI_API_KEY",
+    "NVIDIA": "NVIDIA_API_KEY",
+    "GROQ": "GROQ_API_KEY",
+    "CEREBRAS": "CEREBRAS_API_KEY",
+    "OPENAI_COMPATIBLE": "OPENAI_API_KEY",
+}
+
+
+def _split_env_keys(raw: str) -> list[str]:
+    """Split a (possibly comma-separated) env value into non-empty keys."""
+    return [k.strip() for k in (raw or "").split(",") if k and k.strip()]
+
+
+def env_keys_for(provider_type: str) -> list[str]:
+    """Every API key configured for a provider family in the environment.
+
+    Reads the family's base var (comma-separated allowed) plus numbered extras
+    (``<BASE>_2`` ... ``<BASE>_9``). Empty when nothing is configured.
+    """
+    base = _ENV_KEY_VARS.get(provider_type) or "OPENAI_API_KEY"
+    keys: list[str] = []
+    seen: set[str] = set()
+    for i in range(1, 10):
+        raw = os.environ.get(f"{base}_{i}" if i > 1 else base, "")
+        for key in _split_env_keys(raw):
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+    return keys
+
+
+def provider_key_chain(provider) -> list[str]:
+    """All usable API keys for one provider, in failover order.
+
+    1. the provider's stored primary key
+    2. any extra keys saved on the provider (AIProviderKey rows)
+    3. keys from the environment for the provider family (NVIDIA_API_KEY,
+       GEMINI_API_KEY, ..., comma-separated and numbered)
+
+    Duplicates are removed. The adapters try each key in order and only give up
+    (or fail over to the next provider) when every key fails.
+    """
+    keys: list[str] = []
+    seen: set[str] = set()
+
+    stored = [decrypt_secret(provider.encrypted_api_key)]
+    stored += [decrypt_secret(k.encrypted_api_key) for k in provider.keys.all()]
+    for key in [*stored, *env_keys_for(provider.provider_type)]:
+        if key and key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
 class AIProvider(models.Model):
     """A configured AI provider (Gemini, NVIDIA, Groq, Cerebras, custom...)."""
 

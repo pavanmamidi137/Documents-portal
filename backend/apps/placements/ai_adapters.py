@@ -100,20 +100,17 @@ class OpenAICompatAdapter:
             RateLimitError,
         )
 
-        from .ai_models import decrypt_secret
+        from .ai_models import provider_key_chain
 
-        key = api_key or decrypt_secret(self.provider.encrypted_api_key)
-        if not key:
+        # Try every key (primary, extra keys, then env keys) in order; a
+        # rate-limited or invalid key simply moves on to the next one, so the
+        # portal keeps working when one account hits its quota.
+        keys = [api_key] if api_key else provider_key_chain(self.provider)
+        if not keys:
             raise AuthProviderError(
                 "No API key configured for this provider.", error_type="NO_KEY"
             )
         base_url = self.provider.base_url or "https://api.openai.com/v1"
-        client = OpenAI(
-            base_url=base_url,
-            api_key=key,
-            timeout=timeout or self.provider.timeout_seconds or 60,
-            max_retries=0,
-        )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_text},
@@ -135,56 +132,74 @@ class OpenAICompatAdapter:
         if extra:
             kwargs["extra_body"] = extra
 
-        try:
-            completion = client.chat.completions.create(**kwargs)
-        except RateLimitError as exc:
-            raise RateLimitedProviderError(
-                "The AI service is busy (rate limit).", error_type="RATE_LIMITED"
-            ) from exc
-        except AuthenticationError as exc:
-            raise AuthProviderError(
-                "The API key is invalid or expired.", error_type="AUTH"
-            ) from exc
-        except APITimeoutError as exc:
-            raise TimeoutProviderError(
-                "The AI service took too long to respond.", error_type="TIMEOUT"
-            ) from exc
-        except APIConnectionError as exc:
-            raise UnavailableProviderError(
-                "Could not reach the AI service.", error_type="CONNECTION"
-            ) from exc
-        except BadRequestError as exc:
-            detail = str(getattr(exc, "body", "") or exc).lower()
-            if "reasoning" in detail and reasoning_budget:
-                # Retry once without the reasoning budget.
-                kwargs.pop("extra_body", None)
-                try:
-                    completion = client.chat.completions.create(**kwargs)
-                except Exception as retry_exc:
+        last_key_error: RouterError | None = None
+        for key in keys:
+            client = OpenAI(
+                base_url=base_url,
+                api_key=key,
+                timeout=timeout or self.provider.timeout_seconds or 60,
+                max_retries=0,
+            )
+            try:
+                completion = client.chat.completions.create(**kwargs)
+            except RateLimitError as exc:
+                # This key hit its quota - remember it and try the next one.
+                last_key_error = RateLimitedProviderError(
+                    "The AI service is busy (rate limit).", error_type="RATE_LIMITED"
+                )
+                continue
+            except AuthenticationError as exc:
+                # This key is dead - try the next one before giving up.
+                last_key_error = AuthProviderError(
+                    "The API key is invalid or expired.", error_type="AUTH"
+                )
+                continue
+            except APITimeoutError as exc:
+                raise TimeoutProviderError(
+                    "The AI service took too long to respond.", error_type="TIMEOUT"
+                ) from exc
+            except APIConnectionError as exc:
+                raise UnavailableProviderError(
+                    "Could not reach the AI service.", error_type="CONNECTION"
+                ) from exc
+            except BadRequestError as exc:
+                detail = str(getattr(exc, "body", "") or exc).lower()
+                if "reasoning" in detail and reasoning_budget:
+                    # Retry once without the reasoning budget.
+                    kwargs.pop("extra_body", None)
+                    try:
+                        completion = client.chat.completions.create(**kwargs)
+                    except Exception as retry_exc:
+                        raise UnavailableProviderError(
+                            f"AI API error: {detail[:200]}", error_type="BAD_REQUEST"
+                        ) from retry_exc
+                else:
                     raise UnavailableProviderError(
                         f"AI API error: {detail[:200]}", error_type="BAD_REQUEST"
-                    ) from retry_exc
-            else:
+                    ) from exc
+            except APIError as exc:
                 raise UnavailableProviderError(
-                    f"AI API error: {detail[:200]}", error_type="BAD_REQUEST"
+                    f"AI API error: {str(exc)[:200]}", error_type="API_ERROR"
                 ) from exc
-        except APIError as exc:
-            raise UnavailableProviderError(
-                f"AI API error: {str(exc)[:200]}", error_type="API_ERROR"
-            ) from exc
 
-        choices = completion.choices or []
-        text = ""
-        if choices:
-            text = (choices[0].message.content or "").strip()
-        if not text:
-            raise EmptyResponseError(
-                "The AI returned no answer.", error_type="EMPTY_RESPONSE"
-            )
-        usage = getattr(completion, "usage", None)
-        prompt_tokens = int(usage.prompt_tokens or 0) if usage else 0
-        completion_tokens = int(usage.completion_tokens or 0) if usage else 0
-        return text, prompt_tokens, completion_tokens
+            choices = completion.choices or []
+            text = ""
+            if choices:
+                text = (choices[0].message.content or "").strip()
+            if not text:
+                raise EmptyResponseError(
+                    "The AI returned no answer.", error_type="EMPTY_RESPONSE"
+                )
+            usage = getattr(completion, "usage", None)
+            prompt_tokens = int(usage.prompt_tokens or 0) if usage else 0
+            completion_tokens = int(usage.completion_tokens or 0) if usage else 0
+            return text, prompt_tokens, completion_tokens
+
+        # Every key failed on a key-specific error (rate limit / auth). Surface
+        # the last one so the router can fail over to the next provider.
+        raise last_key_error or RouterError(
+            "All API keys for this provider failed.", error_type="PROVIDER_ERROR"
+        )
 
 
 class GeminiAdapter:
@@ -206,10 +221,12 @@ class GeminiAdapter:
     def generate(self, system_prompt, user_text, max_tokens, temperature=0.3,
                  reasoning_budget=0, documents=None, timeout=None,
                  api_key: str | None = None):
-        from .ai_models import decrypt_secret
+        from .ai_models import provider_key_chain
 
-        key = api_key or decrypt_secret(self.provider.encrypted_api_key)
-        if not key:
+        # Try every key (stored primary, extra keys, then GEMINI_API_KEY env
+        # keys) in order - a rate-limited or invalid key rotates to the next.
+        keys = [api_key] if api_key else provider_key_chain(self.provider)
+        if not keys:
             raise AuthProviderError(
                 "No API key configured for this provider.", error_type="NO_KEY"
             )
@@ -226,39 +243,60 @@ class GeminiAdapter:
                 "temperature": temperature,
             },
         }
-        url = f"{self.BASE}/models/{model}:generateContent?key={key}"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout or self.provider.timeout_seconds or 60) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = ""
-            try:
-                detail = exc.read().decode("utf-8")[:200]
-            except Exception:
-                pass
-            _raise_for_status(exc, f"Gemini API error: {detail}")
-        except Exception as exc:
-            _raise_for_status(exc, "Could not reach the Gemini API.")
+        data = json.dumps(payload).encode("utf-8")
 
-        candidates = body.get("candidates") or []
-        text = ""
-        if candidates:
-            parts = candidates[0].get("content", {}).get("parts") or []
-            text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
-        if not text:
-            raise EmptyResponseError(
-                "Gemini returned no answer.", error_type="EMPTY_RESPONSE"
+        last_key_error: RouterError | None = None
+        for key in keys:
+            url = f"{self.BASE}/models/{model}:generateContent?key={key}"
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
             )
-        usage = body.get("usageMetadata") or {}
-        prompt_tokens = int(usage.get("promptTokenCount") or 0)
-        completion_tokens = int(usage.get("candidatesTokenCount") or 0)
-        return text, prompt_tokens, completion_tokens
+            try:
+                with urllib.request.urlopen(req, timeout=timeout or self.provider.timeout_seconds or 60) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = ""
+                try:
+                    detail = exc.read().decode("utf-8")[:200]
+                except Exception:
+                    pass
+                if exc.code == 429:
+                    # Quota exhausted for this key - try the next one.
+                    last_key_error = RateLimitedProviderError(
+                        f"Gemini API error: {detail}", error_type="RATE_LIMITED"
+                    )
+                    continue
+                if exc.code in (401, 403):
+                    # This key is invalid - try the next one before giving up.
+                    last_key_error = AuthProviderError(
+                        f"Gemini API error: {detail}", error_type="AUTH"
+                    )
+                    continue
+                _raise_for_status(exc, f"Gemini API error: {detail}")
+            except Exception as exc:
+                _raise_for_status(exc, "Could not reach the Gemini API.")
+
+            candidates = body.get("candidates") or []
+            text = ""
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts") or []
+                text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+            if not text:
+                raise EmptyResponseError(
+                    "Gemini returned no answer.", error_type="EMPTY_RESPONSE"
+                )
+            usage = body.get("usageMetadata") or {}
+            prompt_tokens = int(usage.get("promptTokenCount") or 0)
+            completion_tokens = int(usage.get("candidatesTokenCount") or 0)
+            return text, prompt_tokens, completion_tokens
+
+        # Every key failed on a key-specific error (rate limit / auth).
+        raise last_key_error or RouterError(
+            "All API keys for this provider failed.", error_type="PROVIDER_ERROR"
+        )
 
 
 def adapter_for(provider: AIProvider):

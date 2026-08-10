@@ -668,7 +668,7 @@ class DriveApiTests(APITestCase):
         fake = _FakeOpenAI(content='{"ok": true}')
         with (
             patch("apps.placements.ai.OpenAI", side_effect=lambda **kw: fake),
-            patch("apps.placements.ai.get_api_key", return_value="test-key"),
+            patch("apps.placements.ai.get_api_keys", return_value=["test-key"]),
         ):
             result = ai_json("system", "user text")
         self.assertEqual(result, {"ok": True})
@@ -680,7 +680,7 @@ class DriveApiTests(APITestCase):
         fake = _FakeOpenAI(content='{"ok": true}', errors=[_FakeRateLimit()])
         with (
             patch("apps.placements.ai.OpenAI", side_effect=lambda **kw: fake),
-            patch("apps.placements.ai.get_api_key", return_value="test-key"),
+            patch("apps.placements.ai.get_api_keys", return_value=["test-key"]),
             patch("apps.placements.ai._429_BACKOFF_SECONDS", 0.01),
         ):
             result = ai_json("system", "user text", usage_callback=lambda p, c: None)
@@ -693,9 +693,52 @@ class DriveApiTests(APITestCase):
         fake = _FakeOpenAI(content='```json\n{"company": "TCS"}\n```')
         with (
             patch("apps.placements.ai.OpenAI", side_effect=lambda **kw: fake),
-            patch("apps.placements.ai.get_api_key", return_value="test-key"),
+            patch("apps.placements.ai.get_api_keys", return_value=["test-key"]),
         ):
             self.assertEqual(ai_json("s", "u"), {"company": "TCS"})
+
+    def test_ai_rotates_to_next_key_when_first_is_rate_limited(self):
+        """Multi-key support: a 429 on the first key automatically uses the next."""
+        from apps.placements.ai import ai_json
+
+        fake = _FakeOpenAI(content='{"ok": true}', errors=[_FakeRateLimit()])
+        with (
+            patch("apps.placements.ai.OpenAI", side_effect=fake),
+            patch(
+                "apps.placements.ai.get_api_keys",
+                return_value=["key-one", "key-two"],
+            ),
+            patch("apps.placements.ai._429_RETRIES", 0),
+            patch("apps.placements.ai._429_BACKOFF_SECONDS", 0.01),
+        ):
+            result = ai_json("system", "user text")
+        self.assertEqual(result, {"ok": True})
+        # Key one was 429-limited (one attempt), key two answered (one attempt).
+        self.assertEqual(len(fake.calls), 2)
+        # Each key built its own authenticated client.
+        self.assertEqual(fake.api_keys, ["key-one", "key-two"])
+
+    def test_get_api_keys_parses_comma_separated_and_numbered_env(self):
+        """NVIDIA_API_KEY supports commas and numbered extras."""
+        import os
+
+        from apps.placements.ai import get_api_keys
+
+        old = {
+            k: os.environ.get(k)
+            for k in ("NVIDIA_API_KEY", "NVIDIA_API_KEY_2", "NVIDIA_API_KEY_3")
+        }
+        os.environ["NVIDIA_API_KEY"] = "k1, k2"
+        os.environ["NVIDIA_API_KEY_2"] = "k3"
+        os.environ.pop("NVIDIA_API_KEY_3", None)
+        try:
+            self.assertEqual(get_api_keys(), ["k1", "k2", "k3"])
+        finally:
+            for key, value in old.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def test_missing_api_key_raises_friendly_error(self):
         import os
@@ -934,7 +977,8 @@ class _FakeOpenAI:
     """Minimal stand-in for openai.OpenAI so ai.py never touches the network.
 
     ``client.chat.completions.create(...)`` maps to ``.create(...)`` here and
-    every call (model, extra_body, etc.) is recorded on ``calls``.
+    every call (model, extra_body, etc.) is recorded on ``calls``. The api_key
+    each client is constructed with is recorded on ``api_keys``.
     """
 
     def __init__(self, content="", errors=(), usage=(10, 5)):
@@ -948,7 +992,13 @@ class _FakeOpenAI:
         ]
         self._errors = list(errors)
         self.calls: list[dict] = []
+        self.api_keys: list[str] = []
         self.chat = _FakeChat(self)
+
+    def __call__(self, **kwargs):
+        # openai.OpenAI(...) is called as a factory - capture the key used.
+        self.api_keys.append(kwargs.get("api_key", ""))
+        return self
 
     def create(self, **kwargs):
         self.calls.append(kwargs)

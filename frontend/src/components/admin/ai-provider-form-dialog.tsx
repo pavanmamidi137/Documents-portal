@@ -214,6 +214,14 @@ export function AiProviderFormDialog({ open, onOpenChange, provider, onSaved }: 
                 Current key: <code className="font-mono">{provider.api_key_masked}</code>
               </p>
             )}
+            <p className="text-xs text-muted-foreground">
+              When a key hits its rate limit, the portal automatically tries the
+              next one. Extra keys can be added here, or set in the server
+              environment as comma-separated values (e.g.{" "}
+              <code className="font-mono">{form.provider_type === "GEMINI" ? "GEMINI_API_KEY" : "NVIDIA_API_KEY"}=k1,k2,k3</code>{" "}
+              or numbered <code className="font-mono">…_2</code>,{" "}
+              <code className="font-mono">…_3</code>).
+            </p>
           </div>
 
           <div className="space-y-1.5">

@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+from openai import RateLimitError
 from rest_framework.test import APIClient, APITestCase
 
 from apps.accounts.models import User
@@ -292,6 +293,155 @@ class AiRouterFailoverTests(AiManagerBase):
         )
         # The first enabled provider in priority order answers.
         self.assertEqual(calls[0], "High")
+
+
+class AiMultiKeyFailoverTests(AiManagerBase):
+    """Automatic key rotation when a provider key is rate-limited or invalid."""
+
+    def test_env_keys_for_parses_comma_separated_and_numbered(self):
+        import os
+
+        from .ai_models import env_keys_for
+
+        old = {
+            k: os.environ.get(k)
+            for k in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "NVIDIA_API_KEY")
+        }
+        os.environ["GEMINI_API_KEY"] = "g1, g2"
+        os.environ["GEMINI_API_KEY_2"] = "g3"
+        os.environ.pop("NVIDIA_API_KEY", None)
+        try:
+            self.assertEqual(
+                env_keys_for(AIProvider.ProviderType.GEMINI), ["g1", "g2", "g3"]
+            )
+            self.assertEqual(env_keys_for(AIProvider.ProviderType.NVIDIA), [])
+        finally:
+            for key, value in old.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_provider_key_chain_primary_extra_and_env(self):
+        import os
+
+        from .ai_models import AIProviderKey, provider_key_chain
+
+        provider = self._provider(name="Gemini")
+        extra = AIProviderKey(provider=provider, note="backup")
+        extra.set_api_key("backup-key-abc")
+        extra.save()
+        old = os.environ.get("GEMINI_API_KEY")
+        os.environ["GEMINI_API_KEY"] = "env-key-xyz"
+        try:
+            chain = provider_key_chain(provider)
+        finally:
+            if old is None:
+                os.environ.pop("GEMINI_API_KEY", None)
+            else:
+                os.environ["GEMINI_API_KEY"] = old
+        # Stored primary first, then the extra key, then the env key - no dups.
+        self.assertEqual(chain, ["sk-test-abcdef-1234", "backup-key-abc", "env-key-xyz"])
+
+    @patch("apps.placements.ai_models.provider_key_chain")
+    def test_openai_adapter_rotates_to_second_key_on_rate_limit(self, mock_chain):
+        """A rate-limited first key automatically moves to the second key."""
+        from .ai_adapters import OpenAICompatAdapter
+
+        provider = self._provider(name="Groq", provider_type="GROQ")
+        mock_chain.return_value = ["key-one", "key-two"]
+
+        seen_keys = []
+
+        class FakeCompletions:
+            def __init__(self, client):
+                self.client = client
+
+            def create(self, **kwargs):
+                seen_keys.append(self.client.api_key)
+                if self.client.api_key == "key-one":
+                    raise _FakeSDKRateLimit()
+                from types import SimpleNamespace
+
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content="answer from key two")
+                        )
+                    ],
+                    usage=SimpleNamespace(prompt_tokens=5, completion_tokens=5),
+                )
+
+        class FakeChat:
+            def __init__(self, client):
+                self.completions = FakeCompletions(client)
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.api_key = kwargs["api_key"]
+                self.chat = FakeChat(self)
+
+        with patch("openai.OpenAI", side_effect=FakeClient):
+            text, pt, ct = OpenAICompatAdapter(provider).generate("sys", "user", 50)
+
+        self.assertEqual(text, "answer from key two")
+        self.assertEqual(seen_keys, ["key-one", "key-two"])
+
+    @patch("apps.placements.ai_models.provider_key_chain")
+    def test_gemini_adapter_rotates_to_second_key_on_rate_limit(self, mock_chain):
+        """Gemini 429 on the first key rotates to the next env/stored key."""
+        import json
+        from urllib.error import HTTPError
+
+        from .ai_adapters import GeminiAdapter
+
+        provider = self._provider(name="Gemini")
+        mock_chain.return_value = ["gkey-one", "gkey-two"]
+
+        seen_urls = []
+
+        def fake_urlopen(req, timeout=60):
+            seen_urls.append(req.full_url)
+            if "gkey-one" in req.full_url:
+                raise HTTPError(req.full_url, 429, "quota", {}, None)
+            body = json.dumps(
+                {
+                    "candidates": [
+                        {"content": {"parts": [{"text": "hello from gemini"}]}}
+                    ],
+                    "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 2},
+                }
+            ).encode("utf-8")
+            return _FakeHttpResponse(body)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            text, pt, ct = GeminiAdapter(provider).generate("sys", "user", 50)
+
+        self.assertEqual(text, "hello from gemini")
+        self.assertEqual(len(seen_urls), 2)
+        self.assertIn("gkey-one", seen_urls[0])
+        self.assertIn("gkey-two", seen_urls[1])
+
+
+class _FakeSDKRateLimit(RateLimitError):
+    """RateLimitError without the SDK's constructor requirements."""
+
+    def __init__(self):
+        pass
+
+
+class _FakeHttpResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self._body
 
 
 class SimpleAdapter:

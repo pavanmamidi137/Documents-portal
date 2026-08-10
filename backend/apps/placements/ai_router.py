@@ -51,14 +51,26 @@ def _settings() -> AISettings:
 
 
 def _task_chain(task: str):
-    """Provider chain for a task: explicit config if present, else all enabled."""
+    """Provider chain for a task: explicit config if present, else all enabled.
+
+    Extra keys are prefetched so the adapters can fail over between a
+    provider's stored keys without extra queries.
+    """
     config = AITaskConfiguration.objects.filter(task=task).first()
     if config:
         chain = config.provider_chain()
         if chain:
-            return chain
+            # Re-fetch with keys prefetched while preserving the configured order.
+            by_id = {
+                p.pk: p
+                for p in AIProvider.objects.filter(pk__in=[p.pk for p in chain])
+                .prefetch_related("keys")
+            }
+            return [by_id[p.pk] for p in chain if p.pk in by_id]
     return list(
-        AIProvider.objects.filter(enabled=True).order_by("priority", "id")
+        AIProvider.objects.filter(enabled=True)
+        .order_by("priority", "id")
+        .prefetch_related("keys")
     )
 
 
