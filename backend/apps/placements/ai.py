@@ -163,12 +163,12 @@ def _chat_completion_inner(
         "stream": False,
     }
 
-    # When the caller wants JSON, ask the endpoint for structured output where
-    # supported (a 4xx below falls back to a plain completion - the prompt
-    # still asks for JSON and the parser tolerates loose output).
-    if raw_json:
-        base_kwargs["response_format"] = {"type": "json_object"}
-
+    # NOTE: we deliberately do NOT set response_format=json_object here.
+    # NVIDIA's Nemotron endpoint answers a json_object request with an empty
+    # JSON skeleton ("pros": [], "cons": [], ...) instead of the full report,
+    # which surfaces as an "unreadable report" failure. The prompt demands
+    # strict JSON and the robust parser tolerates fenced/prose-wrapped/loose
+    # output, so a plain completion returns the complete report.
     models = [model] if model else [DEFAULT_MODEL, *FALLBACK_MODELS]
     last_error = "unknown error"
     for candidate in models:

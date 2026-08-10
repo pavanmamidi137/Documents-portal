@@ -154,11 +154,13 @@ class OpenAICompatAdapter:
             extra["documents"] = [{"content": d} for d in documents]
         if extra:
             kwargs["extra_body"] = extra
-        if raw_json and not images:
-            # Ask the provider for a structured JSON object. Providers that
-            # don't support response_format reject it with a 4xx which the
-            # retry below handles by falling back to a plain completion.
-            kwargs["response_format"] = {"type": "json_object"}
+        # NOTE: we deliberately do NOT set response_format=json_object here.
+        # NVIDIA's Nemotron endpoint answers a json_object request with an
+        # empty JSON skeleton ("pros": [], ...) instead of the full report,
+        # which surfaces as an "unreadable report" failure. The prompt demands
+        # strict JSON and the robust parser tolerates loose/fenced output, so a
+        # plain completion returns the complete report. (Gemini keeps its own
+        # responseMimeType handling, which returns full JSON content.)
 
         last_key_error: RouterError | None = None
         for key in keys:

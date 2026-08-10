@@ -521,8 +521,11 @@ def analyze_resume(resume, actor) -> dict:
     brief = text.strip()[:_MAX_TEXT_CHARS]
 
     try:
+        # Generous token budget - the full report (pros/cons/5-8 improvements)
+        # is longer than 2000 tokens and a truncated JSON would surface as an
+        # unreadable report.
         quality = ai_json(
-            _QUALITY_PROMPT, brief, max_tokens=2000, usage_callback=usage,
+            _QUALITY_PROMPT, brief, max_tokens=3500, usage_callback=usage,
             task="RESUME_ANALYSIS",
         )
     except AiError:
@@ -549,7 +552,7 @@ def analyze_resume(resume, actor) -> dict:
             try:
                 match = ai_json(
                     _MATCH_PROMPT.format(resume_brief=brief[:4000]),
-                    "Score this resume against each drive.", max_tokens=1600,
+                    "Score this resume against each drive.", max_tokens=2000,
                     usage_callback=usage,
                     documents=[drives_brief],
                     task="RESUME_ANALYSIS",

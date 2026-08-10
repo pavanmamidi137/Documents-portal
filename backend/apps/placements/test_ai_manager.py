@@ -1066,10 +1066,8 @@ class AiParseTests(AiManagerBase):
         ):
             result = env_json_fallback("sys", "resume", 200, raw_json=True)
         self.assertEqual(result["score"], 58)
-        # It requested structured JSON from the 30B model.
-        self.assertEqual(
-            captured["kwargs"].get("response_format"), {"type": "json_object"}
-        )
+        # response_format is deliberately NOT sent (Nemotron skeleton bug).
+        self.assertIsNone(captured["kwargs"].get("response_format"))
         # Without an env key it returns {} and never raises.
         with patch("apps.placements.ai.get_api_keys", return_value=[]):
             self.assertEqual(env_json_fallback("sys", "u", 200, raw_json=True), {})
@@ -1123,10 +1121,10 @@ class AiParseTests(AiManagerBase):
         ):
             result = ai_json("sys", "resume", task="RESUME_ANALYSIS")
         self.assertEqual(result["score"], 61)
-        # The legacy path asks the endpoint for a structured JSON object.
-        self.assertEqual(
-            captured["kwargs"].get("response_format"), {"type": "json_object"}
-        )
+        # response_format is deliberately NOT sent - NVIDIA Nemotron returns an
+        # empty JSON skeleton when forced into json_object mode; the prompt + 
+        # robust parser handle structured output instead.
+        self.assertIsNone(captured["kwargs"].get("response_format"))
 
 
 class AiDailyReportTests(AiManagerBase):
