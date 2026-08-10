@@ -19,6 +19,7 @@ from django.utils import timezone
 from apps.core.ocr import ocr_pdf_content as _ocr_pdf_content
 
 from .ai import AiError, ai_json, get_api_key
+from .ai_parse import normalize_matches, normalize_resume_report
 from .models import AiUsageLog, Drive
 
 # Cap the resume text sent to the model - resumes are short, so this keeps the
@@ -27,24 +28,37 @@ _MAX_TEXT_CHARS = 15000
 
 _QUALITY_PROMPT = """\
 You are a career advisor reviewing a college student's resume for campus placements.
-Return ONLY valid JSON (no markdown, no comments) with exactly these keys:
-- score: integer 0-100 overall quality
-- summary: one or two sentences on the resume's overall impression
-- strengths: array of 3-5 short strings - what stands out (projects, skills, format, achievements)
-- improvements: array of 3-5 short strings - what would make it stronger (quantify results, add ATS keywords, fix layout)
-- skills: array of strings - every skill/keyword mentioned (languages, tools, frameworks, soft skills)
-- ats_keywords: array of strings - important ATS keywords for IT/fresher roles that are MISSING from this resume (e.g. Python, SQL, Git, communication, teamwork)
+Return ONLY a single valid JSON object - no markdown, no code fences, no prose before or after.
+The object must use EXACTLY this schema:
+{
+  "score": 0-100 integer (overall quality),
+  "summary": "one or two sentences on the resume's overall impression",
+  "strengths": ["3-5 short strings - what stands out (projects, skills, format, achievements)"],
+  "improvements": ["3-5 short strings - what would make it stronger (quantify results, add ATS keywords, fix layout)"],
+  "skills": ["every skill/keyword mentioned - languages, tools, frameworks, soft skills"],
+  "ats_keywords": ["important ATS keywords for IT/fresher roles MISSING from this resume (e.g. Python, SQL, Git, communication, teamwork)"]
+}
 Be specific and honest. If the resume text is unreadable or empty, still return the JSON
 with score 0 and a note in summary that the text could not be extracted."""
 
+# NOTE: the braces in the JSON schema below are doubled ({{ }}) because this
+# prompt is fed through str.format() - {resume_brief} stays single so it is
+# replaced with the actual resume text.
 _MATCH_PROMPT = """\
 You match a student's resume against open placement drives and estimate how likely they are to be shortlisted.
-Return ONLY valid JSON (no markdown, no comments) with a single key "matches": an array of objects with keys:
-- drive_id: number (the id of the drive)
-- score: integer 0-100 match strength
-- reason: one short sentence explaining the fit (skills / role / eligibility / package)
+Return ONLY a single valid JSON object - no markdown, no code fences, no prose before or after.
+The object must use EXACTLY this schema:
+{{
+  "matches": [
+    {{
+      "drive_id": number (the id of the drive),
+      "score": integer 0-100 match strength,
+      "reason": "one short sentence explaining the fit (skills / role / eligibility / package)"
+    }}
+  ]
+}}
 Base the match on the resume's skills and each drive's role, eligibility and eligible roll numbers.
-Only include drives from the documents provided. Do not invent drives or ids.
+Only include drives from the documents provided. Do not invent drives or ids. If no drive fits, return "matches": [].
 
 Resume summary & skills:
 {resume_brief}"""
@@ -284,15 +298,15 @@ def refresh_matches_for_drive(drive, actor=None, limit=None) -> int:
             )
         except AiError:
             continue  # best-effort - one failure doesn't stop the refresh
-        entries = match.get("matches") if isinstance(match, dict) else None
-        if not isinstance(entries, list) or not entries:
+        entries = normalize_matches(match)
+        if not entries:
             continue
-        entry = entries[0] if isinstance(entries[0], dict) else {}
+        entry = entries[0]
         # We explicitly asked about THIS drive - never trust the AI's own id.
         current = dict(resume.ai_match or {})
         current[str(drive.id)] = {
-            "score": _clamp_score(entry.get("score")),
-            "reason": str(entry.get("reason") or "").strip()[:300],
+            "score": entry["score"],
+            "reason": entry["reason"],
             "company_name": drive.company_name,
         }
         # Only the match snapshot changes - leave updated_at/analyzed_at alone
@@ -396,23 +410,14 @@ def refresh_all_matches(actor=None, limit=None) -> int:
             )
         except AiError:
             continue
-        entries = match.get("matches") if isinstance(match, dict) else None
-        if not isinstance(entries, list):
-            continue
         new_map = {}
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            try:
-                drive_id = int(entry.get("drive_id"))
-            except (TypeError, ValueError):
-                continue
-            drive = by_id.get(drive_id)
+        for entry in normalize_matches(match):
+            drive = by_id.get(entry["drive_id"])
             if drive is None:
                 continue
-            new_map[str(drive_id)] = {
-                "score": _clamp_score(entry.get("score")),
-                "reason": str(entry.get("reason") or "").strip()[:300],
+            new_map[str(entry["drive_id"])] = {
+                "score": entry["score"],
+                "reason": entry["reason"],
                 "company_name": drive.company_name,
             }
         Resume.objects.filter(pk=resume.pk).update(ai_match=new_map or None)
@@ -446,25 +451,6 @@ def maybe_refresh_drive_matches(drive, actor=None):
         return 1
     except Exception:  # pragma: no cover
         return 0
-
-
-def _clamp_score(value) -> int:
-    try:
-        return max(0, min(100, int(value)))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _string_list(value, limit: int) -> list[str]:
-    items = value if isinstance(value, list) else []
-    out: list[str] = []
-    for item in items:
-        text = str(item).strip()
-        if text and text not in out:
-            out.append(text)
-        if len(out) >= limit:
-            break
-    return out
 
 
 def analyze_resume(resume, actor) -> dict:
@@ -540,15 +526,9 @@ def analyze_resume(resume, actor) -> dict:
     except AiError:
         raise  # nothing collected, nothing committed - the 502 costs no credits
 
-    analysis = None
-    if isinstance(quality, dict) and quality:
-        analysis = {
-            "summary": str(quality.get("summary") or "").strip(),
-            "strengths": _string_list(quality.get("strengths"), 6),
-            "improvements": _string_list(quality.get("improvements"), 6),
-            "skills": _string_list(quality.get("skills"), 20),
-            "ats_keywords": _string_list(quality.get("ats_keywords"), 12),
-        }
+    # Normalize the report - key aliases, fenced/prose-wrapped JSON and a
+    # wrapper key ({"report": {...}}) are all handled; None when unusable.
+    analysis = normalize_resume_report(quality)
 
     match_map: dict[str, dict] = {}
     if text:
@@ -574,28 +554,23 @@ def analyze_resume(resume, actor) -> dict:
                 )
             except AiError:
                 raise  # nothing committed - a failed match run costs no credits
-            if isinstance(match, dict) and isinstance(match.get("matches"), list):
-                by_id = {d.id: d for d in open_drives}
-                for entry in match["matches"]:
-                    if not isinstance(entry, dict):
-                        continue
-                    try:
-                        drive_id = int(entry.get("drive_id"))
-                    except (TypeError, ValueError):
-                        continue
-                    drive = by_id.get(drive_id)
-                    if drive is None:
-                        continue
-                    match_map[str(drive_id)] = {
-                        "score": _clamp_score(entry.get("score")),
-                        "reason": str(entry.get("reason") or "").strip()[:300],
-                        "company_name": drive.company_name,
-                    }
+            by_id = {d.id: d for d in open_drives}
+            for entry in normalize_matches(match):
+                drive = by_id.get(entry["drive_id"])
+                if drive is None:
+                    continue
+                match_map[str(entry["drive_id"])] = {
+                    "score": entry["score"],
+                    "reason": entry["reason"],
+                    "company_name": drive.company_name,
+                }
 
     was_complete = resume.ai_status == Resume.AiStatus.COMPLETE
     if analysis or match_map:
         resume.ai_status = Resume.AiStatus.COMPLETE
-        resume.ai_score = _clamp_score(quality.get("score")) if analysis else 0
+        # The normalized report carries its own score (aliases handled); fall
+        # back to 0 when the report only produced matches.
+        resume.ai_score = analysis["score"] if analysis else 0
         if analysis and ocr_used:
             # The report was read from the page images - useful metadata for
             # the UI (e.g. an "Analyzed via OCR" chip).

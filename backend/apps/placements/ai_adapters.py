@@ -98,7 +98,8 @@ class OpenAICompatAdapter:
 
     def generate(self, system_prompt, user_text, max_tokens, temperature=0.3,
                  reasoning_budget=0, documents=None, timeout=None,
-                 api_key: str | None = None, images: list[str] | None = None):
+                 api_key: str | None = None, images: list[str] | None = None,
+                 raw_json: bool = False):
         from openai import (
             APIConnectionError,
             APIError,
@@ -153,6 +154,11 @@ class OpenAICompatAdapter:
             extra["documents"] = [{"content": d} for d in documents]
         if extra:
             kwargs["extra_body"] = extra
+        if raw_json and not images:
+            # Ask the provider for a structured JSON object. Providers that
+            # don't support response_format reject it with a 4xx which the
+            # retry below handles by falling back to a plain completion.
+            kwargs["response_format"] = {"type": "json_object"}
 
         last_key_error: RouterError | None = None
         for key in keys:
@@ -189,6 +195,18 @@ class OpenAICompatAdapter:
                 if "reasoning" in detail and reasoning_budget:
                     # Retry once without the reasoning budget.
                     kwargs.pop("extra_body", None)
+                    try:
+                        completion = client.chat.completions.create(**kwargs)
+                    except Exception as retry_exc:
+                        raise UnavailableProviderError(
+                            f"AI API error: {detail[:200]}", error_type="BAD_REQUEST"
+                        ) from retry_exc
+                elif ("response_format" in detail or "json_object" in detail) \
+                        and kwargs.get("response_format"):
+                    # The provider/model doesn't support structured output -
+                    # retry once as a plain completion (the prompt still asks
+                    # for JSON and the parser tolerates loose output).
+                    kwargs.pop("response_format", None)
                     try:
                         completion = client.chat.completions.create(**kwargs)
                     except Exception as retry_exc:
@@ -242,7 +260,8 @@ class GeminiAdapter:
 
     def generate(self, system_prompt, user_text, max_tokens, temperature=0.3,
                  reasoning_budget=0, documents=None, timeout=None,
-                 api_key: str | None = None, images: list[str] | None = None):
+                 api_key: str | None = None, images: list[str] | None = None,
+                 raw_json: bool = False):
         from .ai_models import provider_key_chain
 
         # Try every key (stored primary, extra keys, then GEMINI_API_KEY env
@@ -265,49 +284,79 @@ class GeminiAdapter:
         if documents:
             parts = [{"text": d} for d in documents]
             contents.insert(0, {"role": "user", "parts": parts})
+        generation_config = {
+            "maxOutputTokens": max_tokens,
+            "temperature": temperature,
+        }
+        if raw_json and not images:
+            # Ask Gemini for a structured JSON response.
+            generation_config["responseMimeType"] = "application/json"
         payload = {
             "contents": contents,
             "systemInstruction": {"parts": [{"text": system_prompt}]},
-            "generationConfig": {
-                "maxOutputTokens": max_tokens,
-                "temperature": temperature,
-            },
+            "generationConfig": generation_config,
         }
         data = json.dumps(payload).encode("utf-8")
 
-        last_key_error: RouterError | None = None
-        for key in keys:
-            url = f"{self.BASE}/models/{model}:generateContent?key={key}"
+        def _post(url: str) -> dict:
             req = urllib.request.Request(
                 url,
                 data=data,
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            try:
-                with urllib.request.urlopen(req, timeout=timeout or self.provider.timeout_seconds or 60) as resp:
-                    body = json.loads(resp.read().decode("utf-8"))
-            except urllib.error.HTTPError as exc:
-                detail = ""
+            with urllib.request.urlopen(
+                req, timeout=timeout or self.provider.timeout_seconds or 60
+            ) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        last_key_error: RouterError | None = None
+        for key in keys:
+            url = f"{self.BASE}/models/{model}:generateContent?key={key}"
+            body = None
+            retried_without_mime = False
+            while True:
                 try:
-                    detail = exc.read().decode("utf-8")[:200]
-                except Exception:
-                    pass
-                if exc.code == 429:
-                    # Quota exhausted for this key - try the next one.
-                    last_key_error = RateLimitedProviderError(
-                        f"Gemini API error: {detail}", error_type="RATE_LIMITED"
-                    )
-                    continue
-                if exc.code in (401, 403):
-                    # This key is invalid - try the next one before giving up.
-                    last_key_error = AuthProviderError(
-                        f"Gemini API error: {detail}", error_type="AUTH"
-                    )
-                    continue
-                _raise_for_status(exc, f"Gemini API error: {detail}")
-            except Exception as exc:
-                _raise_for_status(exc, "Could not reach the Gemini API.")
+                    body = _post(url)
+                    break
+                except urllib.error.HTTPError as exc:
+                    detail = ""
+                    try:
+                        detail = exc.read().decode("utf-8")[:200]
+                    except Exception:
+                        pass
+                    if exc.code == 429:
+                        # Quota exhausted for this key - try the next one.
+                        last_key_error = RateLimitedProviderError(
+                            f"Gemini API error: {detail}", error_type="RATE_LIMITED"
+                        )
+                        break
+                    if exc.code in (401, 403):
+                        # This key is invalid - try the next one before giving up.
+                        last_key_error = AuthProviderError(
+                            f"Gemini API error: {detail}", error_type="AUTH"
+                        )
+                        break
+                    if (
+                        raw_json
+                        and not retried_without_mime
+                        and "responseMimeType" in generation_config
+                        and ("mime" in detail.lower()
+                             or "response_mime_type" in detail.lower())
+                    ):
+                        # The model doesn't support structured JSON output -
+                        # retry once as a plain completion (the prompt still
+                        # asks for JSON and the parser tolerates loose output).
+                        generation_config.pop("responseMimeType", None)
+                        payload["generationConfig"] = generation_config
+                        data = json.dumps(payload).encode("utf-8")
+                        retried_without_mime = True
+                        continue
+                    _raise_for_status(exc, f"Gemini API error: {detail}")
+                except Exception as exc:
+                    _raise_for_status(exc, "Could not reach the Gemini API.")
+            if body is None:
+                continue  # key-specific error - try the next key
 
             candidates = body.get("candidates") or []
             text = ""

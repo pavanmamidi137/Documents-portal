@@ -48,6 +48,7 @@ from .ai_router import (  # noqa: E402
     generate_text,
 )
 from .ai_models import AIProvider  # noqa: E402
+from .ai_parse import extract_json_object  # noqa: E402
 
 
 def _router_enabled() -> bool:
@@ -133,6 +134,7 @@ def _chat_completion_inner(
     documents: list | None = None,
     model: str | None = None,
     api_key: str | None = None,
+    raw_json: bool = False,
 ) -> str:
     """Legacy NVIDIA path used only when no providers are configured.
 
@@ -160,6 +162,12 @@ def _chat_completion_inner(
         "top_p": 0.9,
         "stream": False,
     }
+
+    # When the caller wants JSON, ask the endpoint for structured output where
+    # supported (a 4xx below falls back to a plain completion - the prompt
+    # still asks for JSON and the parser tolerates loose output).
+    if raw_json:
+        base_kwargs["response_format"] = {"type": "json_object"}
 
     models = [model] if model else [DEFAULT_MODEL, *FALLBACK_MODELS]
     last_error = "unknown error"
@@ -217,6 +225,13 @@ def _chat_completion_inner(
                             kwargs["extra_body"] = extra
                         else:
                             kwargs.pop("extra_body", None)
+                        continue
+                    # The model doesn't accept structured output - retry as a
+                    # plain completion (the prompt still asks for JSON and the
+                    # parser tolerates loose output).
+                    if ("response_format" in detail or "json_object" in detail) \
+                            and kwargs.get("response_format"):
+                        kwargs.pop("response_format", None)
                         continue
                     # The model doesn't accept grounding documents (not a RAG
                     # NIM) - surface it so the caller falls back to prompt
@@ -308,6 +323,7 @@ def _chat_completion(
                 documents=[{"content": d} for d in documents],
                 model=RAG_MODEL,
                 api_key=rag_key,
+                raw_json=raw_json,
             )
         except AiError as exc:
             # Never fail the request - answer is still grounded via prompt
@@ -332,32 +348,14 @@ def _chat_completion(
         usage_callback=usage_callback,
         reasoning_budget=reasoning_budget,
         temperature=temperature,
+        raw_json=raw_json,
     )
 
 
-def _extract_json_object(raw: str) -> dict:
-    """Parse a JSON object from a model answer, tolerating markdown fences and
-    surrounding prose (reasoning models sometimes wrap or annotate output)."""
-    cleaned = raw.strip()
-    cleaned = cleaned.removeprefix("```json").removeprefix("```")
-    cleaned = cleaned.removesuffix("```").strip()
-    try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-    # Last resort: pull the first {...} block out of the text.
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end > start:
-        try:
-            parsed = json.loads(cleaned[start : end + 1])
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-    return {}
+# Shared robust parser (markdown fences, prose wrapping, truncation, key
+# aliases) - see ai_parse.py. Kept as an alias so existing callers keep
+# working.
+_extract_json_object = extract_json_object
 
 
 def ai_json(

@@ -28,6 +28,7 @@ from django.db.models import F as models_F
 from django.utils import timezone
 
 from .ai_adapters import AuthProviderError, RecoverableProviderError, RouterError, adapter_for
+from .ai_parse import extract_json_object
 from .ai_models import (
     AIProvider,
     AIProviderHealth,
@@ -82,8 +83,13 @@ def _task_chain(task: str):
 
 
 def _attempt(provider: AIProvider, adapter, system_prompt, user_text, max_tokens,
-             temperature, reasoning_budget, documents, timeout, images):
-    """One call to one provider. Returns (text, prompt_tokens, completion_tokens)."""
+             temperature, reasoning_budget, documents, timeout, images, raw_json=False):
+    """One call to one provider. Returns (text, prompt_tokens, completion_tokens).
+
+    ``raw_json`` tells the adapter the caller wants a JSON object so it can ask
+    the provider for structured output (response_format / responseMimeType)
+    where supported - the parser still tolerates prose/fenced/truncated JSON.
+    """
     return adapter.generate(
         system_prompt, user_text, max_tokens,
         temperature=temperature,
@@ -91,6 +97,7 @@ def _attempt(provider: AIProvider, adapter, system_prompt, user_text, max_tokens
         documents=documents,
         timeout=timeout,
         images=images,
+        raw_json=raw_json,
     )
 
 
@@ -189,10 +196,13 @@ class AIService:
             key = _cache_key(task, system_prompt, user_text)
             cached = cache.get(key)
             if cached is not None:
-                try:
-                    return json.loads(cached) if raw_json else cached
-                except Exception:
-                    pass
+                if raw_json and isinstance(cached, str):
+                    try:
+                        return extract_json_object(cached)
+                    except Exception:
+                        pass
+                else:
+                    return cached
 
         chain = _task_chain(task)
         if not chain:
@@ -212,9 +222,10 @@ class AIService:
                 text, pt, ct = _attempt(
                     provider, adapter, system_prompt, user_text, max_tokens,
                     temperature, reasoning_budget, documents, timeout, images,
+                    raw_json=raw_json,
                 )
                 latency_ms = int((time.monotonic() - started) * 1000)
-                result = text if not raw_json else _extract_json(text)
+                result = text if not raw_json else extract_json_object(text)
                 if raw_json and not result:
                     # The provider answered but its output was not usable JSON
                     # (e.g. prose instead of the report structure). Treat it as
@@ -245,9 +256,15 @@ class AIService:
                     except Exception:  # pragma: no cover
                         pass
                 # Image-bearing calls skip the cache entirely (read AND write),
-                # so ``key`` is only ever used when it was defined above.
+                # so ``key`` is only ever used when it was defined above. JSON
+                # results are stored as text so the read path can re-parse them
+                # robustly.
                 if st.enable_caching and cacheable and not images and result:
-                    cache.set(key, result, timeout=300)
+                    cache.set(
+                        key,
+                        json.dumps(result) if raw_json else result,
+                        timeout=300,
+                    )
                 return result
             except AuthProviderError as exc:
                 _mark_failure(provider, exc.error_type)
@@ -308,27 +325,8 @@ class AIService:
         return "HEALTHY"
 
 
-def _extract_json(raw: str) -> dict:
-    """Parse a JSON object from a model answer, tolerating markdown fences."""
-    cleaned = raw.strip()
-    cleaned = cleaned.removeprefix("```json").removeprefix("```")
-    cleaned = cleaned.removesuffix("```").strip()
-    try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end > start:
-        try:
-            parsed = json.loads(cleaned[start : end + 1])
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-    return {}
+# Backwards-compatible alias for anything that referenced the old name.
+_extract_json = extract_json_object
 
 
 # Imported lazily by the legacy ai.py bridge so the router stays the source of

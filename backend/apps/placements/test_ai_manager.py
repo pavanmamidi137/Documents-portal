@@ -503,6 +503,45 @@ class AiMultiKeyFailoverTests(AiManagerBase):
         self.assertEqual(seen_keys, ["key-one", "key-two"])
 
     @patch("apps.placements.ai_models.provider_key_chain")
+    def test_gemini_adapter_retries_without_mime_type_when_rejected(self, mock_chain):
+        """A Gemini model that rejects responseMimeType retries once as a
+        plain completion instead of failing the whole call (mirrors the
+        OpenAI-compat response_format fallback)."""
+        import io
+        import json
+        from urllib.error import HTTPError
+
+        from .ai_adapters import GeminiAdapter
+
+        provider = self._provider(name="Gemini")
+        mock_chain.return_value = ["gkey"]
+
+        captured = []
+
+        def fake_urlopen(req, timeout=60):
+            captured.append(json.loads(req.data.decode("utf-8")))
+            if len(captured) == 1:
+                raise HTTPError(
+                    req.full_url, 400, "bad request", {},
+                    io.BytesIO(b'{"error": {"message": "response_mime_type not supported"}}'),
+                )
+            body = json.dumps(
+                {
+                    "candidates": [{"content": {"parts": [{"text": "{\"score\": 55}"}]}}],
+                    "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 1},
+                }
+            ).encode("utf-8")
+            return _FakeHttpResponse(body)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            text, _, _ = GeminiAdapter(provider).generate("sys", "user", 50, raw_json=True)
+
+        self.assertIn("score", text)
+        # The retried request dropped responseMimeType.
+        self.assertEqual(len(captured), 2)
+        self.assertNotIn("responseMimeType", captured[1]["generationConfig"])
+
+    @patch("apps.placements.ai_models.provider_key_chain")
     def test_gemini_adapter_rotates_to_second_key_on_rate_limit(self, mock_chain):
         """Gemini 429 on the first key rotates to the next env/stored key."""
         import json
@@ -761,6 +800,189 @@ class AiProviderKeyApiTests(AiManagerBase):
         long = encrypt_secret("sk-1234567890")  # 13 chars -> 9 stars + tail
         self.assertEqual(mask_secret(long), "*********7890")
         self.assertEqual(mask_secret(""), "")
+
+
+class AiParseTests(AiManagerBase):
+    """Robust JSON parsing + report/matches normalization (ai_parse.py).
+
+    The resume analyzer must accept valid JSON, fenced JSON, prose-wrapped
+    JSON, key aliases and wrapper objects - and reject genuinely unusable
+    answers (missing every field) so the caller can mark the attempt FAILED
+    without charging credits.
+    """
+
+    def test_valid_json_normalizes_report(self):
+        from .ai_parse import normalize_resume_report
+
+        raw = {
+            "score": 78,
+            "summary": "Solid resume",
+            "strengths": ["Python", "Git"],
+            "improvements": ["Add metrics"],
+            "skills": ["Python", "SQL"],
+            "ats_keywords": ["Agile"],
+        }
+        report = normalize_resume_report(raw)
+        self.assertEqual(report["score"], 78)
+        self.assertEqual(report["summary"], "Solid resume")
+        self.assertEqual(report["strengths"], ["Python", "Git"])
+        self.assertEqual(report["improvements"], ["Add metrics"])
+        self.assertEqual(report["skills"], ["Python", "SQL"])
+        self.assertEqual(report["ats_keywords"], ["Agile"])
+
+    def test_fenced_json_parses(self):
+        from .ai_parse import extract_json_object, normalize_resume_report
+
+        raw = "```json\n{\"score\": 85, \"summary\": \"Great\", \"skills\": [\"Java\"]}\n```"
+        parsed = extract_json_object(raw)
+        self.assertEqual(parsed["score"], 85)
+        report = normalize_resume_report(parsed)
+        self.assertEqual(report["score"], 85)
+        self.assertIn("Java", report["skills"])
+
+    def test_prose_wrapped_and_truncated_json_still_parses(self):
+        from .ai_parse import extract_json_object
+
+        # Model wrapped the JSON in a sentence.
+        raw = (
+            'Here is the analysis: {"score": 62, "summary": "Decent", "skills": ["C++"]}. '
+            "Hope that helps!"
+        )
+        parsed = extract_json_object(raw)
+        self.assertEqual(parsed["score"], 62)
+        self.assertEqual(parsed["skills"], ["C++"])
+        # Truncated output - the object is cut off mid-way.
+        truncated = '{"score": 40, "summary": "cut off'
+        self.assertEqual(extract_json_object(truncated), {})
+
+    def test_missing_every_field_is_unusable(self):
+        from .ai_parse import normalize_resume_report
+
+        # A valid JSON object, but with none of the expected fields.
+        self.assertIsNone(normalize_resume_report({"foo": "bar", "n": 1}))
+        self.assertIsNone(normalize_resume_report({}))
+        self.assertIsNone(normalize_resume_report("not even json"))
+
+    def test_key_aliases_and_wrapper_are_normalized(self):
+        from .ai_parse import normalize_resume_report
+
+        # camelCase + sentence-case keys and a wrapper object.
+        raw = {
+            "report": {
+                "OverallScore": "72",
+                "Description": "Needs polish",
+                "Positives": "Good projects, Clear formatting",
+                "Weaknesses": "No metrics",
+                "Technologies": ["React"],
+            }
+        }
+        report = normalize_resume_report(raw)
+        self.assertIsNotNone(report)
+        self.assertEqual(report["score"], 72)
+        self.assertEqual(report["summary"], "Needs polish")
+        self.assertEqual(report["strengths"], ["Good projects", "Clear formatting"])
+        self.assertEqual(report["improvements"], ["No metrics"])
+        self.assertEqual(report["skills"], ["React"])
+
+    def test_matches_normalization(self):
+        from .ai_parse import normalize_matches
+
+        raw = {
+            "matches": [
+                {"drive_id": 3, "score": 90, "reason": "Perfect fit"},
+                {"id": 7, "match_score": "45", "explanation": "Partial"},
+                {"drive_id": "bad", "score": 50},
+                "not-a-dict",
+            ]
+        }
+        entries = normalize_matches(raw)
+        self.assertEqual([e["drive_id"] for e in entries], [3, 7])
+        self.assertEqual(entries[0]["score"], 90)
+        self.assertEqual(entries[1]["score"], 45)
+        self.assertEqual(entries[1]["reason"], "Partial")
+        # Not-a-list responses normalize to [] instead of raising.
+        self.assertEqual(normalize_matches({"matches": 42}), [])
+        self.assertEqual(normalize_matches("nope"), [])
+
+    def test_router_path_parses_fenced_json_from_provider(self):
+        """ai_json through the router parses fenced/prose-wrapped JSON that a
+        provider returns (the resume 'unreadable report' bug fix)."""
+        from .ai import ai_json
+
+        self._provider(name="Gemini")
+        AISettings.get()
+        AISettings.objects.update(enable_caching=False)
+
+        with patch(
+            "apps.placements.ai_router.adapter_for"
+        ) as mock_adapter:
+            def fake_adapter(provider):
+                def generate(*a, **kw):
+                    return (
+                        "Sure! ```json\n{\"score\": 66, \"summary\": \"ok\"}\n```",
+                        5,
+                        5,
+                    )
+
+                return SimpleAdapter(generate)
+
+            mock_adapter.side_effect = fake_adapter
+            result = ai_json("sys", "resume", task="RESUME_ANALYSIS")
+        self.assertEqual(result["score"], 66)
+
+    def test_legacy_env_path_requests_json_and_parses_fenced_output(self):
+        """The env-key (no-provider) path asks for structured JSON and parses
+        fenced output through the same robust parser."""
+        from types import SimpleNamespace
+
+        from .ai import ai_json
+
+        # No providers configured -> the router is not used; the legacy
+        # NVIDIA env-key path handles the call.
+        self.assertEqual(AIProvider.objects.count(), 0)
+
+        captured = {}
+
+        class FakeCompletions:
+            def __init__(self, client):
+                self.client = client
+
+            def create(self, **kwargs):
+                captured["kwargs"] = kwargs
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content=(
+                                    "Here you go: ```json\n"
+                                    '{"score": 61, "summary": "ok"}\n```'
+                                )
+                            )
+                        )
+                    ],
+                    usage=SimpleNamespace(prompt_tokens=4, completion_tokens=3),
+                )
+
+        class FakeChat:
+            def __init__(self, client):
+                self.completions = FakeCompletions(client)
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.api_key = kwargs["api_key"]
+                self.chat = FakeChat(self)
+
+        # ai.py imports OpenAI at module level, so patch the module attribute.
+        with (
+            patch("apps.placements.ai.OpenAI", side_effect=FakeClient),
+            patch("apps.placements.ai.get_api_keys", return_value=["test-key"]),
+        ):
+            result = ai_json("sys", "resume", task="RESUME_ANALYSIS")
+        self.assertEqual(result["score"], 61)
+        # The legacy path asks the endpoint for a structured JSON object.
+        self.assertEqual(
+            captured["kwargs"].get("response_format"), {"type": "json_object"}
+        )
 
 
 class AiDailyReportTests(AiManagerBase):
