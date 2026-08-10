@@ -63,6 +63,33 @@ def _usage_callback(actor):
     return callback
 
 
+def _deferred_usage(actor):
+    """Collect token counts during an analysis run without writing rows yet.
+
+    Credits are only recorded once the analysis actually completes - a failed
+    or unreadable resume never consumes the student's daily AI requests.
+    Returns a ``(callback, commit)`` pair: pass ``callback`` to the AI calls,
+    then call ``commit()`` ONLY when the result is stored as COMPLETE.
+    """
+    collected: list[tuple[int, int]] = []
+
+    def callback(prompt_tokens: int, completion_tokens: int) -> None:
+        collected.append((int(prompt_tokens or 0), int(completion_tokens or 0)))
+
+    def commit() -> None:
+        for prompt_tokens, completion_tokens in collected:
+            try:
+                AiUsageLog.objects.create(
+                    user=actor, action=AiUsageLog.Action.RESUME,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+            except Exception:  # pragma: no cover - usage tracking must never break the request
+                pass
+
+    return callback, commit
+
+
 def extract_resume_text(resume) -> str:
     """Download the resume from Cloudinary and pull plain text out of it.
 
@@ -82,10 +109,27 @@ def extract_resume_text(resume) -> str:
         return ""
     try:
         if name.endswith(".pdf"):
-            from pypdf import PdfReader
+            # pypdf first (fast, handles most text PDFs), then PyMuPDF as a
+            # much stronger fallback for tricky/skewed/compressed PDFs.
+            try:
+                from pypdf import PdfReader
 
-            reader = PdfReader(io.BytesIO(content))
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
+                reader = PdfReader(io.BytesIO(content))
+                text = "\n".join(page.extract_text() or "" for page in reader.pages)
+                if text.strip():
+                    return text
+            except Exception:
+                pass  # fall through to PyMuPDF
+            try:
+                import fitz  # PyMuPDF
+
+                doc = fitz.open(stream=content, filetype="pdf")
+                try:
+                    return "\n".join(page.get_text() or "" for page in doc)
+                finally:
+                    doc.close()
+            except Exception:
+                return ""
         if name.endswith(".docx"):
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
@@ -353,15 +397,42 @@ def analyze_resume(resume, actor) -> dict:
 
     Raises AiError when the AI service itself fails (the caller surfaces a 502).
     The result is cached on the Resume row - re-running only happens on request.
+
+    Credits are only committed when the analysis actually completes. An
+    unreadable file fails fast BEFORE any AI call, and unusable AI output marks
+    the resume FAILED without charging the student - a failed run never burns
+    the daily AI budget.
     """
     from apps.accounts.models import Resume
 
     from apps.core.models import Notification
     from apps.core.utils import notify
 
-    usage = _usage_callback(actor)
     text = extract_resume_text(resume)
-    brief = (text or "(no extractable text)").strip()[:_MAX_TEXT_CHARS]
+    if not text or not text.strip():
+        # Nothing readable in the file (scanned image, binary DOC, download
+        # failure). Fail fast WITHOUT calling the AI so no credits are spent.
+        resume.ai_status = Resume.AiStatus.FAILED
+        resume.ai_score = None
+        resume.ai_analysis = None
+        resume.ai_match = None
+        resume.ai_error = "The AI could not read this resume. Try a text-based PDF."
+        resume.ai_analyzed_at = timezone.now()
+        resume.save(update_fields=[
+            "ai_status", "ai_score", "ai_analysis", "ai_match", "ai_error",
+            "ai_analyzed_at", "updated_at",
+        ])
+        return {
+            "ai_status": resume.ai_status,
+            "ai_score": resume.ai_score,
+            "ai_analysis": resume.ai_analysis,
+            "ai_match": resume.ai_match,
+            "ai_error": resume.ai_error,
+        }
+
+    # Defer credit recording until the analysis succeeds below.
+    usage, commit_usage = _deferred_usage(actor)
+    brief = text.strip()[:_MAX_TEXT_CHARS]
 
     try:
         quality = ai_json(
@@ -369,7 +440,7 @@ def analyze_resume(resume, actor) -> dict:
             task="RESUME_ANALYSIS",
         )
     except AiError:
-        raise
+        raise  # nothing collected, nothing committed - the 502 costs no credits
 
     analysis = None
     if isinstance(quality, dict) and quality:
@@ -404,7 +475,7 @@ def analyze_resume(resume, actor) -> dict:
                     task="RESUME_ANALYSIS",
                 )
             except AiError:
-                raise
+                raise  # nothing committed - a failed match run costs no credits
             if isinstance(match, dict) and isinstance(match.get("matches"), list):
                 by_id = {d.id: d for d in open_drives}
                 for entry in match["matches"]:
@@ -431,9 +502,13 @@ def analyze_resume(resume, actor) -> dict:
         resume.ai_match = match_map or None
         resume.ai_error = ""
         resume.ai_analyzed_at = timezone.now()
+        # Only a COMPLETE run charges credits - the report is usable, so the
+        # student's daily AI request counts against today's budget.
+        commit_usage()
     else:
         # The AI answered but produced nothing usable - surface as a failure
-        # so the student sees the error state instead of a silent blank.
+        # WITHOUT charging credits (the report is worthless, so the run is
+        # refunded before the student ever sees the error).
         resume.ai_status = Resume.AiStatus.FAILED
         resume.ai_score = None
         resume.ai_analysis = None

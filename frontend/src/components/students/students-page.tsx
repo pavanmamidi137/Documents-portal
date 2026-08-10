@@ -1008,7 +1008,7 @@ function AiAccessDialog({
                 onChange={(e) => setAtsInterval(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                How often the student can open the full ATS report (e.g. 10 = once every 10 days).
+                How often the student can open the full ATS report (1 = once a day).
               </p>
             </div>
 

@@ -6,7 +6,6 @@ import { motion } from "framer-motion";
 import {
   BrainCircuit,
   CheckCircle2,
-  Clock,
   Eye,
   FileText,
   FileUp,
@@ -89,6 +88,12 @@ interface AtsReport {
   ai_match: Record<string, { score: number; reason: string; company_name: string }> | null;
 }
 
+/** Human copy for the per-student ATS refresh interval (default 10 days). */
+function atsIntervalLabel(interval: number | null | undefined): string {
+  const days = interval ?? 10;
+  return days === 1 ? "once a day" : `once every ${days} days`;
+}
+
 function AtsReportCard({ resume }: { resume: Resume }) {
   const [report, setReport] = useState<AtsReport | null>(null);
   const [opening, setOpening] = useState(false);
@@ -102,7 +107,7 @@ function AtsReportCard({ resume }: { resume: Resume }) {
       if (data.locked) {
         toast.info(
           data.next_available_at
-            ? `The full ATS report unlocks on ${formatDate(data.next_available_at)} — it refreshes once every ${data.interval_days ?? 10} days.`
+            ? `The full ATS report unlocks on ${formatDate(data.next_available_at)} — you can refresh it ${atsIntervalLabel(data.interval_days)}.`
             : "The full ATS report is locked for now."
         );
       } else {
@@ -124,8 +129,8 @@ function AtsReportCard({ resume }: { resume: Resume }) {
             <Gauge className="size-3.5 text-violet-500" /> Full ATS Report
           </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            The complete keyword &amp; improvement report refreshes once every{" "}
-            {resume.limits?.ats_view_interval_days ?? 10} days.
+            The complete keyword &amp; improvement report refreshes{" "}
+            {atsIntervalLabel(resume.limits?.ats_view_interval_days ?? 10)}.
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={openReport} disabled={opening}>
@@ -249,9 +254,7 @@ function AiReviewCard({
           <BrainCircuit className="size-5 text-violet-500" /> AI Resume Review
         </CardTitle>
         <CardDescription>
-          {resume.is_reviewed
-            ? `Reviewed by ${resume.reviewed_by_name ?? "faculty"} — here's what the AI found.`
-            : "Based on your resume, here's what the AI found."}
+          Based on your resume, here&apos;s what the AI found.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -260,8 +263,9 @@ function AiReviewCard({
           <div className="flex size-16 shrink-0 flex-col items-center justify-center rounded-2xl border bg-violet-500/10">
             <span className="text-xl font-bold tabular-nums text-violet-600 dark:text-violet-400">
               {resume.ai_score ?? 0}
+              <span className="text-xs font-medium text-muted-foreground">%</span>
             </span>
-            <span className="text-[10px] font-medium text-muted-foreground">/ 100</span>
+            <span className="text-[10px] font-medium text-muted-foreground">ATS score</span>
           </div>
           <div className="min-w-0 flex-1">
             <StarRating score={resume.ai_score ?? 0} />
@@ -548,16 +552,6 @@ export default function ResumePage() {
                       <CheckCircle2 className="mr-1 inline size-3.5" /> Delivered to faculty
                     </p>
                   )}
-                  {resume.is_reviewed ? (
-                    <p className="mt-0.5 text-xs text-emerald-600 dark:text-emerald-400">
-                      Reviewed by {resume.reviewed_by_name ?? "faculty"}
-                      {resume.reviewed_at ? ` on ${formatDate(resume.reviewed_at)}` : ""}
-                    </p>
-                  ) : (
-                    <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
-                      Pending faculty review — you&apos;ll see a status here once it&apos;s checked.
-                    </p>
-                  )}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
                   {resume.is_missing ? (
@@ -580,21 +574,6 @@ export default function ResumePage() {
                       className="gap-1 border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400"
                     >
                       <Send className="size-3.5" /> Delivered
-                    </Badge>
-                  )}
-                  {resume.is_reviewed ? (
-                    <Badge
-                      variant="outline"
-                      className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                    >
-                      <CheckCircle2 className="size-3.5" /> Reviewed
-                    </Badge>
-                  ) : (
-                    <Badge
-                      variant="outline"
-                      className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                    >
-                      <Clock className="size-3.5" /> Pending
                     </Badge>
                   )}
                 </div>

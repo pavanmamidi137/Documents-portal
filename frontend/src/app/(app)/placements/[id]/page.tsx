@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,6 +13,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ExternalLink,
+  GraduationCap,
   Loader2,
   MapPin,
   Send,
@@ -28,7 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import { http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Drive } from "@/lib/types";
+import type { Drive, DriveChatMessage } from "@/lib/types";
 import { cn, formatDate, getErrorMessage } from "@/lib/utils";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -137,6 +138,23 @@ export default function DriveDetailPage() {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-bold tracking-tight">{drive.company_name}</h1>
+              {drive.job_type && (
+                <Badge
+                  variant="outline"
+                  className={
+                    drive.job_type === "INTERNSHIP"
+                      ? "gap-1 border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                      : "gap-1 border-primary/30 bg-primary/10 text-primary"
+                  }
+                >
+                  {drive.job_type === "INTERNSHIP" ? (
+                    <GraduationCap className="size-3" />
+                  ) : (
+                    <Briefcase className="size-3" />
+                  )}
+                  {drive.job_type === "INTERNSHIP" ? "Internship" : "Job"}
+                </Badge>
+              )}
               <Badge
                 variant="outline"
                 className={cn(
@@ -300,6 +318,22 @@ function DriveDetailChat({
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
+  const loadedRef = useRef(false);
+
+  // Load the saved conversation for this drive (it survives even after the
+  // drive expires - the chat belongs to this specific drive only).
+  useEffect(() => {
+    if (loadedRef.current || !Number.isFinite(drive.id)) return;
+    loadedRef.current = true;
+    http
+      .get<{ messages: DriveChatMessage[] }>(`/drives/${drive.id}/chat_history/`)
+      .then((data) =>
+        setMessages(data.messages.map((m) => ({ role: m.role, text: m.content })))
+      )
+      .catch(() => {
+        /* best-effort - a fresh conversation is fine */
+      });
+  }, [drive.id]);
 
   const ask = async (raw?: string) => {
     const text = (raw ?? question).trim();

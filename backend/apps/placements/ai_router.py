@@ -239,9 +239,23 @@ class AIService:
     # ------------------------------------------------------------------
     @staticmethod
     def test_provider(provider: AIProvider, timeout: int = 15) -> str:
-        """Run a tiny call. Returns 'HEALTHY' or raises RouterError."""
-        adapter = adapter_for(provider)
-        adapter.test(timeout=timeout)
+        """Run a tiny call. Returns 'HEALTHY' or raises RouterError.
+
+        Any unexpected exception (missing encryption key, SDK quirks,
+        malformed provider response) is converted into a RouterError so the
+        admin API can surface a friendly message instead of a raw 500.
+        """
+        try:
+            adapter = adapter_for(provider)
+            adapter.test(timeout=timeout)
+        except RouterError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive, never 500
+            logger.warning("Provider test failed unexpectedly for %s: %s", provider.name, exc)
+            raise RouterError(
+                f"The provider returned an unexpected response: {str(exc)[:120]}",
+                error_type="PROVIDER_ERROR",
+            ) from exc
         return "HEALTHY"
 
 

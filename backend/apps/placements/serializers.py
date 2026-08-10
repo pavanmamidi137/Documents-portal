@@ -18,7 +18,7 @@ class DriveSerializer(serializers.ModelSerializer):
     class Meta:
         model = Drive
         fields = [
-            "id", "company_name", "role", "location", "package", "drive_link",
+            "id", "company_name", "job_type", "role", "location", "package", "drive_link",
             "description", "eligibility", "eligible_roll_numbers",
             "last_date_to_apply", "posted_by", "posted_by_name", "posted_by_role",
             "status", "expires_at", "is_eligible_for_me", "my_match",

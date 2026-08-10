@@ -12,7 +12,7 @@ from apps.accounts.models import User
 from apps.core.models import Notification
 
 from .ai import AiError
-from .models import AiUsageLog, Drive
+from .models import AiUsageLog, Drive, DriveChatMessage
 
 
 class DriveApiTests(APITestCase):
@@ -782,6 +782,145 @@ class DriveApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["answer"], "It closed last week.")
+
+    # ---- Job / Internship type ----
+
+    def test_drive_job_type_is_saved_and_serialized(self):
+        response = self._client(self.admin).post(
+            "/api/drives/",
+            self._payload(job_type="INTERNSHIP"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["job_type"], "INTERNSHIP")
+        drive = Drive.objects.get(company_name="TCS")
+        self.assertEqual(drive.job_type, Drive.JobType.INTERNSHIP)
+
+    def test_ai_extract_maps_job_type_to_choices(self):
+        with patch(
+            "apps.placements.views.ai_json",
+            return_value={"company_name": "TCS", "job_type": "Internship", "job_role": "SE"},
+        ):
+            response = self._client(self.admin).post(
+                "/api/drives/ai_extract/",
+                {"text": "TCS is hiring interns, last date 15 Aug."},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["job_type"], "INTERNSHIP")
+
+    def test_ai_extract_blank_job_type_when_not_mentioned(self):
+        with patch(
+            "apps.placements.views.ai_json",
+            return_value={"company_name": "TCS", "job_type": None},
+        ):
+            response = self._client(self.admin).post(
+                "/api/drives/ai_extract/",
+                {"text": "TCS hiring freshers, last date 15 Aug."},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["job_type"], "")
+
+    # ---- Saved per-drive AI chat ----
+
+    @patch("apps.placements.views.ai_plain_text", return_value="It is a 2-round process.")
+    def test_ai_ask_saves_chat_history(self, mock_ai):
+        drive = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
+            posted_by=self.admin,
+        )
+        # A unique question keeps the module-level AI answer cache from being
+        # polluted for other tests.
+        response = self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "Which interview rounds does TCS conduct?"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        messages = DriveChatMessage.objects.filter(drive=drive, user=self.student)
+        self.assertEqual(messages.count(), 2)
+        self.assertEqual(list(messages.values_list("role", flat=True)), ["user", "assistant"])
+        self.assertEqual(messages[0].content, "Which interview rounds does TCS conduct?")
+        self.assertEqual(messages[1].content, "It is a 2-round process.")
+
+    @patch("apps.placements.views.ai_plain_text")
+    def test_ai_ask_saves_quick_answers_too(self, mock_ai):
+        drive = Drive.objects.create(
+            company_name="TCS", package="6 LPA",
+            last_date_to_apply=self.today + timedelta(days=5), posted_by=self.admin,
+        )
+        response = self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "What is the package?"}, format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        # Quick DB answers are saved too - no LLM call, history still kept.
+        mock_ai.assert_not_called()
+        self.assertEqual(
+            DriveChatMessage.objects.filter(drive=drive, user=self.student).count(), 2
+        )
+
+    @patch("apps.placements.views.ai_plain_text", return_value="Yes, you qualify.")
+    def test_chat_history_is_scoped_per_student(self, mock_ai):
+        drive = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
+            posted_by=self.admin,
+        )
+        self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "Am I eligible?"}, format="json",
+        )
+        # The asking student sees their own saved conversation.
+        mine = self._client(self.student).get(f"/api/drives/{drive.id}/chat_history/")
+        self.assertEqual(mine.status_code, 200)
+        self.assertEqual(len(mine.data["messages"]), 2)
+        self.assertEqual(mine.data["messages"][0]["role"], "user")
+        # Another student never sees the first student's chat.
+        other = self._client(self.student2).get(f"/api/drives/{drive.id}/chat_history/")
+        self.assertEqual(other.data["messages"], [])
+
+    @patch("apps.placements.views.ai_plain_text", return_value="Yes, you qualify.")
+    def test_faculty_sees_all_student_chat_for_the_drive(self, mock_ai):
+        drive = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
+            posted_by=self.admin,
+        )
+        self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "Am I eligible?"}, format="json",
+        )
+        self._client(self.student2).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "Is it remote?"}, format="json",
+        )
+        data = self._client(self.admin).get(f"/api/drives/{drive.id}/chat_history/")
+        self.assertEqual(data.status_code, 200)
+        self.assertEqual(len(data.data["messages"]), 4)
+
+    @patch("apps.placements.views.ai_plain_text", return_value="It closed last week.")
+    def test_chat_history_survives_drive_expiry(self, mock_ai):
+        drive = Drive.objects.create(
+            company_name="OldCo", last_date_to_apply=self.today - timedelta(days=2),
+            posted_by=self.admin,
+        )
+        self._client(self.student).post(
+            f"/api/drives/{drive.id}/ai_ask/",
+            {"question": "Is it still open?"}, format="json",
+        )
+        # Even though the drive is EXPIRED, the saved chat is still readable.
+        data = self._client(self.student).get(f"/api/drives/{drive.id}/chat_history/")
+        self.assertEqual(len(data.data["messages"]), 2)
+        self.assertIn("closed", data.data["messages"][1]["content"])
+
+    def test_chat_history_requires_auth(self):
+        drive = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=5),
+            posted_by=self.admin,
+        )
+        self.assertEqual(
+            APIClient().get(f"/api/drives/{drive.id}/chat_history/").status_code, 401
+        )
 
 
 class _FakeRateLimit(RateLimitError):

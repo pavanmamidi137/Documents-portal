@@ -245,7 +245,7 @@ DOCUMENT_COMPRESS_AFTER_BYTES = (
 AI_ENCRYPTION_KEY = os.getenv("AI_ENCRYPTION_KEY", "")
 
 AI_DAILY_REQUEST_LIMIT = int(os.getenv("AI_DAILY_REQUEST_LIMIT", "5"))
-# How often the full ATS report may be opened (days).
+# How often the full ATS report may be opened (days). Default: once per day.
 ATS_VIEW_INTERVAL_DAYS = int(os.getenv("ATS_VIEW_INTERVAL_DAYS", "10"))
 # How many resume uploads/replacements a student may do per day.
 RESUME_DAILY_UPLOAD_LIMIT = int(os.getenv("RESUME_DAILY_UPLOAD_LIMIT", "2"))

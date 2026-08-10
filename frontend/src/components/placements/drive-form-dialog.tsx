@@ -26,6 +26,7 @@ import { cn, getErrorMessage } from "@/lib/utils";
 
 const schema = z.object({
   company_name: z.string().min(1, "Company name is required"),
+  job_type: z.string(),
   role: z.string(),
   location: z.string(),
   package: z.string(),
@@ -47,6 +48,7 @@ interface Props {
 
 const EMPTY: FormValues = {
   company_name: "",
+  job_type: "",
   role: "",
   location: "",
   package: "",
@@ -81,6 +83,7 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
       editing
         ? {
             company_name: editing.company_name,
+            job_type: editing.job_type ?? "",
             role: editing.role,
             location: editing.location,
             package: editing.package,
@@ -159,6 +162,7 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
     try {
       const payload = {
         company_name: values.company_name.trim(),
+        job_type: values.job_type || "",
         role: values.role.trim(),
         location: values.location.trim(),
         package: values.package.trim(),
@@ -232,7 +236,19 @@ export function DriveFormDialog({ open, onOpenChange, editing }: Props) {
             )}
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="job_type">Job Type</Label>
+              <select
+                id="job_type"
+                {...register("job_type")}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm outline-none transition-colors focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/20"
+              >
+                <option value="">Not specified</option>
+                <option value="JOB">💼 Job</option>
+                <option value="INTERNSHIP">🎓 Internship</option>
+              </select>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="role">Role / Designation</Label>
               <Input id="role" placeholder="e.g. Software Engineer" {...register("role")} />

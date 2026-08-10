@@ -248,7 +248,7 @@ class AiAccessConfig(models.Model):
     """Per-student overrides for the AI usage limits.
 
     Every student gets the portal-wide defaults (daily AI requests = 5,
-    ATS report view interval = 10 days, resume uploads per day = 2). The
+    ATS report view interval = 1 day, resume uploads per day = 2). The
     Super Admin can adjust these for a specific roll number - raise/lower the
     numbers or grant unlimited AI requests - via the Students admin page.
     """

@@ -509,6 +509,7 @@ export interface AiHealthReport {
 export interface Drive {
   id: number;
   company_name: string;
+  job_type: "" | "JOB" | "INTERNSHIP";
   role: string;
   location: string;
   package: string;
@@ -526,6 +527,12 @@ export interface Drive {
   my_match: { score: number; reason: string } | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DriveChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
 }
 
 export interface DocumentShareRequest {

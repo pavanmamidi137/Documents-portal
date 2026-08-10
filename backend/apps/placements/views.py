@@ -22,7 +22,7 @@ from apps.core.throttles import AiRateThrottle
 from apps.core.utils import log_audit, notify
 
 from .ai import AiError, REASONING_BUDGETS, ai_json, ai_plain_text
-from .models import AiUsageLog, Drive
+from .models import AiUsageLog, Drive, DriveChatMessage
 from .resume_ai import maybe_refresh_drive_matches
 from .serializers import DriveSerializer
 
@@ -113,8 +113,18 @@ def _normalize_extraction(extracted: dict) -> dict:
     if not package and pick("minimum_package") and pick("maximum_package"):
         package = f"{pick('minimum_package')}-{pick('maximum_package')}"
 
+    # Map the free-text job type onto the drive's choices (JOB / INTERNSHIP).
+    def job_type() -> str:
+        raw = (extracted.get("job_type") or "").strip().lower()
+        if "intern" in raw or "trainee" in raw or "apprentice" in raw:
+            return Drive.JobType.INTERNSHIP
+        if raw:
+            return Drive.JobType.JOB
+        return ""
+
     normalized = {
         "company_name": pick("company_name"),
+        "job_type": job_type(),
         "role": pick("job_role", "role"),
         "location": pick("location"),
         "package": package,
@@ -297,6 +307,23 @@ def _log_ai_usage(user, action):
     return callback
 
 
+def _save_chat(drive: Drive, user, question: str, answer: str) -> None:
+    """Persist one Q&A exchange for a drive's AI assistant conversation.
+
+    Best-effort by design: saving the chat history must never break the
+    answer itself (e.g. a DB hiccup shouldn't 500 the student's question).
+    """
+    try:
+        DriveChatMessage.objects.create(
+            drive=drive, user=user, role=DriveChatMessage.Role.USER, content=question
+        )
+        DriveChatMessage.objects.create(
+            drive=drive, user=user, role=DriveChatMessage.Role.ASSISTANT, content=answer
+        )
+    except Exception:  # pragma: no cover - chat history is non-critical
+        pass
+
+
 def _ai_budget_tokens() -> int:
     try:
         setting = SiteSetting.objects.filter(key=_AI_BUDGET_KEY).first()
@@ -427,7 +454,7 @@ class DriveViewSet(ModelViewSet):
 
     def get_permissions(self):
         # The AI chat answers eligibility questions for students too.
-        if self.action in ("ai_chat", "ai_ask", "my_ai_usage"):
+        if self.action in ("ai_chat", "ai_ask", "chat_history", "my_ai_usage"):
             return [IsAuthenticated()]
         # Credit usage is admin-only.
         if self.action in ("ai_usage", "ai_budget"):
@@ -530,6 +557,10 @@ class DriveViewSet(ModelViewSet):
         instant and free. Complex questions go to Nemotron with the drive +
         student profile as context, and identical questions are served from a
         short-lived cache.
+
+        Every question + answer is saved as a DriveChatMessage so the student
+        can reopen the conversation for this drive later - even after the
+        drive itself has expired.
         """
         question = (request.data.get("question") or "").strip()
         if len(question) < 3:
@@ -542,6 +573,7 @@ class DriveViewSet(ModelViewSet):
 
         quick = _quick_drive_answer(drive, user, question)
         if quick is not None:
+            _save_chat(drive, user, question, quick)
             return Response({"answer": quick})
 
         # The drive's real details are the RAG grounding documents - the model
@@ -573,7 +605,31 @@ class DriveViewSet(ModelViewSet):
             )
         except AiError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        _save_chat(drive, user, question, answer)
         return Response({"answer": answer})
+
+    @action(detail=True, methods=["get"])
+    def chat_history(self, request, pk=None):
+        """The saved AI conversation for one specific drive.
+
+        Students/CRs see only their own messages; faculty and admins see every
+        student's chat for the drive so they can review what students asked.
+        History is kept even after the drive expires - it belongs to that
+        drive and is never mixed with other drives.
+        """
+        drive = self.get_object()
+        qs = DriveChatMessage.objects.filter(drive=drive)
+        if request.user.is_student_or_cr:
+            qs = qs.filter(user=request.user)
+        messages = [
+            {
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in qs[:100]
+        ]
+        return Response({"messages": messages})
 
     @action(detail=False, methods=["post"])
     def ai_chat(self, request):

@@ -1712,6 +1712,54 @@ class ResumeTests(TestCase):
         response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 403)
 
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_unreadable_resume_fails_without_calling_ai_or_charging_credits(self, mock_upload):
+        """A resume with no extractable text fails fast - no AI call, no credits."""
+        from apps.placements.models import AiUsageLog
+
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+
+        client = self._client(self.student)
+        with patch("apps.placements.resume_ai.extract_resume_text", return_value=""):
+            with patch("apps.placements.resume_ai.ai_json") as mock_ai:
+                response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        resume.refresh_from_db()
+        self.assertEqual(resume.ai_status, Resume.AiStatus.FAILED)
+        self.assertIn("could not read", resume.ai_error)
+        # The AI was never called, so no credits were consumed.
+        mock_ai.assert_not_called()
+        self.assertFalse(
+            AiUsageLog.objects.filter(user=self.student, action=AiUsageLog.Action.RESUME).exists()
+        )
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_unusable_ai_output_does_not_charge_credits(self, mock_upload):
+        """AI that answers but produces no usable JSON marks FAILED without credits."""
+        from apps.placements.models import AiUsageLog
+
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+
+        client = self._client(self.student)
+        with (
+            patch("apps.placements.resume_ai.extract_resume_text", return_value="Python project."),
+            patch("apps.placements.resume_ai.ai_json", return_value={}),
+        ):
+            response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        resume.refresh_from_db()
+        self.assertEqual(resume.ai_status, Resume.AiStatus.FAILED)
+        # The usage callback fired during the run, but no credits are committed.
+        self.assertFalse(
+            AiUsageLog.objects.filter(user=self.student, action=AiUsageLog.Action.RESUME).exists()
+        )
+
     # -- AI usage limits ------------------------------------------------
 
     @patch("apps.documents.services.cloudinary.uploader.upload")

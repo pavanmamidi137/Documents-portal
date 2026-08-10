@@ -18,7 +18,15 @@ class Drive(models.Model):
                   the ``cleanup_expired_drives`` management command).
     """
 
+    class JobType(models.TextChoices):
+        JOB = "JOB", "Job"
+        INTERNSHIP = "INTERNSHIP", "Internship"
+
     company_name = models.CharField(max_length=150)
+    job_type = models.CharField(
+        max_length=20, choices=JobType.choices, blank=True, default="",
+        help_text="Job or Internship (blank = not specified)",
+    )
     role = models.CharField(max_length=150, blank=True, default="")
     location = models.CharField(max_length=150, blank=True, default="")
     package = models.CharField(
@@ -81,6 +89,40 @@ class Drive(models.Model):
             for r in re.split(r"[,\s;]+", self.eligible_roll_numbers)
             if r.strip()
         }
+
+
+class DriveChatMessage(models.Model):
+    """One saved Q&A exchange between a student and the per-drive AI assistant.
+
+    The whole conversation for a drive is kept (scoped to the student) so it
+    stays visible even after the drive expires - the chat belongs to that
+    specific drive and is never mixed with other drives.
+    """
+
+    class Role(models.TextChoices):
+        USER = "user", "Student"
+        ASSISTANT = "assistant", "Placement AI"
+
+    drive = models.ForeignKey(
+        Drive, on_delete=models.CASCADE, related_name="chat_messages"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="drive_chat_messages",
+    )
+    role = models.CharField(max_length=10, choices=Role.choices)
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(fields=["drive", "user"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user_id} on drive {self.drive_id}: {self.content[:40]}"
 
 
 class AiUsageLog(models.Model):

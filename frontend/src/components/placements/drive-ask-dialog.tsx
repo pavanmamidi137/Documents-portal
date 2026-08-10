@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Bot, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth";
 import { http } from "@/lib/api";
-import type { Drive } from "@/lib/types";
+import type { Drive, DriveChatMessage } from "@/lib/types";
 import { cn, getErrorMessage } from "@/lib/utils";
 
 interface Message {
@@ -69,6 +69,22 @@ function DriveAskChat({ drive }: { drive: Drive }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
+  const loadedRef = useRef(false);
+
+  // Load the saved conversation for this drive (it survives even after the
+  // drive expires - the chat belongs to this specific drive only).
+  useEffect(() => {
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+    http
+      .get<{ messages: DriveChatMessage[] }>(`/drives/${drive.id}/chat_history/`)
+      .then((data) =>
+        setMessages(data.messages.map((m) => ({ role: m.role, text: m.content })))
+      )
+      .catch(() => {
+        /* best-effort - a fresh conversation is fine */
+      });
+  }, [drive.id]);
 
   const ask = async (raw?: string) => {
     const text = (raw ?? question).trim();

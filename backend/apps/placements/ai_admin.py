@@ -236,8 +236,22 @@ class AIProviderViewSet(ModelViewSet):
                 "RATE_LIMITED": "The provider is rate limiting this key.",
                 "TIMEOUT": "The provider did not respond in time.",
                 "EMPTY_RESPONSE": "The provider returned an empty response.",
+                "PROVIDER_ERROR": "The provider returned an unexpected response. Check the model name, base URL and API key, then try again.",
             }.get(exc.error_type, "The provider is unavailable right now.")
             return Response({"detail": friendly, "ok": False}, status=502)
+        except Exception:  # pragma: no cover - defensive, never 500
+            AIProviderHealth.objects.update_or_create(
+                provider=provider,
+                defaults={
+                    "status": "UNAVAILABLE",
+                    "last_failure_at": timezone.now(),
+                    "last_error_type": "UNEXPECTED",
+                },
+            )
+            return Response(
+                {"detail": "The provider test failed unexpectedly. Check the base URL and model name, then try again.", "ok": False},
+                status=502,
+            )
         AIProviderHealth.objects.update_or_create(
             provider=provider,
             defaults={"status": "HEALTHY", "last_success_at": timezone.now()},

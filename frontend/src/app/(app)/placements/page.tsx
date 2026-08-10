@@ -11,6 +11,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ExternalLink,
+  GraduationCap,
   MapPin,
   Pencil,
   Plus,
@@ -51,11 +52,35 @@ function matchClasses(score: number) {
   return "border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-300";
 }
 
+const JOB_TYPE_LABELS: Record<string, string> = {
+  JOB: "Job",
+  INTERNSHIP: "Internship",
+};
+
+function JobTypeBadge({ jobType }: { jobType: string }) {
+  if (!jobType) return null;
+  const internship = jobType === "INTERNSHIP";
+  return (
+    <Badge
+      variant="outline"
+      className={
+        internship
+          ? "gap-1 border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-400"
+          : "gap-1 border-primary/30 bg-primary/10 text-primary"
+      }
+    >
+      {internship ? <GraduationCap className="size-3" /> : <Briefcase className="size-3" />}
+      {JOB_TYPE_LABELS[jobType] ?? jobType}
+    </Badge>
+  );
+}
+
 export default function PlacementsPage() {
   const { user } = useAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"open" | "expired">("open");
+  const [typeFilter, setTypeFilter] = useState<"ALL" | "JOB" | "INTERNSHIP">("ALL");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Drive | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Drive | null>(null);
@@ -80,7 +105,9 @@ export default function PlacementsPage() {
     queryKey: ["drives", "expired"],
     queryFn: () => http.get<Drive[]>("/drives/?status=expired"),
   });
-  const drives = tab === "open" ? openDrives : expiredDrives;
+  const drives = (tab === "open" ? openDrives : expiredDrives)?.filter(
+    (d) => typeFilter === "ALL" || d.job_type === typeFilter
+  );
   const isLoading = tab === "open" ? openLoading : expiredLoading;
   const openCount = openDrives?.length;
   const expiredCount = expiredDrives?.length;
@@ -128,6 +155,27 @@ export default function PlacementsPage() {
             </TabsTrigger>
           </TabsList>
         </Tabs>
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <div className="flex items-center gap-1 rounded-xl border bg-card p-1">
+            {(["ALL", "JOB", "INTERNSHIP"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTypeFilter(t)}
+                className={cn(
+                  "flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                  typeFilter === t
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {t === "JOB" && <Briefcase className="size-3.5" />}
+                {t === "INTERNSHIP" && <GraduationCap className="size-3.5" />}
+                {t === "ALL" ? "All" : JOB_TYPE_LABELS[t]}
+              </button>
+            ))}
+          </div>
+        </div>
         {canWrite && (
           <Button
             onClick={() => {
@@ -184,6 +232,7 @@ export default function PlacementsPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="truncate text-base font-bold">{d.company_name}</h3>
+                    <JobTypeBadge jobType={d.job_type} />
                     <Badge
                       variant="outline"
                       className={cn(
