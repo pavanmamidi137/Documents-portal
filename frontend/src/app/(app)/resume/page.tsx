@@ -19,6 +19,8 @@ import {
   Send,
   Sparkles,
   Star,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   TriangleAlert,
   TrendingUp,
@@ -121,6 +123,13 @@ function AtsReportCard({ resume }: { resume: Resume }) {
   };
 
   // Only the student can open the report - faculty/admin don't get the button.
+  const atsPros = report?.analysis
+    ? report.analysis.pros?.length
+      ? report.analysis.pros
+      : report.analysis.strengths ?? []
+    : [];
+  const atsCons = report?.analysis?.cons ?? [];
+
   return (
     <div className="rounded-xl border bg-card/60 p-3">
       <div className="flex items-center justify-between gap-3">
@@ -129,7 +138,7 @@ function AtsReportCard({ resume }: { resume: Resume }) {
             <Gauge className="size-3.5 text-violet-500" /> Full ATS Report
           </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            The complete keyword &amp; improvement report refreshes{" "}
+            Pros, cons, complete improvements &amp; keyword report - refreshes{" "}
             {atsIntervalLabel(resume.limits?.ats_view_interval_days ?? 10)}.
           </p>
         </div>
@@ -141,6 +150,56 @@ function AtsReportCard({ resume }: { resume: Resume }) {
 
       {report && !report.locked && report.analysis && (
         <div className="mt-3 space-y-3 border-t pt-3">
+          {report.analysis.summary && (
+            <p className="text-xs text-muted-foreground">{report.analysis.summary}</p>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {atsPros.length > 0 && (
+              <div>
+                <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                  <ThumbsUp className="size-3" /> Pros
+                </p>
+                <ul className="space-y-1">
+                  {atsPros.map((s, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                      <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-500" /> {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {atsCons.length > 0 && (
+              <div>
+                <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                  <ThumbsDown className="size-3" /> Cons
+                </p>
+                <ul className="space-y-1">
+                  {atsCons.map((s, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                      <TriangleAlert className="mt-0.5 size-3 shrink-0 text-rose-500" /> {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          {report.analysis.improvements.length > 0 && (
+            <div>
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                <Lightbulb className="size-3" /> Improvements — complete action list
+              </p>
+              <ul className="space-y-1.5">
+                {report.analysis.improvements.map((s, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                      {i + 1}
+                    </span>
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {report.analysis.ats_keywords.map((s, i) => (
               <Badge key={i} variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 text-[11px] dark:text-amber-400">
@@ -151,15 +210,6 @@ function AtsReportCard({ resume }: { resume: Resume }) {
               <p className="text-xs text-muted-foreground">No missing ATS keywords — great job.</p>
             )}
           </div>
-          {report.analysis.improvements.length > 0 && (
-            <ul className="space-y-1.5">
-              {report.analysis.improvements.map((s, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <Lightbulb className="mt-0.5 size-3 shrink-0 text-amber-500" /> {s}
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
       )}
 
@@ -247,6 +297,10 @@ function AiReviewCard({
 
   if (!analysis) return null;
 
+  // pros is the current field name; strengths is kept for older reports.
+  const pros = analysis.pros?.length ? analysis.pros : (analysis.strengths ?? []);
+  const cons = analysis.cons ?? [];
+
   return (
     <Card className="border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-transparent">
       <CardHeader>
@@ -274,37 +328,58 @@ function AiReviewCard({
           </div>
         </div>
 
-        {/* Strengths / improvements */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          {analysis.strengths.length > 0 && (
-            <div className="rounded-xl border bg-card/60 p-3">
-              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                <Star className="size-3.5" /> Strengths
-              </p>
-              <ul className="space-y-1.5">
-                {analysis.strengths.map((s, i) => (
-                  <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                    <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-500" /> {s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {analysis.improvements.length > 0 && (
-            <div className="rounded-xl border bg-card/60 p-3">
-              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-                <Lightbulb className="size-3.5" /> Improve this
-              </p>
-              <ul className="space-y-1.5">
-                {analysis.improvements.map((s, i) => (
-                  <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                    <Lightbulb className="mt-0.5 size-3 shrink-0 text-amber-500" /> {s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
+        {/* Pros / Cons */}
+        {(pros.length > 0 || cons.length > 0) && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {pros.length > 0 && (
+              <div className="rounded-xl border bg-card/60 p-3">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                  <ThumbsUp className="size-3.5" /> Pros
+                </p>
+                <ul className="space-y-1.5">
+                  {pros.map((s, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                      <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-500" /> {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {cons.length > 0 && (
+              <div className="rounded-xl border bg-card/60 p-3">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
+                  <ThumbsDown className="size-3.5" /> Cons
+                </p>
+                <ul className="space-y-1.5">
+                  {cons.map((s, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                      <TriangleAlert className="mt-0.5 size-3 shrink-0 text-rose-500" /> {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Complete improvement list */}
+        {analysis.improvements.length > 0 && (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+              <Lightbulb className="size-3.5" /> Improvements — complete action list
+            </p>
+            <ul className="space-y-1.5">
+              {analysis.improvements.map((s, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                    {i + 1}
+                  </span>
+                  {s}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Skills + missing ATS keywords */}
         {analysis.skills.length > 0 && (

@@ -32,13 +32,15 @@ Return ONLY a single valid JSON object - no markdown, no code fences, no prose b
 The object must use EXACTLY this schema:
 {
   "score": 0-100 integer (overall quality),
-  "summary": "one or two sentences on the resume's overall impression",
-  "strengths": ["3-5 short strings - what stands out (projects, skills, format, achievements)"],
-  "improvements": ["3-5 short strings - what would make it stronger (quantify results, add ATS keywords, fix layout)"],
+  "summary": "two or three sentences on the resume's overall impression",
+  "pros": ["4-6 short strings - what the resume genuinely does WELL (projects, skills, format, achievements)"],
+  "cons": ["3-5 short strings - genuine weaknesses or risks (missing projects, no metrics, vague bullets, gaps)"],
+  "improvements": ["5-8 COMPLETE, concrete action items - one short sentence each on exactly what to add, fix or quantify, ordered by impact"],
   "skills": ["every skill/keyword mentioned - languages, tools, frameworks, soft skills"],
   "ats_keywords": ["important ATS keywords for IT/fresher roles MISSING from this resume (e.g. Python, SQL, Git, communication, teamwork)"]
 }
-Be specific and honest. If the resume text is unreadable or empty, still return the JSON
+Be specific and honest. Do NOT trim the improvements list - give every genuinely useful action
+item, even if it is long. If the resume text is unreadable or empty, still return the JSON
 with score 0 and a note in summary that the text could not be extracted."""
 
 # NOTE: the braces in the JSON schema below are doubled ({{ }}) because this
@@ -520,7 +522,7 @@ def analyze_resume(resume, actor) -> dict:
 
     try:
         quality = ai_json(
-            _QUALITY_PROMPT, brief, max_tokens=1400, usage_callback=usage,
+            _QUALITY_PROMPT, brief, max_tokens=2000, usage_callback=usage,
             task="RESUME_ANALYSIS",
         )
     except AiError:

@@ -890,16 +890,19 @@ class AiParseTests(AiManagerBase):
         raw = {
             "score": 78,
             "summary": "Solid resume",
-            "strengths": ["Python", "Git"],
-            "improvements": ["Add metrics"],
+            "pros": ["Python", "Git"],
+            "cons": ["No metrics"],
+            "improvements": ["Add metrics", "Add a projects section"],
             "skills": ["Python", "SQL"],
             "ats_keywords": ["Agile"],
         }
         report = normalize_resume_report(raw)
         self.assertEqual(report["score"], 78)
         self.assertEqual(report["summary"], "Solid resume")
+        self.assertEqual(report["pros"], ["Python", "Git"])
         self.assertEqual(report["strengths"], ["Python", "Git"])
-        self.assertEqual(report["improvements"], ["Add metrics"])
+        self.assertEqual(report["cons"], ["No metrics"])
+        self.assertEqual(report["improvements"], ["Add metrics", "Add a projects section"])
         self.assertEqual(report["skills"], ["Python", "SQL"])
         self.assertEqual(report["ats_keywords"], ["Agile"])
 
@@ -953,9 +956,30 @@ class AiParseTests(AiManagerBase):
         self.assertIsNotNone(report)
         self.assertEqual(report["score"], 72)
         self.assertEqual(report["summary"], "Needs polish")
+        self.assertEqual(report["pros"], ["Good projects", "Clear formatting"])
         self.assertEqual(report["strengths"], ["Good projects", "Clear formatting"])
+        self.assertEqual(report["cons"], ["No metrics"])
+        # weaknesses-only responses still fill the complete action list.
         self.assertEqual(report["improvements"], ["No metrics"])
         self.assertEqual(report["skills"], ["React"])
+
+    def test_old_report_without_pros_cons_is_backwards_compatible(self):
+        """Reports stored before pros/cons existed still normalize - strengths
+        become pros and improvements are unchanged."""
+        from .ai_parse import normalize_resume_report
+
+        old = {
+            "score": 65,
+            "summary": "Decent",
+            "strengths": ["Python"],
+            "improvements": ["Add metrics"],
+            "skills": ["Python"],
+            "ats_keywords": ["Git"],
+        }
+        report = normalize_resume_report(old)
+        self.assertEqual(report["pros"], ["Python"])
+        self.assertEqual(report["cons"], [])
+        self.assertEqual(report["improvements"], ["Add metrics"])
 
     def test_matches_normalization(self):
         from .ai_parse import normalize_matches

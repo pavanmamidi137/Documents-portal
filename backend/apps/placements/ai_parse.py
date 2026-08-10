@@ -158,7 +158,9 @@ def _as_score(value) -> int:
 
 
 # The exact keys the resume report expects (as defined in the prompt).
-RESUME_REPORT_KEYS = ("score", "summary", "strengths", "improvements", "skills", "ats_keywords")
+RESUME_REPORT_KEYS = (
+    "score", "summary", "pros", "cons", "improvements", "skills", "ats_keywords"
+)
 
 
 def normalize_resume_report(raw) -> dict | None:
@@ -168,6 +170,10 @@ def normalize_resume_report(raw) -> dict | None:
     carried no usable report at all (missing everything / not a dict). Key
     names are matched case-insensitively and a wrapper key (e.g.
     ``{"report": {...}}`` or ``{"data": {...}}``) is unwrapped.
+
+    Backwards compatible: older reports only carry ``strengths`` - those are
+    kept as ``pros`` too, so every stored analysis exposes both names and the
+    UI can use one consistent field.
     """
     if not isinstance(raw, dict) or not raw:
         return None
@@ -182,27 +188,38 @@ def normalize_resume_report(raw) -> dict | None:
 
     score = _as_score(_lookup(data, "score", "rating", "overall_score", "total_score"))
     summary = str(_lookup(data, "summary", "overview", "description", "comment") or "").strip()
-    strengths = _as_str_list(
-        _lookup(data, "strengths", "strong_points", "strongpoints", "positives"), 6
+    # pros is the primary name; strengths is kept as a backwards-compatible
+    # alias (and vice versa) so old reports still render.
+    pros = _as_str_list(
+        _lookup(data, "pros", "positives", "strengths", "strong_points", "strongpoints"), 8
+    )
+    cons = _as_str_list(
+        _lookup(data, "cons", "negatives", "weaknesses", "risks", "areas_to_improve"), 6
     )
     improvements = _as_str_list(
-        _lookup(data, "improvements", "improvement", "weaknesses", "areas_to_improve", "recommendations"), 6
+        _lookup(data, "improvements", "improvement", "recommendations", "action_items", "next_steps"), 8
     )
+    # A model that only reports "weaknesses" (mapped to cons) must not leave
+    # the complete action list empty - fall back to the cons.
+    if not improvements and cons:
+        improvements = cons
     skills = _as_str_list(_lookup(data, "skills", "skill_set", "keywords", "technologies"), 20)
     ats_keywords = _as_str_list(
-        _lookup(data, "ats_keywords", "atsKeywords", "missing_keywords", "ats", "recommended_keywords"), 12
+        _lookup(data, "ats_keywords", "atsKeywords", "missing_keywords", "ats", "recommended_keywords"), 14
     )
 
     # A report with none of the expected fields is not usable - the caller
     # treats that as an unreadable/failed attempt.
-    if not summary and not strengths and not improvements and not skills \
-            and not ats_keywords and score == 0:
+    if not summary and not pros and not cons and not improvements \
+            and not skills and not ats_keywords and score == 0:
         return None
 
     return {
         "score": score,
         "summary": summary,
-        "strengths": strengths,
+        "pros": pros,
+        "cons": cons,
+        "strengths": pros,
         "improvements": improvements,
         "skills": skills,
         "ats_keywords": ats_keywords,

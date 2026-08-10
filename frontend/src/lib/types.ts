@@ -188,7 +188,13 @@ export interface SearchResults {
 
 export interface ResumeAiAnalysis {
   summary: string;
+  /** What the resume does well - shown as "Pros". */
+  pros: string[];
+  /** Genuine weaknesses - shown as "Cons". */
+  cons: string[];
+  /** Backwards-compatible alias of pros (older reports). */
   strengths: string[];
+  /** Complete, actionable improvement list. */
   improvements: string[];
   skills: string[];
   ats_keywords: string[];
