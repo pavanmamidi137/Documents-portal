@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
   Coins,
   Loader2,
   Save,
+  Search,
   Star,
 } from "lucide-react";
 import {
@@ -61,6 +62,12 @@ function scoreTone(score: number | null) {
   if (score >= 70) return "text-emerald-600 dark:text-emerald-400";
   if (score >= 45) return "text-amber-600 dark:text-amber-400";
   return "text-red-600 dark:text-red-400";
+}
+
+function matchBarTone(score: number) {
+  if (score >= 70) return "bg-emerald-500";
+  if (score >= 45) return "bg-amber-500";
+  return "bg-red-500";
 }
 
 function StarRating({ score }: { score: number | null }) {
@@ -125,6 +132,7 @@ export default function AiUsagePage() {
   const [budgetInput, setBudgetInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [studentSearch, setStudentSearch] = useState("");
 
   const toggleExpanded = (userId: number) => {
     setExpanded((prev) => {
@@ -177,6 +185,16 @@ export default function AiUsagePage() {
   const percent = data?.percent_used;
   const remaining = data?.remaining_tokens;
   const totalAcrossUsers = data?.per_user.reduce((sum, u) => sum + u.total_tokens, 0) ?? 0;
+
+  const filteredUsers = useMemo(() => {
+    const q = studentSearch.trim().toLowerCase();
+    if (!q) return data?.per_user ?? [];
+    return (data?.per_user ?? []).filter(
+      (u) =>
+        u.roll_number.toLowerCase().includes(q) ||
+        u.name.toLowerCase().includes(q)
+    );
+  }, [data?.per_user, studentSearch]);
 
   return (
     <RoleGuard roles={["SUPER_ADMIN"]}>
@@ -320,13 +338,31 @@ export default function AiUsagePage() {
 
             {/* ------------------------------------------------ Per-user table */}
             <div className="mt-6 rounded-2xl border bg-card">
-              <div className="border-b px-5 py-4">
-                <h3 className="font-semibold">Usage by Student</h3>
-                <p className="text-xs text-muted-foreground">
-                  How many AI credits each account has consumed so far. Expand a
-                  student to see their resume AI review (rating, ATS score,
-                  summary and any error) — Super Admin only.
-                </p>
+              <div className="flex flex-col gap-3 border-b px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h3 className="font-semibold">Usage by Student</h3>
+                  <p className="text-xs text-muted-foreground">
+                    How many AI credits each account has consumed so far. Expand a
+                    student to see their resume AI review (rating, ATS score,
+                    summary and any error) — Super Admin only.
+                  </p>
+                </div>
+                {data?.per_user?.length ? (
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={studentSearch}
+                        onChange={(e) => setStudentSearch(e.target.value)}
+                        placeholder="Search by roll number or name…"
+                        className="h-9 w-64 max-w-full pl-8"
+                      />
+                    </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {filteredUsers.length} of {data.per_user.length}
+                    </span>
+                  </div>
+                ) : null}
               </div>
               {!data?.per_user || data.per_user.length === 0 ? (
                 <div className="py-8">
@@ -334,6 +370,14 @@ export default function AiUsagePage() {
                     icon={BrainCircuit}
                     title="No AI usage yet"
                     description="Token usage will appear here once students and staff start using the AI features."
+                  />
+                </div>
+              ) : filteredUsers.length === 0 ? (
+                <div className="py-8">
+                  <EmptyState
+                    icon={Search}
+                    title="No students match your search"
+                    description={`Nothing matches "${studentSearch.trim()}". Try a different roll number or name.`}
                   />
                 </div>
               ) : (
@@ -354,7 +398,7 @@ export default function AiUsagePage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {data.per_user.map((u, i) => {
+                      {filteredUsers.map((u, i) => {
                         const isOpen = expanded.has(u.user_id);
                         return (
                           <ResumeUsageRow
@@ -394,6 +438,12 @@ function ResumeUsageRow({
 }) {
   const resume = user.resume;
   const analysis = resume?.ai_analysis ?? null;
+  const matches = resume?.ai_match
+    ? Object.entries(resume.ai_match)
+        .filter(([, m]) => typeof m.score === "number")
+        .sort((a, b) => b[1].score - a[1].score)
+        .slice(0, 4)
+    : [];
   return (
     <>
       <TableRow className="cursor-pointer" onClick={onToggle}>
@@ -536,6 +586,36 @@ function ResumeUsageRow({
                         >
                           {item}
                         </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {matches.length > 0 ? (
+                  <div>
+                    <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Best drive matches
+                    </p>
+                    <div className="space-y-2">
+                      {matches.map(([driveId, m]) => (
+                        <div key={driveId} className="flex items-center gap-2.5">
+                          <span className="w-40 truncate text-xs font-medium">
+                            {m.company_name || `Drive #${driveId}`}
+                          </span>
+                          <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className={cn("h-full rounded-full", matchBarTone(m.score))}
+                              style={{ width: `${Math.min(100, Math.max(0, m.score))}%` }}
+                            />
+                          </div>
+                          <span
+                            className={cn(
+                              "w-10 text-right text-xs font-semibold tabular-nums",
+                              scoreTone(m.score)
+                            )}
+                          >
+                            {Math.round(m.score)}%
+                          </span>
+                        </div>
                       ))}
                     </div>
                   </div>

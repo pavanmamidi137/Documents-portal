@@ -352,6 +352,10 @@ export interface AiUsageUser {
       skills?: string[];
       ats_keywords?: string[];
     } | null;
+    ai_match: Record<
+      string,
+      { score: number; reason: string; company_name: string }
+    > | null;
     ai_error: string | null;
     ai_analyzed_at: string | null;
   } | null;

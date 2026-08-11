@@ -751,6 +751,7 @@ class DriveViewSet(ModelViewSet):
                     "ai_status": resume.ai_status,
                     "ai_score": resume.ai_score,
                     "ai_analysis": resume.ai_analysis,
+                    "ai_match": resume.ai_match,
                     "ai_error": resume.ai_error or "",
                     "ai_analyzed_at": (
                         resume.ai_analyzed_at.isoformat()

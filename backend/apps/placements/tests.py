@@ -596,6 +596,10 @@ class DriveApiTests(APITestCase):
                 "strengths": ["Python"],
                 "improvements": ["Add metrics"],
             },
+            ai_match={
+                "1": {"score": 92, "reason": "Great fit", "company_name": "TCS"},
+                "2": {"score": 61, "reason": "Partial", "company_name": "Infosys"},
+            },
             ai_error="",
             ai_analyzed_at=timezone.now(),
         )
@@ -606,6 +610,10 @@ class DriveApiTests(APITestCase):
         self.assertEqual(
             row["resume"]["ai_analysis"]["summary"], "Strong projects section"
         )
+        self.assertEqual(
+            row["resume"]["ai_match"]["1"]["company_name"], "TCS"
+        )
+        self.assertEqual(row["resume"]["ai_match"]["1"]["score"], 92)
         self.assertEqual(row["resume"]["ai_error"], "")
         self.assertIsNotNone(row["resume"]["ai_analyzed_at"])
 
