@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
   BrainCircuit,
+  CalendarClock,
   CheckCircle2,
   CircleOff,
   KeyRound,
@@ -28,6 +29,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { RoleGuard } from "@/components/role-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardContent,
@@ -61,6 +63,10 @@ import type {
 import { cn, getErrorMessage } from "@/lib/utils";
 
 type Tab = "providers" | "tasks" | "settings" | "usage";
+
+// Fallback for the AI request log retention window; the live value comes from
+// the server's AI_LOG_RETENTION_DAYS setting via the AI settings endpoint.
+const DEFAULT_LOG_RETENTION_DAYS = 30;
 
 function healthBadge(status: AiHealthStatus) {
   const map: Record<AiHealthStatus, { label: string; cls: string }> = {
@@ -110,6 +116,10 @@ export default function AiManagementPage() {
     queryFn: () => http.get<AiHealthReport>("/admin/ai/usage/report/"),
   });
   const [sendingReport, setSendingReport] = useState(false);
+  const [selectedLogs, setSelectedLogs] = useState<Set<number>>(new Set());
+  const [logDeleteMode, setLogDeleteMode] = useState<
+    "selected" | "all" | "old" | null
+  >(null);
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["ai-providers"] });
@@ -196,6 +206,56 @@ export default function AiManagementPage() {
   };
 
   const loading = providersQuery.isLoading && !providersQuery.data;
+
+  const usageLogs = usageQuery.data?.recent ?? [];
+  const logRetentionDays =
+    settingsQuery.data?.log_retention_days ?? DEFAULT_LOG_RETENTION_DAYS;
+
+  const toggleLog = (id: number) => {
+    setSelectedLogs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllLogs = (checked: boolean) => {
+    setSelectedLogs(checked ? new Set(usageLogs.map((l) => l.id)) : new Set());
+  };
+
+  const deleteLogs = async () => {
+    if (!logDeleteMode) return;
+    try {
+      const body =
+        logDeleteMode === "all"
+          ? { all: true }
+          : logDeleteMode === "old"
+            ? { older_than_days: logRetentionDays }
+            : { ids: Array.from(selectedLogs) };
+      const data = await http.post<{ deleted: number }>(
+        "/admin/ai/usage/delete_logs/",
+        body
+      );
+      toast.success(
+        logDeleteMode === "all"
+          ? "AI request log cleared"
+          : logDeleteMode === "old"
+            ? data.deleted > 0
+              ? `Deleted ${data.deleted} log row(s) older than ${logRetentionDays} days`
+              : `No logs older than ${logRetentionDays} days to clear`
+            : `Deleted ${data.deleted} log row(s)`
+      );
+      setSelectedLogs(new Set());
+      queryClient.invalidateQueries({ queryKey: ["ai-usage-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-usage-report"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-usage"] });
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setLogDeleteMode(null);
+    }
+  };
 
   const sendReportNow = async () => {
     setSendingReport(true);
@@ -533,9 +593,76 @@ export default function AiManagementPage() {
                   <Stat label="Errors" value={usageQuery.data?.totals.errors ?? 0} bad />
                   <Stat label="Fallbacks" value={usageQuery.data?.totals.fallback_used ?? 0} />
                 </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-y px-4 py-2.5">
+                  <p className="text-xs text-muted-foreground">
+                    {usageLogs.length > 0
+                      ? selectedLogs.size > 0
+                        ? `${selectedLogs.size} of ${usageLogs.length} rows selected`
+                        : `${usageLogs.length} most recent requests`
+                      : "No AI requests yet"}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {selectedLogs.size > 0 && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSelectedLogs(new Set())}
+                        >
+                          Clear selection
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => setLogDeleteMode("selected")}
+                        >
+                          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                          Delete selected ({selectedLogs.size})
+                        </Button>
+                      </>
+                    )}
+                    {usageLogs.length > 0 && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-muted-foreground"
+                          onClick={() => setLogDeleteMode("old")}
+                          title={`Delete log rows older than ${logRetentionDays} days`}
+                        >
+                          <CalendarClock className="mr-1.5 h-3.5 w-3.5" />
+                          Clear logs older than {logRetentionDays} days
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-muted-foreground"
+                          onClick={() => setLogDeleteMode("all")}
+                        >
+                          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                          Clear all logs
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={
+                            usageLogs.length > 0 &&
+                            selectedLogs.size === usageLogs.length
+                          }
+                          indeterminate={
+                            selectedLogs.size > 0 &&
+                            selectedLogs.size < usageLogs.length
+                          }
+                          onCheckedChange={(v) => toggleAllLogs(v === true)}
+                          aria-label="Select all requests"
+                        />
+                      </TableHead>
                       <TableHead>Time</TableHead>
                       <TableHead>Task</TableHead>
                       <TableHead>Provider</TableHead>
@@ -546,8 +673,22 @@ export default function AiManagementPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(usageQuery.data?.recent ?? []).map((log: AiRequestLogRow) => (
-                      <TableRow key={log.id}>
+                    {usageLogs.map((log: AiRequestLogRow) => (
+                      <TableRow
+                        key={log.id}
+                        className={
+                          selectedLogs.has(log.id)
+                            ? "bg-primary/5"
+                            : undefined
+                        }
+                      >
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedLogs.has(log.id)}
+                            onCheckedChange={() => toggleLog(log.id)}
+                            aria-label={`Select request ${log.id}`}
+                          />
+                        </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {new Date(log.created_at).toLocaleString()}
                         </TableCell>
@@ -558,7 +699,14 @@ export default function AiManagementPage() {
                             <Badge variant="outline" className="ml-1.5 bg-amber-500/15 text-amber-600">fallback</Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-xs">{log.user_name}</TableCell>
+                        <TableCell>
+                          <p className="text-xs font-medium">{log.user_name}</p>
+                          {log.user_roll && (
+                            <p className="font-mono text-[11px] text-muted-foreground">
+                              {log.user_roll}
+                            </p>
+                          )}
+                        </TableCell>
                         <TableCell>
                           {log.status === "SUCCESS" ? (
                             <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
@@ -574,9 +722,9 @@ export default function AiManagementPage() {
                         <TableCell className="text-xs">{log.latency_ms}ms</TableCell>
                       </TableRow>
                     ))}
-                    {!loading && (usageQuery.data?.recent ?? []).length === 0 && (
+                    {!loading && usageLogs.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
+                        <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
                           No AI requests yet.
                         </TableCell>
                       </TableRow>
@@ -623,6 +771,34 @@ export default function AiManagementPage() {
         confirmLabel="Delete provider"
         destructive
         onConfirm={confirmDelete}
+      />
+
+      <ConfirmDialog
+        open={Boolean(logDeleteMode)}
+        onOpenChange={(o) => !o && setLogDeleteMode(null)}
+        title={
+          logDeleteMode === "all"
+            ? "Clear the entire AI request log?"
+            : logDeleteMode === "old"
+              ? `Clear logs older than ${logRetentionDays} days?`
+              : `Delete ${selectedLogs.size} selected request${selectedLogs.size === 1 ? "" : "s"}?`
+        }
+        description={
+          logDeleteMode === "all"
+            ? "Every AI call record will be removed permanently. Totals and the health report will reset."
+            : logDeleteMode === "old"
+              ? `AI request rows older than ${logRetentionDays} days will be removed permanently. Recent requests are kept.`
+              : "The selected AI call records will be removed permanently."
+        }
+        confirmLabel={
+          logDeleteMode === "all"
+            ? "Clear all logs"
+            : logDeleteMode === "old"
+              ? "Clear old logs"
+              : "Delete selected"
+        }
+        destructive
+        onConfirm={deleteLogs}
       />
     </RoleGuard>
   );

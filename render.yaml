@@ -52,6 +52,37 @@ services:
         sync: false # your super admin password
 
   # ---------------------------------------------------------------------------
+  # Cron - daily AI request log cleanup
+  # ---------------------------------------------------------------------------
+  # Runs once a day and prunes AI request log rows older than
+  # AI_LOG_RETENTION_DAYS (default 30) so the log never grows forever.
+  # NOTE: Render Cron Jobs require a paid plan (Starter $7/mo or higher) -
+  # there is no free-tier cron. If you skip this service, admins can still
+  # prune manually from Admin -> AI Management -> Usage ("Clear logs older
+  # than 30 days" button).
+  - type: cron
+    name: documents-portal-ai-log-cleanup
+    runtime: python
+    pythonVersion: "3.13.1"
+    rootDir: backend
+    schedule: "0 3 * * *" # daily at 03:00 UTC (≈ 08:30 IST)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python manage.py cleanup_ai_logs
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        generateValue: true # fresh value is fine - cleanup never decrypts stored keys
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: "*"
+      - key: DATABASE_URL
+        sync: false # same Supabase transaction-mode pooler URL as the API
+      - key: DIRECT_URL
+        sync: false # same Supabase session-mode pooler URL as the API
+      - key: AI_LOG_RETENTION_DAYS
+        value: "30" # how many days of AI request logs to keep
+
+  # ---------------------------------------------------------------------------
   # Frontend - Next.js (Node)
   # ---------------------------------------------------------------------------
   - type: web

@@ -460,6 +460,7 @@ export interface AiSettings {
   default_timeout_seconds: number;
   default_max_retries: number;
   maintenance_mode: boolean;
+  log_retention_days: number;
   updated_at: string;
 }
 

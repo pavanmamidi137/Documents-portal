@@ -98,12 +98,15 @@ Default super admin after `seed_data`: **roll number `admin` / password `Admin@1
 | `ATS_VIEW_INTERVAL_DAYS` | ATS report refresh interval (default 10) |
 | `RESUME_DAILY_UPLOAD_LIMIT` | Resume uploads per day per student (default 2) |
 | `AI_AUTO_ANALYZE_ON_UPLOAD` | Auto-analyze resumes after upload (default 1) |
+| `AI_LOG_RETENTION_DAYS` | How many days of AI request log rows to keep (default 30) |
 | `AI_ENCRYPTION_KEY` | **Required in production** - encrypts AI provider API keys at rest (AES-GCM). Must be stable across deploys; Render's `DJANGO_SECRET_KEY` changes per deploy and is never used. |
 | `PBKDF2_ITERATIONS` | Password-hash cost. Default `216000` ≈ 3x faster logins than Django's 720k default; `720000` for maximum hash security |
 | `THROTTLE_LOGIN_RATE` | Login attempts per IP per minute (default `10/min`; `60/min` avoids 429s when a campus shares one public IP via mobile NAT) |
 | `ADMIN_ROLL_NUMBER/ADMIN_PASSWORD/...` | Seed-data super admin |
 
 **AI health report** (`python manage.py daily_ai_report`): summarizes the last 24h of AI provider usage (calls, errors, uptime %, fallbacks, token usage and an estimated cost at `ai_cost_per_million_tokens` - a site setting, default $0.50 per 1M tokens) and notifies every Super Admin in-app. Schedule it once a day, e.g. via Render's Cron Jobs running `manage.py daily_ai_report`, or add an admin cron: `0 8 * * * cd /path/to/backend && .venv/bin/python manage.py daily_ai_report`. The same report is shown live on the Admin → AI Management → Usage tab, which also has a **Send report now** button.
+
+**AI log cleanup** (`python manage.py cleanup_ai_logs`): deletes AI request log rows older than `AI_LOG_RETENTION_DAYS` (default 30) so the log never grows forever. The `render.yaml` blueprint ships a **daily cron job** for it (03:00 UTC); you can also prune manually from **Admin → AI Management → Usage** via the **Clear logs older than 30 days** button, or run the command by hand: `python manage.py cleanup_ai_logs` (or `--days 60` for a custom window).
 
 **Frontend (`frontend/.env.local`)**:
 
@@ -134,6 +137,7 @@ All endpoints (except login/refresh/health) require `Authorization: Bearer <acce
    - `ADMIN_PASSWORD` → your super admin password
    - `NEXT_PUBLIC_API_URL` → `https://<your-api-service>.onrender.com/api`
 4. The backend build script (`build.sh`) runs `migrate`, `seed_data` and `collectstatic` automatically. `DJANGO_SECRET_KEY` is auto-generated.
+5. The blueprint also creates a **daily cron job** (`documents-portal-ai-log-cleanup`) that runs `manage.py cleanup_ai_logs` at 03:00 UTC (≈ 08:30 IST) to prune AI request logs older than 30 days. **Render Cron Jobs require a paid plan** (Starter $7/mo or higher — there is no free-tier cron). When you apply the blueprint, paste the same `DATABASE_URL` / `DIRECT_URL` on the cron service. If you skip it, use the **Clear logs older than 30 days** button on **Admin → AI Management → Usage**, or create the cron job manually: **New + → Cron Job** → repo + branch → schedule `0 3 * * *` → start command `python manage.py cleanup_ai_logs` → same DB env vars.
 
 > **Scaling:** the API uses the pgbouncer transaction pooler + `DISABLE_SERVER_SIDE_CURSORS` for safe high-concurrency operation; Cloudinary keeps PDF storage off the web servers entirely.
 

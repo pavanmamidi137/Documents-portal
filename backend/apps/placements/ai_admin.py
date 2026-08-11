@@ -14,6 +14,9 @@ API keys are ALWAYS masked in responses (********abcd). A key is only written
 when the client sends a non-empty ``api_key`` field.
 """
 
+from datetime import timedelta
+
+from django.conf import settings
 from django.db.models import Count, Q as models_Q, Sum
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -109,14 +112,22 @@ class AITaskSerializer(serializers.ModelSerializer):
 
 
 class AISettingsSerializer(serializers.ModelSerializer):
+    # The server retention window (env AI_LOG_RETENTION_DAYS) drives the
+    # "Clear logs older than N days" button so it can never drift from the
+    # cron job's cleanup window.
+    log_retention_days = serializers.SerializerMethodField()
+
     class Meta:
         model = AISettings
         fields = [
             "enable_ai", "enable_fallback", "enable_caching", "enable_web_research",
             "default_timeout_seconds", "default_max_retries", "maintenance_mode",
-            "updated_at",
+            "log_retention_days", "updated_at",
         ]
         read_only_fields = ["updated_at"]
+
+    def get_log_retention_days(self, obj) -> int:
+        return getattr(settings, "AI_LOG_RETENTION_DAYS", 30)
 
 
 class AIRequestLogSerializer(serializers.ModelSerializer):
@@ -371,6 +382,51 @@ class AIUsageViewSet(ViewSet):
     """AI request log + aggregate stats (Super Admin only)."""
 
     permission_classes = [IsSuperAdmin]
+
+    @action(detail=False, methods=["post"])
+    def delete_logs(self, request):
+        """Bulk-delete AI request log rows (Super Admin only).
+
+        Body: ``{"ids": [1, 2, 3]}`` to delete specific rows, ``{"all": true}``
+        to clear the whole log, or ``{"older_than_days": 30}`` to prune rows
+        older than N days (the frontend sends the retention value explicitly).
+        """
+        if request.data.get("all"):
+            deleted, _ = AIRequestLog.objects.all().delete()
+            log_audit(request.user, "BULK_DELETE", "AIRequestLog", "all",
+                      {"deleted": deleted}, request)
+            return Response({"deleted": deleted})
+
+        old_days = request.data.get("older_than_days")
+        if old_days is not None:
+            try:
+                old_days = int(old_days)
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "A valid number of days is required."}, status=400
+                )
+            if old_days < 1:
+                return Response({"detail": "Days must be at least 1."}, status=400)
+            cutoff = timezone.now() - timedelta(days=old_days)
+            deleted, _ = AIRequestLog.objects.filter(created_at__lt=cutoff).delete()
+            log_audit(
+                request.user, "BULK_DELETE", "AIRequestLog",
+                f"older than {old_days}d", {"deleted": deleted, "days": old_days},
+                request,
+            )
+            return Response({"deleted": deleted})
+
+        raw_ids = request.data.get("ids") or []
+        try:
+            ids = [int(i) for i in raw_ids]
+        except (TypeError, ValueError):
+            return Response({"detail": "A valid list of log ids is required."}, status=400)
+        if not ids:
+            return Response({"detail": "Select at least one log row to delete."}, status=400)
+        deleted, _ = AIRequestLog.objects.filter(id__in=ids).delete()
+        log_audit(request.user, "BULK_DELETE", "AIRequestLog",
+                  f"{len(ids)} rows", {"deleted": deleted}, request)
+        return Response({"deleted": deleted})
 
     @action(detail=False, methods=["get"])
     def report(self, request):

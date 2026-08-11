@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+from django.test import override_settings
 from openai import RateLimitError
 from rest_framework.test import APIClient, APITestCase
 
@@ -1498,6 +1499,130 @@ class AiDailyReportTests(AiManagerBase):
         # Students are locked out.
         resp = self._client(self.student).post("/api/admin/ai/usage/send_report/")
         self.assertIn(resp.status_code, (401, 403))
+
+
+class AiSettingsRetentionTests(AiManagerBase):
+    """The AI settings endpoint exposes the log retention window so the admin
+    UI button always matches the cron job's cleanup window."""
+
+    @override_settings(AI_LOG_RETENTION_DAYS=45)
+    def test_settings_expose_log_retention_days(self):
+        resp = self._client(self.admin).get("/api/admin/ai/settings/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["log_retention_days"], 45)
+
+    def test_student_cannot_read_settings(self):
+        resp = self._client(self.student).get("/api/admin/ai/settings/")
+        self.assertIn(resp.status_code, (401, 403))
+
+
+class AiUsageLogDeleteTests(AiManagerBase):
+    """Bulk deletion of AI request log rows from the Usage tab."""
+
+    def _log(self, user=None):
+        provider = AIProvider.objects.filter(name="Gemini").first()
+        if not provider:
+            provider = self._provider(name="Gemini")
+        return AIRequestLog.objects.create(
+            provider=provider,
+            provider_used="Gemini",
+            primary_provider="Gemini",
+            task="STUDENT_CHAT",
+            user=user or self.student,
+            status=AIRequestLog.Status.SUCCESS,
+            prompt_tokens=10,
+            completion_tokens=5,
+        )
+
+    def test_usage_rows_include_user_name_and_roll(self):
+        """The Usage tab shows which student made each request (name + roll)."""
+        self._log()
+        usage = self._client(self.admin).get("/api/admin/ai/usage/").data
+        row = usage["recent"][0]
+        self.assertEqual(row["user_name"], "Diya")
+        self.assertEqual(row["user_roll"], "21CSE01")
+
+    def test_delete_selected_logs(self):
+        first = self._log()
+        second = self._log()
+        self._log()
+        resp = self._client(self.admin).post(
+            "/api/admin/ai/usage/delete_logs/",
+            {"ids": [first.id, second.id]},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["deleted"], 2)
+        self.assertEqual(AIRequestLog.objects.count(), 1)
+
+    def test_delete_all_logs(self):
+        self._log()
+        self._log()
+        resp = self._client(self.admin).post(
+            "/api/admin/ai/usage/delete_logs/", {"all": True}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["deleted"], 2)
+        self.assertEqual(AIRequestLog.objects.count(), 0)
+
+    def test_delete_logs_requires_valid_selection(self):
+        client = self._client(self.admin)
+        # Empty selection -> friendly 400.
+        resp = client.post(
+            "/api/admin/ai/usage/delete_logs/", {"ids": []}, format="json"
+        )
+        self.assertEqual(resp.status_code, 400)
+        # Non-numeric ids -> friendly 400, never a 500.
+        resp = client.post(
+            "/api/admin/ai/usage/delete_logs/", {"ids": ["abc"]}, format="json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_delete_logs_older_than_days_prunes_old_rows_only(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        old = self._log()
+        # auto_now_add ignores provided timestamps, so backdate after create.
+        AIRequestLog.objects.filter(pk=old.pk).update(
+            created_at=timezone.now() - timedelta(days=40)
+        )
+        fresh = self._log()
+        resp = self._client(self.admin).post(
+            "/api/admin/ai/usage/delete_logs/",
+            {"older_than_days": 30},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["deleted"], 1)
+        self.assertFalse(AIRequestLog.objects.filter(pk=old.pk).exists())
+        self.assertTrue(AIRequestLog.objects.filter(pk=fresh.pk).exists())
+
+    def test_delete_logs_older_than_invalid_days(self):
+        client = self._client(self.admin)
+        resp = client.post(
+            "/api/admin/ai/usage/delete_logs/",
+            {"older_than_days": 0},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        resp = client.post(
+            "/api/admin/ai/usage/delete_logs/",
+            {"older_than_days": "abc"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_student_cannot_delete_logs(self):
+        log = self._log()
+        resp = self._client(self.student).post(
+            "/api/admin/ai/usage/delete_logs/",
+            {"ids": [log.id]},
+            format="json",
+        )
+        self.assertIn(resp.status_code, (401, 403))
+        self.assertEqual(AIRequestLog.objects.count(), 1)
 
 
 class AiTaskRoutingTests(AiManagerBase):

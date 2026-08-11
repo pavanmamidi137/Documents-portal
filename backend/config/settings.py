@@ -248,6 +248,11 @@ DOCUMENT_COMPRESS_AFTER_BYTES = (
 # or stored keys become undecryptable after a redeploy).
 AI_ENCRYPTION_KEY = os.getenv("AI_ENCRYPTION_KEY", "")
 
+# How many days of AI request log rows are kept. Rows older than this are
+# pruned by the ``cleanup_ai_logs`` management command (Render cron) or the
+# "Clear logs older than N days" button on the AI Management usage page.
+AI_LOG_RETENTION_DAYS = int(os.getenv("AI_LOG_RETENTION_DAYS", "30"))
+
 AI_DAILY_REQUEST_LIMIT = int(os.getenv("AI_DAILY_REQUEST_LIMIT", "1"))
 # The AI review budget is a ROLLING window, not a calendar day: a student may
 # run ``AI_DAILY_REQUEST_LIMIT`` reviews per ``AI_REVIEW_WINDOW_DAYS`` days
