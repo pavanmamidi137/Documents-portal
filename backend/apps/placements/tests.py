@@ -571,6 +571,73 @@ class DriveApiTests(APITestCase):
         self.assertEqual(
             self._client(self.cr).get("/api/drives/ai_usage/").status_code, 403
         )
+        # Faculty must never see the per-student credit/review breakdown.
+        self.assertEqual(
+            self._client(self.faculty).get("/api/drives/ai_usage/").status_code, 403
+        )
+
+    def test_ai_usage_includes_resume_ai_review(self):
+        """The admin sees each student's resume AI review: rating score,
+        summary and any error - never visible to faculty/students."""
+        from apps.accounts.models import Resume
+
+        AiUsageLog.objects.create(
+            user=self.student, action=AiUsageLog.Action.RESUME,
+            prompt_tokens=100, completion_tokens=50,
+        )
+        Resume.objects.create(
+            student=self.student, file_name="diya.pdf", file_size=100,
+            cloudinary_url="https://res.cloudinary.com/x/diya.pdf",
+            public_id="resumes/diya",
+            ai_status=Resume.AiStatus.COMPLETE,
+            ai_score=78,
+            ai_analysis={
+                "summary": "Strong projects section",
+                "strengths": ["Python"],
+                "improvements": ["Add metrics"],
+            },
+            ai_error="",
+            ai_analyzed_at=timezone.now(),
+        )
+        data = self._client(self.admin).get("/api/drives/ai_usage/").data
+        row = next(u for u in data["per_user"] if u["roll_number"] == "21CSE01")
+        self.assertEqual(row["resume"]["ai_status"], "COMPLETE")
+        self.assertEqual(row["resume"]["ai_score"], 78)
+        self.assertEqual(
+            row["resume"]["ai_analysis"]["summary"], "Strong projects section"
+        )
+        self.assertEqual(row["resume"]["ai_error"], "")
+        self.assertIsNotNone(row["resume"]["ai_analyzed_at"])
+
+    def test_ai_usage_resume_error_is_exposed_to_admin(self):
+        from apps.accounts.models import Resume
+
+        AiUsageLog.objects.create(
+            user=self.student, action=AiUsageLog.Action.RESUME,
+            prompt_tokens=10, completion_tokens=0,
+        )
+        AiUsageLog.objects.create(
+            user=self.student2, action=AiUsageLog.Action.CHAT,
+            prompt_tokens=5, completion_tokens=5,
+        )
+        Resume.objects.create(
+            student=self.student, file_name="diya.pdf", file_size=100,
+            cloudinary_url="https://res.cloudinary.com/x/diya.pdf",
+            public_id="resumes/diya",
+            ai_status=Resume.AiStatus.FAILED,
+            ai_score=None,
+            ai_error="The AI could not read this resume.",
+        )
+        data = self._client(self.admin).get("/api/drives/ai_usage/").data
+        row = next(u for u in data["per_user"] if u["roll_number"] == "21CSE01")
+        self.assertEqual(row["resume"]["ai_status"], "FAILED")
+        self.assertEqual(
+            row["resume"]["ai_error"], "The AI could not read this resume."
+        )
+        # Accounts without a resume carry a null resume block.
+        self.assertIsNone(
+            next(u for u in data["per_user"] if u["roll_number"] == "21CSE02")["resume"]
+        )
 
     def test_ai_usage_endpoint_returns_totals_and_per_user(self):
         AiUsageLog.objects.create(

@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from apps.accounts.models import Resume
 from apps.core.models import Notification, SiteSetting
 from apps.core.permissions import IsSuperAdmin
 from apps.core.throttles import AiRateThrottle
@@ -723,14 +724,20 @@ class DriveViewSet(ModelViewSet):
             )
             .order_by("-calls")
         )
+        user_ids = [r["user_id"] for r in rows]
         users = {
-            u.id: u
-            for u in User.objects.filter(id__in=[r["user_id"] for r in rows])
+            u.id: u for u in User.objects.filter(id__in=user_ids)
+        }
+        # Each account's resume AI review (rating, ATS score, summary, error)
+        # so the Super Admin can audit what every student's review produced.
+        resumes = {
+            r.student_id: r for r in Resume.objects.filter(student_id__in=user_ids)
         }
         per_user = []
         for row in rows:
             user = users.get(row["user_id"])
             user_tokens = int(row["prompt_tokens"] or 0) + int(row["completion_tokens"] or 0)
+            resume = resumes.get(row["user_id"])
             per_user.append({
                 "user_id": row["user_id"],
                 "name": user.full_name if user else "Deleted user",
@@ -740,6 +747,16 @@ class DriveViewSet(ModelViewSet):
                 "prompt_tokens": int(row["prompt_tokens"] or 0),
                 "completion_tokens": int(row["completion_tokens"] or 0),
                 "total_tokens": user_tokens,
+                "resume": {
+                    "ai_status": resume.ai_status,
+                    "ai_score": resume.ai_score,
+                    "ai_analysis": resume.ai_analysis,
+                    "ai_error": resume.ai_error or "",
+                    "ai_analyzed_at": (
+                        resume.ai_analyzed_at.isoformat()
+                        if resume.ai_analyzed_at else None
+                    ),
+                } if resume else None,
             })
 
         # Daily breakdown (last 30 days) so the admin sees usage day by day.

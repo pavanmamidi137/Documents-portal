@@ -342,6 +342,19 @@ export interface AiUsageUser {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  resume: {
+    ai_status: "PENDING" | "COMPLETE" | "FAILED" | null;
+    ai_score: number | null;
+    ai_analysis: {
+      summary?: string;
+      strengths?: string[];
+      improvements?: string[];
+      skills?: string[];
+      ats_keywords?: string[];
+    } | null;
+    ai_error: string | null;
+    ai_analyzed_at: string | null;
+  } | null;
 }
 
 export interface AiDailyPoint {
