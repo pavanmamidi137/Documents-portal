@@ -1,12 +1,12 @@
 from django.db import IntegrityError
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.db.models.deletion import ProtectedError
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from apps.core.permissions import IsSuperAdminForWrite
+from apps.core.permissions import IsSuperAdminForWrite, IsSuperAdminOrCRForWrite
 from apps.core.utils import log_audit
 
 from .models import Branch, Category, Section, Semester, Subject
@@ -42,6 +42,25 @@ def _category_counts(queryset):
 
 def _subject_counts(queryset):
     return queryset.annotate(documents_count=Count("documents", distinct=True))
+
+
+def _subject_duplicate_exists(name, semester, branch, exclude_id=None) -> bool:
+    """Case-insensitive duplicate check across the whole branch.
+
+    A college-wide subject (branch=None) already covers every branch, so it
+    blocks a same-named branch subject too - whichever CR (or admin) enters a
+    subject first, that is the only one kept.
+    """
+    if not name:
+        return False
+    qs = Subject.objects.filter(name__iexact=name, semester=semester)
+    if branch is not None:
+        qs = qs.filter(Q(branch=branch) | Q(branch__isnull=True))
+    else:
+        qs = qs.filter(branch__isnull=True)
+    if exclude_id:
+        qs = qs.exclude(pk=exclude_id)
+    return qs.exists()
 from .serializers import (
     BranchSerializer,
     CategorySerializer,
@@ -177,13 +196,23 @@ class CategoryViewSet(viewsets.ModelViewSet):
 class SubjectViewSet(viewsets.ModelViewSet):
     queryset = _subject_counts(Subject.objects.select_related("semester", "branch").all())
     serializer_class = SubjectSerializer
-    permission_classes = [IsSuperAdminForWrite]
+    permission_classes = [IsSuperAdminOrCRForWrite]
     search_fields = ["name", "code", "semester__name", "branch__name"]
     ordering_fields = ["name"]
     ordering = ["name"]
 
     def get_queryset(self):
         qs = super().get_queryset()
+        user = self.request.user
+        # CRs manage only their own branch's subjects. Subjects are branch-wide
+        # (shared by every section of the branch), so a subject any CR of the
+        # branch creates is automatically visible to all of its sections. A CR
+        # without a branch sees nothing - it cannot touch admin-created
+        # college-wide subjects or any other branch's subjects.
+        if user.is_cr:
+            if not user.branch_id:
+                return qs.none()
+            qs = qs.filter(branch_id=user.branch_id)
         params = self.request.query_params
         if params.get("semester"):
             qs = qs.filter(semester_id=params["semester"])
@@ -192,12 +221,50 @@ class SubjectViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        data = serializer.validated_data
+        if self.request.user.is_cr:
+            # CRs can only create subjects for their own branch - the value is
+            # forced server-side so a CR can never widen the subject to another
+            # branch or to the whole college.
+            if not self.request.user.branch_id:
+                raise ValidationError(
+                    {"detail": "Your CR account has no branch assigned. Ask the admin to set your branch first."}
+                )
+            data["branch"] = self.request.user.branch
+        name = (data.get("name") or "").strip()
+        if _subject_duplicate_exists(name, data.get("semester"), data.get("branch")):
+            raise ValidationError(
+                {"detail": f'A subject named "{name}" already exists for this semester in this branch.'}
+            )
+        try:
+            instance = serializer.save()
+        except IntegrityError:  # pragma: no cover - racing insert safety
+            raise ValidationError(
+                {"detail": f'A subject named "{name}" already exists for this semester in this branch.'}
+            )
         log_audit(self.request.user, "CREATE", "Subject", instance.id,
                   {"name": instance.name, "semester": instance.semester.name}, self.request)
 
     def perform_update(self, serializer):
-        instance = serializer.save()
+        instance = serializer.instance
+        data = serializer.validated_data
+        if self.request.user.is_cr:
+            # CRs cannot move a subject to another branch (or unset it).
+            data.pop("branch", None)
+            data["branch"] = self.request.user.branch
+        name = (data.get("name") or instance.name or "").strip()
+        semester = data.get("semester", instance.semester)
+        branch = data.get("branch", instance.branch)
+        if _subject_duplicate_exists(name, semester, branch, exclude_id=instance.pk):
+            raise ValidationError(
+                {"detail": f'A subject named "{name}" already exists for this semester in this branch.'}
+            )
+        try:
+            instance = serializer.save()
+        except IntegrityError:  # pragma: no cover - racing insert safety
+            raise ValidationError(
+                {"detail": f'A subject named "{name}" already exists for this semester in this branch.'}
+            )
         log_audit(self.request.user, "UPDATE", "Subject", instance.id,
                   {"name": instance.name}, self.request)
 

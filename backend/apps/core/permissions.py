@@ -69,3 +69,19 @@ class IsSuperAdminForWrite(permissions.BasePermission):
         if request.method in permissions.SAFE_METHODS:
             return True
         return user.is_super_admin
+
+
+class IsSuperAdminOrCRForWrite(permissions.BasePermission):
+    """Authenticated users may read; Super Admins and CRs may write.
+
+    The viewset still scopes CR writes to their own branch (subjects are
+    branch-wide, never per-section), so this only gates the HTTP method.
+    """
+
+    def has_permission(self, request, view) -> bool:
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return user.is_super_admin or user.is_cr

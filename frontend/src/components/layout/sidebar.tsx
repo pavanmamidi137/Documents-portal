@@ -88,7 +88,10 @@ const ADMIN_ONLY: NavItem[] = [
   { href: "/admin/audit-logs", label: "Audit Logs", icon: ScrollText },
 ];
 
-const CR_ONLY: NavItem[] = [{ href: "/cr/students", label: "Students", icon: Users }];
+const CR_ONLY: NavItem[] = [
+  { href: "/cr/students", label: "Students", icon: Users },
+  { href: "/cr/subjects", label: "Subjects", icon: BookOpenText },
+];
 
 interface SidebarProps {
   mode: SidebarMode;
