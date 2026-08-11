@@ -187,7 +187,10 @@ REST_FRAMEWORK = {
 # ever used for verifying hashes produced by bulk CSV imports (it is never
 # chosen as the default upgrade target).
 PASSWORD_HASHERS = [
-    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    # Fast PBKDF2 (same algorithm name, lower iteration count) - Django 5.x
+    # ignores the old PBKDF2_ITERATIONS setting, so the tunable subclass is
+    # listed first. Existing hashes verify + auto-upgrade on next login.
+    "apps.accounts.hashers.FastPBKDF2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
     "django.contrib.auth.hashers.Argon2PasswordHasher",
     "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",

@@ -37,16 +37,25 @@ class LoginSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         username = attrs.get(self.username_field)
+        legacy = None
         if username:
             attrs[self.username_field] = str(username).strip().upper()
             # Legacy accounts may still be stored in lowercase - use the
-            # stored casing so authenticate() finds them.
-            legacy = User.objects.filter(
+            # stored casing so authenticate() finds them. The relations are
+            # prefetched in the SAME query so building the profile in the
+            # login response below costs zero extra DB round-trips (branch
+            # and section would otherwise be fetched lazily, one query each).
+            legacy = User.objects.select_related("branch", "section").filter(
                 roll_number__iexact=attrs[self.username_field]
             ).first()
             if legacy:
                 attrs[self.username_field] = legacy.roll_number
         data = super().validate(attrs)
+        # ``self.user`` (from authenticate) and ``legacy`` point at the same
+        # account row, but only ``legacy`` carries the prefetched relations -
+        # reuse it so serialization stays in memory and skips 2 queries.
+        if legacy is not None:
+            self.user = legacy
         data["user"] = UserSerializer(self.user).data
         return data
 

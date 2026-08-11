@@ -67,13 +67,17 @@ class LoginView(TokenObtainPairView):
     throttle_classes = [LoginRateThrottle]
 
     def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-        roll_input = request.data.get("roll_number", "").strip()
-        user = User.objects.filter(roll_number__iexact=roll_input).first()
-        if user and response.status_code == status.HTTP_200_OK:
+        # Validate + authenticate exactly like the base view, but reuse the
+        # user the serializer already resolved instead of running a second
+        # database lookup just to write the audit log. Throttling still runs
+        # in dispatch(), so behaviour is identical - only faster.
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.user
+        if user:
             log_audit(user, "LOGIN", "User", user.id,
                       {"roll_number": user.roll_number, "role": user.role}, request)
-        return response
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
 class RefreshView(TokenRefreshView):

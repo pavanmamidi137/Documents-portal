@@ -11,7 +11,9 @@ services:
     pythonVersion: "3.13.1"
     rootDir: backend
     buildCommand: bash build.sh
-    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --timeout 120
+    # 2 workers x 4 threads = 8 concurrent requests per instance. Bump the
+    # workers when you upgrade to a larger instance (see README -> Scaling).
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
     healthCheckPath: /api/health/
     envVars:
       - key: DJANGO_SECRET_KEY
@@ -24,6 +26,10 @@ services:
         sync: false # paste the Supabase transaction-mode pooler URL
       - key: DIRECT_URL
         sync: false # paste the Supabase session-mode pooler URL
+      - key: PBKDF2_ITERATIONS
+        value: "216000" # 3x faster logins; set 720000 for max password-hash security
+      - key: THROTTLE_LOGIN_RATE
+        value: "60/min" # per-IP; 60/min avoids 429s when a campus shares one public IP (mobile NAT)
       - key: CORS_ALLOWED_ORIGINS
         sync: false # e.g. https://documents-portal.onrender.com
       - key: CLOUDINARY_CLOUD_NAME

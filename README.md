@@ -99,6 +99,8 @@ Default super admin after `seed_data`: **roll number `admin` / password `Admin@1
 | `RESUME_DAILY_UPLOAD_LIMIT` | Resume uploads per day per student (default 2) |
 | `AI_AUTO_ANALYZE_ON_UPLOAD` | Auto-analyze resumes after upload (default 1) |
 | `AI_ENCRYPTION_KEY` | **Required in production** - encrypts AI provider API keys at rest (AES-GCM). Must be stable across deploys; Render's `DJANGO_SECRET_KEY` changes per deploy and is never used. |
+| `PBKDF2_ITERATIONS` | Password-hash cost. Default `216000` ≈ 3x faster logins than Django's 720k default; `720000` for maximum hash security |
+| `THROTTLE_LOGIN_RATE` | Login attempts per IP per minute (default `10/min`; `60/min` avoids 429s when a campus shares one public IP via mobile NAT) |
 | `ADMIN_ROLL_NUMBER/ADMIN_PASSWORD/...` | Seed-data super admin |
 
 **AI health report** (`python manage.py daily_ai_report`): summarizes the last 24h of AI provider usage (calls, errors, uptime %, fallbacks, token usage and an estimated cost at `ai_cost_per_million_tokens` - a site setting, default $0.50 per 1M tokens) and notifies every Super Admin in-app. Schedule it once a day, e.g. via Render's Cron Jobs running `manage.py daily_ai_report`, or add an admin cron: `0 8 * * * cd /path/to/backend && .venv/bin/python manage.py daily_ai_report`. The same report is shown live on the Admin → AI Management → Usage tab, which also has a **Send report now** button.
@@ -134,6 +136,39 @@ All endpoints (except login/refresh/health) require `Authorization: Bearer <acce
 4. The backend build script (`build.sh`) runs `migrate`, `seed_data` and `collectstatic` automatically. `DJANGO_SECRET_KEY` is auto-generated.
 
 > **Scaling:** the API uses the pgbouncer transaction pooler + `DISABLE_SERVER_SIDE_CURSORS` for safe high-concurrency operation; Cloudinary keeps PDF storage off the web servers entirely.
+
+## 📈 Scaling & Load Balancing (more users, no lag)
+
+The portal is already built to handle hundreds of simultaneous users (cached heavy endpoints, pgbouncer connection pooling, files on Cloudinary, stateless JWT auth). To keep it fast as the campus grows:
+
+### 1. Never let the server sleep (kills the "slow login" complaint)
+
+On Render's **Free** tier the web service **spins down after ~15 min of inactivity**, so the first login after a lull waits for a cold boot (10–60 s). Upgrade the **backend** and **frontend** services to a paid plan (**Starter $7/mo or higher**) — instances stay **always-on** and the very first request is fast.
+
+### 2. Right-size the Gunicorn workers (free speed, no code)
+
+- Starter (0.25 vCPU): `--workers 2 --threads 4` (the default in `Procfile`/`render.yaml`) ≈ 8 concurrent requests.
+- Standard (0.5+ vCPU): raise to `--workers 4 --threads 4`.
+- Each worker is its own process, so CPU-heavy work (password hashing, JWT) scales with the worker count.
+
+### 3. Horizontal scaling — Render's built-in load balancer
+
+When you need more headroom than one instance, **scale the backend to 2–3 instances**:
+
+1. Render dashboard → **documents-portal-api** → **Settings** → **Instance count** → `2` (or `3`) → **Save**. When an instance serves traffic directly to the internet, Render places it behind its **built-in load balancer** and spreads requests round-robin across all instances — no extra load-balancer service or config needed.
+2. The frontend stays a single instance (it proxies to the API by URL) — scale it too only if the Next.js build is the bottleneck.
+3. Auth is **stateless JWT** (no sticky sessions), uploads go straight to Cloudinary, and list/dashboard endpoints cache in-memory per instance — so multi-instance is fully safe.
+
+> **Notes:** each extra instance multiplies memory cost, so keep instances on **Standard** (512 MB+) and prefer 2 Standard over 4 Starter. The in-memory cache is per-instance (fine — every instance serves its own users fast). If you later want shared cache + shared throttling across instances, add a **Redis** instance (`REDIS_URL`) and switch `CACHES` to it; not required until you're past ~1,000 concurrent users.
+
+### 4. Load-test before a big event (campus drive, exam week)
+
+```bash
+# quick spike test against the API (adjust -c for concurrency)
+curl -s -o /dev/null -w "%{time_total}\n" https://<api>.onrender.com/api/health/
+```
+
+If login feels slow under load, the two levers are **PBKDF2_ITERATIONS** (hash cost, see env table) and **instance size/CPU** — raising the CPU speeds up every login because password hashing is CPU-bound.
 
 ## ✅ Tests
 
