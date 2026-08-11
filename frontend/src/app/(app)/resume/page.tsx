@@ -96,6 +96,56 @@ function atsIntervalLabel(interval: number | null | undefined): string {
   return days === 1 ? "once a day" : `once every ${days} days`;
 }
 
+/** Live "next review available" countdown (ticks every minute).
+ *
+ * When the countdown reaches zero the slot has opened - ``onExpire`` (a query
+ * refetch) re-reads the limits so the Analyze buttons light back up without
+ * a manual page reload.
+ */
+function NextReviewCountdown({ availableAt, onExpire }: { availableAt: string; onExpire?: () => void }) {
+  const [now, setNow] = useState(() => Date.now());
+  const expiredRef = useRef(false);
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const target = new Date(availableAt).getTime();
+  // The slot just opened: tell the parent to refetch so the budget (and the
+  // buttons) refresh. Runs once per expiry thanks to the guarded flag.
+  const remaining = Number.isNaN(target) ? 0 : Math.max(0, target - now);
+  useEffect(() => {
+    if (remaining === 0 && !expiredRef.current && onExpire) {
+      expiredRef.current = true;
+      onExpire();
+    }
+  }, [remaining, onExpire]);
+
+  if (Number.isNaN(target)) return null;
+  const days = Math.floor(remaining / 86_400_000);
+  const hours = Math.floor((remaining % 86_400_000) / 3_600_000);
+  const minutes = Math.floor((remaining % 3_600_000) / 60_000);
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0 || days > 0) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+
+  return (
+    <span className="inline-flex items-center gap-1 font-medium text-foreground">
+      <Lock className="size-3.5" />
+      Next review available {formatDate(availableAt)}
+      <span className="tabular-nums text-muted-foreground">· in {parts.join(" ")}</span>
+    </span>
+  );
+}
+
+/** True when the student has used up their AI review budget for this window. */
+function isOutOfAiReviews(limits: Resume["limits"]): boolean {
+  if (!limits || limits.unlimited_ai) return false;
+  return limits.ai_requests_used >= limits.daily_ai_requests;
+}
+
 function AtsReportCard({ resume }: { resume: Resume }) {
   const [report, setReport] = useState<AtsReport | null>(null);
   const [opening, setOpening] = useState(false);
@@ -238,6 +288,21 @@ function AiReviewCard({
         .sort((a, b) => b.score - a.score)
         .slice(0, 3)
     : [];
+  // When the weekly AI review budget is used up, the analyze buttons turn into
+  // a lock with a live countdown to the next available slot. When the timer
+  // expires, a refetch re-reads the limits so the buttons light back up.
+  const queryClient = useQueryClient();
+  const outOfReviews = isOutOfAiReviews(resume.limits);
+  const nextReviewAt = resume.limits?.next_ai_review_at ?? null;
+
+  const reviewLock = outOfReviews && nextReviewAt ? (
+    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+      <NextReviewCountdown
+        availableAt={nextReviewAt}
+        onExpire={() => queryClient.invalidateQueries({ queryKey: ["resume"] })}
+      />
+    </p>
+  ) : null;
 
   if (resume.ai_status === "PENDING") {
     return (
@@ -258,14 +323,22 @@ function AiReviewCard({
               <Loader2 className="size-4 animate-spin text-violet-500" /> Analyzing your resume…
             </p>
           ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="text-sm text-muted-foreground">
-                New uploads are analyzed automatically. You can also run it now to see your star
-                rating and drive match chances early.
-              </p>
-              <Button onClick={onAnalyze} variant="outline">
-                <Sparkles className="size-4" /> Analyze with AI
-              </Button>
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-sm text-muted-foreground">
+                  New uploads are analyzed automatically. You can also run it now to see your star
+                  rating and drive match chances early.
+                </p>
+                <Button
+                  onClick={onAnalyze}
+                  variant="outline"
+                  disabled={outOfReviews || analyzing}
+                  title={outOfReviews ? "AI review budget used up for this window" : undefined}
+                >
+                  <Sparkles className="size-4" /> Analyze with AI
+                </Button>
+              </div>
+              {reviewLock}
             </div>
           )}
         </CardContent>
@@ -286,10 +359,16 @@ function AiReviewCard({
           <p className="text-sm text-muted-foreground">
             {resume.ai_error || "The AI service did not respond. Please try again."}
           </p>
-          <Button onClick={onAnalyze} disabled={analyzing} className="mt-4">
+          <Button
+            onClick={onAnalyze}
+            disabled={analyzing || outOfReviews}
+            className="mt-4"
+            title={outOfReviews ? "AI review budget used up for this window" : undefined}
+          >
             {analyzing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Try Again
           </Button>
+          {reviewLock && <div className="mt-3">{reviewLock}</div>}
         </CardContent>
       </Card>
     );
@@ -442,11 +521,18 @@ function AiReviewCard({
             {resume.ai_analyzed_at ? `Analyzed ${formatDate(resume.ai_analyzed_at)}` : ""}
             {analysis.ocr ? " · scanned PDF read via OCR" : ""} · uses your AI credits
           </p>
-          <Button onClick={onAnalyze} disabled={analyzing} size="sm" variant="outline">
+          <Button
+            onClick={onAnalyze}
+            disabled={analyzing || outOfReviews}
+            size="sm"
+            variant="outline"
+            title={outOfReviews ? "AI review budget used up for this window" : undefined}
+          >
             {analyzing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-3.5" />}
             Re-run
           </Button>
         </div>
+        {reviewLock && <div>{reviewLock}</div>}
       </CardContent>
     </Card>
   );
@@ -488,15 +574,18 @@ export default function ResumePage() {
   };
 
   // Once faculty mark the resume as reviewed, run the AI review automatically
-  // so the quality report is ready when the student checks. Runs once.
+  // so the quality report is ready when the student checks. Runs once, and is
+  // skipped when the student has already used up this window's AI budget (the
+  // review would be rejected server-side anyway - no point firing the request).
   useEffect(() => {
     if (!resume || resume.is_missing) return;
+    if (isOutOfAiReviews(resume.limits)) return;
     if (resume.is_reviewed && resume.ai_status === "PENDING" && !autoRanRef.current) {
       autoRanRef.current = true;
       void analyze();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resume?.id, resume?.is_reviewed, resume?.ai_status]);
+  }, [resume?.id, resume?.is_reviewed, resume?.ai_status, resume?.limits]);
 
   // Live-check the stored file against Cloudinary once per page load, so a
   // resume deleted directly in Cloudinary shows the re-upload prompt instantly
@@ -726,6 +815,14 @@ export default function ResumePage() {
               {resume.limits.resume_upload_window_days ?? 2} days. Need more? Ask the
               admin to raise your limits.
             </p>
+            {isOutOfAiReviews(resume.limits) && resume.limits.next_ai_review_at && (
+              <p className="mt-3 flex items-center justify-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs">
+                <NextReviewCountdown
+                  availableAt={resume.limits.next_ai_review_at}
+                  onExpire={invalidate}
+                />
+              </p>
+            )}
           </div>
         )}
 

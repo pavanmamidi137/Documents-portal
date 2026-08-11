@@ -537,6 +537,56 @@ def _resume_uploads_used_in_window(student: User) -> int:
     ).count()
 
 
+def _next_ai_review_available(student: User, limits: dict):
+    """When the student's next AI review slot opens (timezone-aware datetime).
+
+    With a rolling window the oldest usage log frees its slot the moment it
+    ages out of the window, so the next review is available exactly at
+    ``oldest_log.created_at + window_days``. Returns ``None`` when a review
+    is still available now (or AI is unlimited).
+    """
+    from datetime import timedelta
+
+    from django.conf import settings
+
+    from apps.placements.models import AiUsageLog
+
+    if limits.get("unlimited_ai"):
+        return None
+    if limits["daily_ai_requests"] <= 0:
+        return None  # reviews are fully blocked - no countdown to offer
+    used = _ai_requests_used_in_window(student)
+    if used < limits["daily_ai_requests"]:
+        return None  # a review is available right now
+    oldest = (
+        AiUsageLog.objects.filter(
+            user=student,
+            created_at__gte=_window_cutoff(settings.AI_REVIEW_WINDOW_DAYS),
+        )
+        .order_by("created_at")
+        .values_list("created_at", flat=True)
+        .first()
+    )
+    if oldest is None:
+        return None  # defensive - used > 0 implies a log exists
+    return oldest + timedelta(days=settings.AI_REVIEW_WINDOW_DAYS)
+
+
+def _limits_payload(student: User) -> dict:
+    """The student's limits + live window usage + next-review timestamp.
+
+    Bundles everything the resume page needs in one dict so every endpoint
+    returns the same shape.
+    """
+    limits = _effective_ai_limits(student)
+    return {
+        **limits,
+        "ai_requests_used": _ai_requests_used_in_window(student),
+        "resume_uploads_used": _resume_uploads_used_in_window(student),
+        "next_ai_review_at": _next_ai_review_available(student, limits),
+    }
+
+
 def _resume_folder(student: User) -> str:
     """Cloudinary folder: resumes/{branch}/{section}/"""
     from apps.core.utils import slugify

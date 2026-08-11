@@ -215,6 +215,8 @@ export interface ResumeLimits {
   unlimited_ai: boolean;
   ai_requests_used: number;
   resume_uploads_used: number;
+  /** When the next AI review slot opens (ISO) - null when a review is available now. */
+  next_ai_review_at: string | null;
 }
 
 export interface Resume {
@@ -264,6 +266,8 @@ export interface AiAccessConfig {
   };
   ai_requests_used: number;
   resume_uploads_used: number;
+  /** When the next AI review slot opens (ISO) - null when a review is available now. */
+  next_ai_review_at: string | null;
   updated_at: string;
 }
 

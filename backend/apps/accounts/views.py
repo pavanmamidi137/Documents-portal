@@ -447,6 +447,7 @@ class StudentViewSet(viewsets.ModelViewSet):
                 "effective": limits,
                 "ai_requests_used": services._ai_requests_used_in_window(student),
                 "resume_uploads_used": services._resume_uploads_used_in_window(student),
+                "next_ai_review_at": services._next_ai_review_available(student, limits),
             })
 
         serializer = AiAccessConfigSerializer(config, data=request.data, partial=True)
@@ -460,11 +461,13 @@ class StudentViewSet(viewsets.ModelViewSet):
             request.user, "UPDATE", "AiAccessConfig", student.id,
             {"roll_number": student.roll_number, **validated}, request,
         )
+        limits = services._effective_ai_limits(student)
         return Response({
             **AiAccessConfigSerializer(config).data,
-            "effective": services._effective_ai_limits(student),
+            "effective": limits,
             "ai_requests_used": services._ai_requests_used_in_window(student),
             "resume_uploads_used": services._resume_uploads_used_in_window(student),
+            "next_ai_review_at": services._next_ai_review_available(student, limits),
         })
 
 
@@ -816,13 +819,9 @@ class ResumeViewSet(viewsets.ModelViewSet):
             raise NotFound("You have not uploaded a resume yet.")
         data = ResumeSerializer(resume).data
         # Attach the student's AI limits + window usage so the resume page can
-        # show how many AI requests/upload slots remain.
-        limits = services._effective_ai_limits(request.user)
-        data["limits"] = {
-            **limits,
-            "ai_requests_used": services._ai_requests_used_in_window(request.user),
-            "resume_uploads_used": services._resume_uploads_used_in_window(request.user),
-        }
+        # show how many AI requests/upload slots remain (and when the next AI
+        # review becomes available once the budget is used up).
+        data["limits"] = services._limits_payload(request.user)
         return Response(data)
 
     def create(self, request, *args, **kwargs):
@@ -834,12 +833,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
             raise ValidationError({"file": "A resume file is required."})
         resume = services.upload_resume(request.user, resume_file, request)
         data = ResumeSerializer(resume).data
-        limits = services._effective_ai_limits(request.user)
-        data["limits"] = {
-            **limits,
-            "ai_requests_used": services._ai_requests_used_in_window(request.user),
-            "resume_uploads_used": services._resume_uploads_used_in_window(request.user),
-        }
+        data["limits"] = services._limits_payload(request.user)
         return Response(data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
@@ -1098,12 +1092,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         data = ResumeSerializer(resume).data
         if user.is_student:
-            limits = services._effective_ai_limits(user)
-            data["limits"] = {
-                **limits,
-                "ai_requests_used": services._ai_requests_used_in_window(user),
-                "resume_uploads_used": services._resume_uploads_used_in_window(user),
-            }
+            data["limits"] = services._limits_payload(user)
         return Response(data)
 
     @action(detail=True, methods=["post"])

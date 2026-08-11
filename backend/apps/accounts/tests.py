@@ -2329,6 +2329,47 @@ class ResumeTests(TestCase):
         self.assertEqual(allowed.status_code, 200, allowed.data)
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_next_ai_review_at_reported_when_budget_exhausted(self, mock_upload):
+        """The resume payload tells the student when their next review opens."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.placements.models import AiUsageLog
+
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+
+        # With budget left, no countdown is reported.
+        mine = self._client(self.student).get("/api/resumes/mine/")
+        self.assertEqual(mine.status_code, 200)
+        self.assertIsNone(mine.data["limits"]["next_ai_review_at"])
+
+        # Use the single weekly review: the next slot opens when the oldest
+        # usage log ages out of the 7-day window. auto_now_add ignores the
+        # provided created_at, so set the age with an explicit update.
+        log = AiUsageLog.objects.create(
+            user=self.student, action=AiUsageLog.Action.RESUME,
+            prompt_tokens=10, completion_tokens=5,
+        )
+        AiUsageLog.objects.filter(pk=log.pk).update(
+            created_at=timezone.now() - timedelta(days=2)
+        )
+        mine = self._client(self.student).get("/api/resumes/mine/")
+        self.assertEqual(mine.status_code, 200)
+        next_at = mine.data["limits"]["next_ai_review_at"]
+        self.assertIsNotNone(next_at)
+        # The oldest log (2 days ago) + the 7-day window = 5 days from now.
+        expected = timezone.now() - timedelta(days=2) + timedelta(days=7)
+        self.assertAlmostEqual(next_at, expected, delta=timedelta(seconds=5))
+        # The ai_access admin endpoint reports the same timestamp.
+        admin = self._client(self.admin)
+        access = admin.get(f"/api/students/{self.student.id}/ai_access/")
+        self.assertEqual(access.status_code, 200)
+        self.assertIsNotNone(access.data["next_ai_review_at"])
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_unlimited_ai_bypasses_daily_limit(self, mock_upload):
         from apps.placements.models import AiUsageLog
 
