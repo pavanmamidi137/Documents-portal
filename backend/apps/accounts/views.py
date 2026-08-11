@@ -627,6 +627,45 @@ class AdminViewSet(viewsets.ModelViewSet):
             "transferred_from": old.roll_number,
         })
 
+    @action(detail=False, methods=["get"])
+    def candidates(self, request):
+        """Search existing students/CRs/faculty who could be promoted to admin.
+
+        Excludes current admins so the promotion picker never offers a user
+        who is already an admin. Accepts the same ``search`` query param as
+        the other management lists.
+        """
+        qs = User.objects.select_related("branch", "section").exclude(
+            role=User.Role.SUPER_ADMIN
+        )
+        search = request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(roll_number__icontains=search)
+                | Q(full_name__icontains=search)
+                | Q(email__icontains=search)
+                | Q(phone__icontains=search)
+            )
+        return Response(UserSerializer(qs.order_by("roll_number")[:25], many=True).data)
+
+    @action(detail=True, methods=["post"])
+    def promote(self, request, pk=None):
+        """Promote an EXISTING student/CR/faculty account to Super Admin.
+
+        The account keeps its roll number and password - the person simply
+        logs in as before and gains full admin powers (their next login also
+        refreshes the role in the portal).
+        """
+        target = User.objects.filter(pk=pk).first()
+        if not target:
+            raise NotFound("User not found.")
+        try:
+            services.promote_to_admin(target, request.user, request)
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)})
+        invalidate_portal_caches("list:students", "list:status")
+        return Response(UserSerializer(target).data)
+
 
 # ---------------------------------------------------------------------------
 # Student resumes (students upload; faculty view their whole branch)

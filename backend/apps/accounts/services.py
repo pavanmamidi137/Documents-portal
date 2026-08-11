@@ -104,6 +104,40 @@ def demote_to_student(student: User, actor: User, request=None) -> None:
 
 
 @transaction.atomic
+def promote_to_admin(target: User, actor: User, request=None) -> None:
+    """Promote an EXISTING student/CR/faculty account to Super Admin.
+
+    Unlike creating a brand-new admin, the account keeps its roll number and
+    password (the person logs in with exactly what they used before - nothing
+    to hand over). Staff flags are set so the account gets Django admin
+    access too, and the promoted user is notified inside the portal.
+    """
+    if target.is_super_admin:
+        raise ValueError("This user is already an admin.")
+    if not target.is_active:
+        raise ValueError("Cannot promote a deactivated account. Activate it first.")
+    target.role = User.Role.SUPER_ADMIN
+    target.is_staff = True
+    target.is_superuser = True
+    target.save(update_fields=["role", "is_staff", "is_superuser"])
+    from apps.core.models import Notification
+    from apps.core.utils import notify
+
+    try:
+        notify(
+            User.objects.filter(pk=target.pk),
+            Notification.Kind.ANNOUNCEMENT,
+            "You now have admin access",
+            f"{actor.full_name} promoted you to Super Admin. You can manage the whole portal.",
+            "/admin",
+        )
+    except Exception:
+        pass  # a failed notification must never roll back the promotion
+    log_audit(actor, "ADMIN_PROMOTE", "Admin", target.id,
+              {"roll_number": target.roll_number, "promoted_by": actor.roll_number}, request)
+
+
+@transaction.atomic
 def set_active(student: User, active: bool, actor: User, request=None) -> None:
     if student.is_super_admin:
         raise ValueError("Cannot deactivate a Super Admin.")

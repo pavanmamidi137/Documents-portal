@@ -953,6 +953,108 @@ class AdminManagementTests(TestCase):
         self.admin.refresh_from_db()
         self.assertTrue(self.admin.is_super_admin)  # nothing changed
 
+    # -- promoting EXISTING students/faculty --------------------------------
+
+    def test_admin_promotes_existing_student(self):
+        from apps.core.models import Notification
+
+        student = User.objects.create_user(
+            roll_number="21IT01", password="secret123", full_name="Diya"
+        )
+        client = self._client()
+        response = client.post(f"/api/admins/{student.id}/promote/", {}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        student.refresh_from_db()
+        self.assertTrue(student.is_super_admin)
+        self.assertTrue(student.is_staff)
+        self.assertTrue(student.is_superuser)
+        # The account keeps its existing password - the person logs in as before.
+        self.assertTrue(student.check_password("secret123"))
+        # The promoted user is notified inside the portal.
+        self.assertTrue(
+            Notification.objects.filter(
+                user=student, kind=Notification.Kind.ANNOUNCEMENT,
+                title__icontains="admin access",
+            ).exists()
+        )
+        # Their next login returns the admin role.
+        login = APIClient().post(
+            "/api/auth/login/",
+            {"roll_number": "21IT01", "password": "secret123"},
+            format="json",
+        )
+        self.assertEqual(login.status_code, 200)
+        self.assertEqual(login.data["user"]["role"], "SUPER_ADMIN")
+
+    def test_admin_promotes_existing_faculty(self):
+        faculty = User.objects.create_user(
+            roll_number="FAC01", password="x", full_name="Prof. Rao",
+            role=User.Role.FACULTY,
+        )
+        response = self._client().post(
+            f"/api/admins/{faculty.id}/promote/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        faculty.refresh_from_db()
+        self.assertTrue(faculty.is_super_admin)
+
+    def test_promoting_existing_admin_is_rejected(self):
+        other = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        response = self._client().post(
+            f"/api/admins/{other.id}/promote/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("already an admin", str(response.data))
+
+    def test_promoting_missing_user_returns_404(self):
+        response = self._client().post("/api/admins/99999/promote/", {}, format="json")
+        self.assertEqual(response.status_code, 404)
+
+    def test_non_admin_cannot_promote(self):
+        student = User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya"
+        )
+        faculty = User.objects.create_user(
+            roll_number="FAC01", password="x", full_name="Prof. Rao",
+            role=User.Role.FACULTY,
+        )
+        client = self._client(faculty)
+        response = client.post(f"/api/admins/{student.id}/promote/", {}, format="json")
+        self.assertEqual(response.status_code, 403)
+        student.refresh_from_db()
+        self.assertFalse(student.is_super_admin)
+
+    def test_candidates_lists_students_and_faculty_but_not_admins(self):
+        User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya"
+        )
+        User.objects.create_user(
+            roll_number="FAC01", password="x", full_name="Prof. Rao",
+            role=User.Role.FACULTY,
+        )
+        User.objects.create_user(
+            roll_number="CR01", password="x", full_name="Class Rep",
+            role=User.Role.CR,
+        )
+        User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        response = self._client().get("/api/admins/candidates/")
+        self.assertEqual(response.status_code, 200)
+        rolls = {u["roll_number"] for u in response.data}
+        self.assertIn("21IT01", rolls)
+        self.assertIn("FAC01", rolls)
+        self.assertIn("CR01", rolls)
+        self.assertNotIn("ADMIN2", rolls)
+        self.assertNotIn("admin", rolls)  # the caller is an admin too
+        # Searching narrows the picker.
+        searched = self._client().get("/api/admins/candidates/?search=diya")
+        self.assertEqual(
+            [u["roll_number"] for u in searched.data], ["21IT01"]
+        )
+
 
 class ResumeTests(TestCase):
     def setUp(self):

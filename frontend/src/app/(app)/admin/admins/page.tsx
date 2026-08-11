@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeftRight, KeyRound, Plus, ShieldCheck, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { RoleGuard } from "@/components/role-guard";
@@ -27,6 +27,7 @@ import { useAuth } from "@/lib/auth";
 import type { Paginated, User } from "@/lib/types";
 import { cn, formatDate, getErrorMessage } from "@/lib/utils";
 import { AdminFormDialog } from "./admin-form-dialog";
+import { PromoteAdminDialog } from "./promote-admin-dialog";
 
 export default function AdminsPage() {
   const queryClient = useQueryClient();
@@ -37,6 +38,7 @@ export default function AdminsPage() {
   const [q, setQ] = useState("");
   const debouncedQ = useDebouncedValue(q);
   const [addOpen, setAddOpen] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [passwordTarget, setPasswordTarget] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -210,7 +212,7 @@ export default function AdminsPage() {
     <RoleGuard roles={["SUPER_ADMIN"]}>
       <PageHeader
         title="Admin Management"
-        description="Create additional admin accounts or hand your admin access over to another person."
+        description="Promote an existing student or faculty member, create new admin accounts, or hand your admin access over to another person."
         actions={
           <>
             <Button
@@ -219,6 +221,9 @@ export default function AdminsPage() {
               onClick={() => setTransferOpen(true)}
             >
               <ArrowLeftRight className="size-4" /> Transfer Admin
+            </Button>
+            <Button variant="outline" onClick={() => setPromoteOpen(true)}>
+              <UserPlus className="size-4" /> Promote User
             </Button>
             <Button onClick={() => setAddOpen(true)}>
               <Plus className="size-4" /> Add Admin
@@ -249,12 +254,18 @@ export default function AdminsPage() {
 
       <p className="mt-4 flex items-start gap-2 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
-        Admins can manage everything. You cannot delete your own account — use{" "}
-        <span className="font-medium text-foreground">Transfer Admin</span> to hand control to someone
-        else (this signs you out).
+        <span>
+          <span className="font-medium text-foreground">Promote User</span> turns an existing{" "}
+          student, CR or faculty account into a Super Admin — they keep their login. You cannot{" "}
+          delete your own account — use{" "}
+          <span className="font-medium text-foreground">Transfer Admin</span> to hand control to
+          someone else (this signs you out).
+        </span>
       </p>
 
       <AdminFormDialog open={addOpen} onOpenChange={setAddOpen} mode="add" />
+
+      <PromoteAdminDialog open={promoteOpen} onOpenChange={setPromoteOpen} onPromoted={invalidate} />
 
       <AdminFormDialog
         open={transferOpen}
