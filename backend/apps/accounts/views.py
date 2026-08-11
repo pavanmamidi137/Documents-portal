@@ -32,6 +32,7 @@ from apps.core.utils import (
 from .models import AiAccessConfig, Resume, User
 from .serializers import (
     AdminCreateSerializer,
+    AdminUserSerializer,
     AiAccessConfigSerializer,
     ChangePasswordSerializer,
     FacultyCreateSerializer,
@@ -88,7 +89,8 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(UserSerializer(request.user).data)
+        # AdminUserSerializer so admins see their primary-admin flag.
+        return Response(AdminUserSerializer(request.user).data)
 
     def patch(self, request):
         """Let users update their own name / email / phone.
@@ -105,7 +107,7 @@ class MeView(APIView):
         request.user.save()
         log_audit(request.user, "PROFILE_UPDATE", "User", request.user.id,
                   {"roll_number": request.user.roll_number, "fields": list(serializer.validated_data)}, request)
-        return Response(UserSerializer(request.user).data)
+        return Response(AdminUserSerializer(request.user).data)
 
 
 class AvatarView(APIView):
@@ -146,7 +148,7 @@ class AvatarView(APIView):
         request.user.save(update_fields=["avatar_url"])
         log_audit(request.user, "PROFILE_UPDATE", "User", request.user.id,
                   {"roll_number": request.user.roll_number, "fields": ["avatar_url"]}, request)
-        return Response(UserSerializer(request.user).data)
+        return Response(AdminUserSerializer(request.user).data)
 
     def delete(self, request):
         """Remove the profile picture."""
@@ -154,7 +156,7 @@ class AvatarView(APIView):
         request.user.save(update_fields=["avatar_url"])
         log_audit(request.user, "PROFILE_UPDATE", "User", request.user.id,
                   {"roll_number": request.user.roll_number, "fields": ["avatar_url"]}, request)
-        return Response(UserSerializer(request.user).data)
+        return Response(AdminUserSerializer(request.user).data)
 
 
 class ChangePasswordView(APIView):
@@ -443,8 +445,8 @@ class StudentViewSet(viewsets.ModelViewSet):
             return Response({
                 **AiAccessConfigSerializer(config).data,
                 "effective": limits,
-                "ai_requests_used_today": services._ai_requests_used_today(student),
-                "resume_uploads_used_today": services._resume_uploads_used_today(student),
+                "ai_requests_used": services._ai_requests_used_in_window(student),
+                "resume_uploads_used": services._resume_uploads_used_in_window(student),
             })
 
         serializer = AiAccessConfigSerializer(config, data=request.data, partial=True)
@@ -461,8 +463,8 @@ class StudentViewSet(viewsets.ModelViewSet):
         return Response({
             **AiAccessConfigSerializer(config).data,
             "effective": services._effective_ai_limits(student),
-            "ai_requests_used_today": services._ai_requests_used_today(student),
-            "resume_uploads_used_today": services._resume_uploads_used_today(student),
+            "ai_requests_used": services._ai_requests_used_in_window(student),
+            "resume_uploads_used": services._resume_uploads_used_in_window(student),
         })
 
 
@@ -542,12 +544,12 @@ class FacultyViewSet(viewsets.ModelViewSet):
 # Admin account management (Super Admin manages other admins + handover)
 # ---------------------------------------------------------------------------
 class AdminViewSet(viewsets.ModelViewSet):
-    """Super Admin manages admin accounts.
+    """Admin account management - WRITE actions are primary-admin only.
 
-    Create additional admin accounts, delete them (never the last one, never
-    yourself) and "transfer" the role: a new admin account is created and the
-    calling admin is demoted to a regular student so only one person holds
-    admin access at the end of the handover.
+    Any Super Admin can view the admin list, but only the PRIMARY
+    (first-created) admin may create, delete, promote, demote, reset or
+    hand over admin accounts. Secondary admins keep every other portal
+    power (students, faculty, documents, drives, AI...).
     """
 
     http_method_names = ["get", "post", "delete", "head", "options"]
@@ -556,7 +558,9 @@ class AdminViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == "create":
             return AdminCreateSerializer
-        return UserSerializer
+        # AdminUserSerializer includes is_primary_admin so the frontend can
+        # show who holds primary admin (and gate the management buttons).
+        return AdminUserSerializer
 
     def get_queryset(self):
         qs = User.objects.filter(role=User.Role.SUPER_ADMIN)
@@ -570,15 +574,29 @@ class AdminViewSet(viewsets.ModelViewSet):
             )
         return qs.order_by("roll_number")
 
+    def _require_primary_admin(self):
+        """Only the PRIMARY (first-created) admin may change the admin roster.
+
+        Secondary admins keep every other portal power (students, faculty,
+        documents, drives, AI...) but cannot promote, demote, add, delete or
+        hand over admin accounts - that stays with the account owner.
+        """
+        if not self.request.user.is_primary_admin:
+            raise PermissionDenied(
+                "Only the primary admin can manage admin accounts. Ask the primary admin to make this change."
+            )
+
     def create(self, request, *args, **kwargs):
+        self._require_primary_admin()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         admin = serializer.save()
         log_audit(request.user, "CREATE", "Admin", admin.id,
                   {"roll_number": admin.roll_number}, request)
-        return Response(UserSerializer(admin).data, status=status.HTTP_201_CREATED)
+        return Response(AdminUserSerializer(admin).data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
+        self._require_primary_admin()
         admin = self.get_object()
         # The caller is always an admin themselves, so deleting any other admin
         # can never remove the last one - the only danger is self-deletion.
@@ -594,6 +612,7 @@ class AdminViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def reset_password(self, request, pk=None):
+        self._require_primary_admin()
         admin = self.get_object()
         serializer = ResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -604,12 +623,15 @@ class AdminViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"])
     def transfer(self, request):
-        """Hand the admin role to another person.
+        """Hand the admin role to another person (primary admin only).
 
         Creates a new SUPER_ADMIN from the payload, then demotes the calling
         admin to a regular student (clearing staff flags) so the handover is
-        complete. The caller's session stops being admin immediately.
+        complete. The new account is now the earliest-created admin, so it
+        automatically becomes the primary admin. The caller's session stops
+        being admin immediately.
         """
+        self._require_primary_admin()
         serializer = AdminCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         new_admin = serializer.save()
@@ -622,8 +644,24 @@ class AdminViewSet(viewsets.ModelViewSet):
                   {"from_roll": old.roll_number}, request)
         log_audit(old, "ADMIN_TRANSFER_OUT", "Admin", new_admin.id,
                   {"to_roll": new_admin.roll_number}, request)
+        # The rest of the admin team hears that the handover happened.
+        try:
+            from apps.core.models import Notification
+            from apps.core.utils import notify
+
+            notify(
+                User.objects.filter(role=User.Role.SUPER_ADMIN, is_active=True)
+                .exclude(pk__in=[new_admin.pk, old.pk]),
+                Notification.Kind.ANNOUNCEMENT,
+                "Admin access transferred",
+                f"{old.full_name} handed admin access over to {new_admin.full_name} "
+                f"({new_admin.roll_number}).",
+                "/admin/admins",
+            )
+        except Exception:
+            pass  # a failed notification must never break the handover
         return Response({
-            "admin": UserSerializer(new_admin).data,
+            "admin": AdminUserSerializer(new_admin).data,
             "transferred_from": old.roll_number,
         })
 
@@ -656,6 +694,7 @@ class AdminViewSet(viewsets.ModelViewSet):
         logs in as before and gains full admin powers (their next login also
         refreshes the role in the portal).
         """
+        self._require_primary_admin()
         target = User.objects.filter(pk=pk).first()
         if not target:
             raise NotFound("User not found.")
@@ -664,7 +703,33 @@ class AdminViewSet(viewsets.ModelViewSet):
         except ValueError as exc:
             raise ValidationError({"detail": str(exc)})
         invalidate_portal_caches("list:students", "list:status")
-        return Response(UserSerializer(target).data)
+        return Response(AdminUserSerializer(target).data)
+
+    @action(detail=True, methods=["post"])
+    def demote(self, request, pk=None):
+        """Remove admin access from ANOTHER admin account (primary admin only).
+
+        The account is reverted to a regular student (default) or faculty
+        member - it keeps its roll number, password and branch. Demoting
+        yourself is blocked: use 'Transfer admin' to hand over access.
+        """
+        self._require_primary_admin()
+        target = User.objects.filter(pk=pk).first()
+        if not target:
+            raise NotFound("User not found.")
+        if target.pk == request.user.pk:
+            raise ValidationError(
+                {"detail": "You cannot demote yourself. Use 'Transfer admin' to hand over access."}
+            )
+        try:
+            services.demote_from_admin(
+                target, request.user, request,
+                role=request.data.get("role", "STUDENT"),
+            )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)})
+        invalidate_portal_caches("list:students", "list:status")
+        return Response(AdminUserSerializer(target).data)
 
 
 # ---------------------------------------------------------------------------
@@ -750,13 +815,13 @@ class ResumeViewSet(viewsets.ModelViewSet):
         if not resume:
             raise NotFound("You have not uploaded a resume yet.")
         data = ResumeSerializer(resume).data
-        # Attach the student's AI limits + today's usage so the resume page can
+        # Attach the student's AI limits + window usage so the resume page can
         # show how many AI requests/upload slots remain.
         limits = services._effective_ai_limits(request.user)
         data["limits"] = {
             **limits,
-            "ai_requests_used_today": services._ai_requests_used_today(request.user),
-            "resume_uploads_used_today": services._resume_uploads_used_today(request.user),
+            "ai_requests_used": services._ai_requests_used_in_window(request.user),
+            "resume_uploads_used": services._resume_uploads_used_in_window(request.user),
         }
         return Response(data)
 
@@ -772,8 +837,8 @@ class ResumeViewSet(viewsets.ModelViewSet):
         limits = services._effective_ai_limits(request.user)
         data["limits"] = {
             **limits,
-            "ai_requests_used_today": services._ai_requests_used_today(request.user),
-            "resume_uploads_used_today": services._resume_uploads_used_today(request.user),
+            "ai_requests_used": services._ai_requests_used_in_window(request.user),
+            "resume_uploads_used": services._resume_uploads_used_in_window(request.user),
         }
         return Response(data, status=status.HTTP_201_CREATED)
 
@@ -1012,17 +1077,19 @@ class ResumeViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": "This resume's file was deleted from storage. Re-upload it first."}
             )
-        # Students/CRs have a per-day AI request budget (default 5, admin-
-        # adjustable per roll number; "unlimited" bypasses it). Faculty/admin
-        # reviews are not limited - they review on behalf of the college.
+        # Students/CRs have a rolling AI review budget (default: one review per
+        # week, admin-adjustable per roll number; "unlimited" bypasses it).
+        # Faculty/admin reviews are not limited - they review on behalf of the
+        # college.
         if user.is_student_or_cr:
             limits = services._effective_ai_limits(user)
             if not limits["unlimited_ai"] and \
-                    services._ai_requests_used_today(user) >= limits["daily_ai_requests"]:
+                    services._ai_requests_used_in_window(user) >= limits["daily_ai_requests"]:
                 raise ValidationError({
                     "detail": (
-                        f"You have used your {limits['daily_ai_requests']} AI request(s) for today. "
-                        "Come back tomorrow, or ask the admin to raise your limit."
+                        f"You have used your {limits['daily_ai_requests']} AI review(s) for this "
+                        f"{limits['ai_review_window_days']}-day window. Come back in "
+                        f"{limits['ai_review_window_days']} days, or ask the admin to raise your limit."
                     )
                 })
         try:
@@ -1034,8 +1101,8 @@ class ResumeViewSet(viewsets.ModelViewSet):
             limits = services._effective_ai_limits(user)
             data["limits"] = {
                 **limits,
-                "ai_requests_used_today": services._ai_requests_used_today(user),
-                "resume_uploads_used_today": services._resume_uploads_used_today(user),
+                "ai_requests_used": services._ai_requests_used_in_window(user),
+                "resume_uploads_used": services._resume_uploads_used_in_window(user),
             }
         return Response(data)
 

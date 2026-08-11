@@ -991,14 +991,16 @@ function AiAccessDialog({
               <div>
                 <p className="text-sm font-medium">Unlimited AI</p>
                 <p className="text-xs text-muted-foreground">
-                  Bypasses the daily request limit for this student.
+                  Bypasses the weekly AI review limit for this student.
                 </p>
               </div>
               <Switch checked={unlimited} onCheckedChange={setUnlimited} />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="ai-daily">AI requests per day</Label>
+              <Label htmlFor="ai-daily">
+                AI reviews per {effective?.ai_review_window_days ?? 7} days
+              </Label>
               <Input
                 id="ai-daily"
                 type="number"
@@ -1026,7 +1028,9 @@ function AiAccessDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="ai-uploads">Resume uploads per day</Label>
+              <Label htmlFor="ai-uploads">
+                Resume uploads per {effective?.resume_upload_window_days ?? 2} days
+              </Label>
               <Input
                 id="ai-uploads"
                 type="number"
@@ -1039,9 +1043,9 @@ function AiAccessDialog({
 
             {data && (
               <p className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                Used today: {data.ai_requests_used_today} AI request
-                {data.ai_requests_used_today === 1 ? "" : "s"} · {data.resume_uploads_used_today} resume
-                upload{data.resume_uploads_used_today === 1 ? "" : "s"}
+                Used in window: {data.ai_requests_used} AI review
+                {data.ai_requests_used === 1 ? "" : "s"} · {data.resume_uploads_used} resume
+                upload{data.resume_uploads_used === 1 ? "" : "s"}
               </p>
             )}
 

@@ -24,6 +24,8 @@ export interface User {
   section_name: string | null;
   is_active: boolean;
   is_super_admin: boolean;
+  /** Present only for admins (auth user + admin list) - undefined for others. */
+  is_primary_admin?: boolean;
   is_cr: boolean;
   is_faculty: boolean;
   is_student: boolean;
@@ -204,11 +206,15 @@ export interface ResumeAiAnalysis {
 
 export interface ResumeLimits {
   daily_ai_requests: number;
+  /** Rolling window (days) for the AI review budget - default 7 (weekly). */
+  ai_review_window_days: number;
   ats_view_interval_days: number | null;
   daily_resume_uploads: number;
+  /** Rolling window (days) for resume uploads - default 2. */
+  resume_upload_window_days: number;
   unlimited_ai: boolean;
-  ai_requests_used_today: number;
-  resume_uploads_used_today: number;
+  ai_requests_used: number;
+  resume_uploads_used: number;
 }
 
 export interface Resume {
@@ -250,12 +256,14 @@ export interface AiAccessConfig {
   daily_resume_uploads: number | null;
   effective: {
     daily_ai_requests: number;
+    ai_review_window_days: number;
     ats_view_interval_days: number | null;
     daily_resume_uploads: number;
+    resume_upload_window_days: number;
     unlimited_ai: boolean;
   };
-  ai_requests_used_today: number;
-  resume_uploads_used_today: number;
+  ai_requests_used: number;
+  resume_uploads_used: number;
   updated_at: string;
 }
 

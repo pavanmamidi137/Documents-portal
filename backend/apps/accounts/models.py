@@ -138,6 +138,25 @@ class User(AbstractBaseUser, PermissionsMixin):
     def role_label(self) -> str:
         return self.Role(self.role).label if self.role in self.Role.values else self.role
 
+    @property
+    def is_primary_admin(self) -> bool:
+        """Whether this admin is the PRIMARY (first-created) admin account.
+
+        Only the primary admin may manage the admin roster (promote, demote,
+        add, delete, transfer). When the primary admin hands over via
+        'Transfer admin', the newly created admin becomes the earliest-created
+        admin and therefore the new primary automatically.
+        """
+        if not self.is_super_admin:
+            return False
+        primary = (
+            User.objects.filter(role=self.Role.SUPER_ADMIN)
+            .order_by("date_joined", "id")
+            .values_list("id", flat=True)
+            .first()
+        )
+        return primary is not None and primary == self.pk
+
     def can_manage_section(self, section) -> bool:
         """Super admins manage everything; CRs only their assigned section."""
         if self.is_super_admin:
@@ -247,8 +266,8 @@ class Resume(models.Model):
 class AiAccessConfig(models.Model):
     """Per-student overrides for the AI usage limits.
 
-    Every student gets the portal-wide defaults (daily AI requests = 1,
-    ATS report view interval = 10 days, resume uploads per day = 1). The
+    Every student gets the portal-wide defaults (AI requests = 1 per week,
+    ATS report view interval = 10 days, resume uploads = 1 per 2 days). The
     Super Admin can adjust these for a specific roll number - raise/lower the
     numbers or grant unlimited AI requests - via the Students admin page.
     """

@@ -27,6 +27,38 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "date_joined", "is_staff", "profile_completion"]
 
 
+class AdminUserSerializer(UserSerializer):
+    """UserSerializer plus the primary-admin flag.
+
+    Kept OUT of the base UserSerializer so the busiest list endpoints
+    (students, faculty, search, resumes) never pay the extra query - it is
+    only used where the flag matters: the auth user (login/me), the admins
+    list and admin-account actions.
+    """
+
+    is_primary_admin = serializers.SerializerMethodField()
+
+    class Meta(UserSerializer.Meta):
+        fields = UserSerializer.Meta.fields + ["is_primary_admin"]
+
+    def get_is_primary_admin(self, obj) -> bool:
+        if not obj.is_super_admin:
+            return False  # non-admins never pay the lookup query
+        # DRF reuses ONE serializer instance for every row in a list response,
+        # so the primary-admin lookup runs once per response, not once per row.
+        primary_id = getattr(self, "_primary_admin_id", None)
+        if primary_id is None:
+            primary_id = (
+                User.objects.filter(role=User.Role.SUPER_ADMIN)
+                .order_by("date_joined", "id")
+                .values_list("id", flat=True)
+                .first()
+                or 0  # sentinel: no admins -> cache sticks, never matches
+            )
+            self._primary_admin_id = primary_id
+        return obj.id == primary_id
+
+
 class LoginSerializer(TokenObtainPairSerializer):
     """Extends JWT login to also return the user profile.
 
@@ -56,7 +88,9 @@ class LoginSerializer(TokenObtainPairSerializer):
         # reuse it so serialization stays in memory and skips 2 queries.
         if legacy is not None:
             self.user = legacy
-        data["user"] = UserSerializer(self.user).data
+        # AdminUserSerializer so admins immediately know (and the frontend can
+        # gate) whether they are the primary admin.
+        data["user"] = AdminUserSerializer(self.user).data
         return data
 
 

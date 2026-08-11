@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, KeyRound, Plus, ShieldCheck, Trash2, UserPlus } from "lucide-react";
+import { ArrowLeftRight, KeyRound, Plus, ShieldCheck, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { RoleGuard } from "@/components/role-guard";
@@ -27,6 +27,7 @@ import { useAuth } from "@/lib/auth";
 import type { Paginated, User } from "@/lib/types";
 import { cn, formatDate, getErrorMessage } from "@/lib/utils";
 import { AdminFormDialog } from "./admin-form-dialog";
+import { DemoteAdminDialog } from "./demote-admin-dialog";
 import { PromoteAdminDialog } from "./promote-admin-dialog";
 
 export default function AdminsPage() {
@@ -45,6 +46,7 @@ export default function AdminsPage() {
   const [resetting, setResetting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [demoteTarget, setDemoteTarget] = useState<User | null>(null);
 
   const currentQueryKey = ["admins", page, pageSize, debouncedQ] as const;
 
@@ -58,6 +60,8 @@ export default function AdminsPage() {
       }),
     placeholderData: keepPreviousData,
   });
+
+  const isPrimaryAdmin = user?.is_primary_admin ?? false;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["admins"] });
 
@@ -134,8 +138,16 @@ export default function AdminsPage() {
           <div className="min-w-0">
             <p className="truncate font-medium">
               {a.full_name}
+              {a.is_primary_admin && (
+                <Badge
+                  variant="outline"
+                  className="ml-2 align-middle border-primary/40 bg-primary/10 text-[10px] text-primary"
+                >
+                  Primary
+                </Badge>
+              )}
               {a.id === user?.id && (
-                <Badge variant="outline" className="ml-2 align-middle text-[10px]">
+                <Badge variant="outline" className="ml-1 align-middle text-[10px]">
                   You
                 </Badge>
               )}
@@ -177,6 +189,11 @@ export default function AdminsPage() {
       header: "",
       cell: (a) => (
         <div className="flex items-center justify-end gap-0.5">
+          {!isPrimaryAdmin && (
+            <span className="pr-2 text-xs text-muted-foreground">View only</span>
+          )}
+          {isPrimaryAdmin && (
+          <>
           <Button
             size="icon"
             variant="ghost"
@@ -194,6 +211,26 @@ export default function AdminsPage() {
               "size-8",
               a.id === user?.id
                 ? "cursor-not-allowed text-muted-foreground/40"
+                : "text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-400"
+            )}
+            title={
+              a.id === user?.id
+                ? "Use 'Transfer admin' to hand over your own access"
+                : "Remove admin access (revert to student/faculty)"
+            }
+            aria-label={`Remove admin access for ${a.full_name}`}
+            disabled={a.id === user?.id}
+            onClick={() => setDemoteTarget(a)}
+          >
+            <UserMinus className="size-4" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className={cn(
+              "size-8",
+              a.id === user?.id
+                ? "cursor-not-allowed text-muted-foreground/40"
                 : "text-destructive hover:text-destructive"
             )}
             title={a.id === user?.id ? "Use 'Transfer admin' to hand over your own access" : "Delete admin"}
@@ -203,6 +240,8 @@ export default function AdminsPage() {
           >
             <Trash2 className="size-4" />
           </Button>
+          </>
+          )}
         </div>
       ),
     },
@@ -212,25 +251,42 @@ export default function AdminsPage() {
     <RoleGuard roles={["SUPER_ADMIN"]}>
       <PageHeader
         title="Admin Management"
-        description="Promote an existing student or faculty member, create new admin accounts, or hand your admin access over to another person."
+        description={
+          isPrimaryAdmin
+            ? "Promote an existing student or faculty member, create new admin accounts, or hand your admin access over to another person."
+            : "You can view the admin list — only the primary admin can add, promote, demote or remove admins."
+        }
         actions={
-          <>
-            <Button
-              variant="outline"
-              className="gap-2 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-400"
-              onClick={() => setTransferOpen(true)}
-            >
-              <ArrowLeftRight className="size-4" /> Transfer Admin
-            </Button>
-            <Button variant="outline" onClick={() => setPromoteOpen(true)}>
-              <UserPlus className="size-4" /> Promote User
-            </Button>
-            <Button onClick={() => setAddOpen(true)}>
-              <Plus className="size-4" /> Add Admin
-            </Button>
-          </>
+          isPrimaryAdmin ? (
+            <>
+              <Button
+                variant="outline"
+                className="gap-2 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600 dark:text-amber-400"
+                onClick={() => setTransferOpen(true)}
+              >
+                <ArrowLeftRight className="size-4" /> Transfer Admin
+              </Button>
+              <Button variant="outline" onClick={() => setPromoteOpen(true)}>
+                <UserPlus className="size-4" /> Promote User
+              </Button>
+              <Button onClick={() => setAddOpen(true)}>
+                <Plus className="size-4" /> Add Admin
+              </Button>
+            </>
+          ) : undefined
         }
       />
+
+      {!isPrimaryAdmin && (
+        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+          <ShieldCheck className="mt-0.5 size-4 shrink-0" />
+          <p>
+            You are a <span className="font-semibold">secondary admin</span>. The primary admin (the
+            first-created admin) controls who has admin access — ask them to promote, demote or add
+            admins. You keep every other portal power (students, faculty, documents, drives, AI).
+          </p>
+        </div>
+      )}
 
       <DataTable
         columns={columns}
@@ -256,8 +312,12 @@ export default function AdminsPage() {
         <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
         <span>
           <span className="font-medium text-foreground">Promote User</span> turns an existing{" "}
-          student, CR or faculty account into a Super Admin — they keep their login. You cannot{" "}
-          delete your own account — use{" "}
+          student, CR or faculty account into a Super Admin — they keep their login. The{" "}
+          <span className="font-medium text-foreground">UserMinus icon</span> removes admin access{" "}
+          from another admin (reverting them to a student or faculty member). These actions are{" "}
+          limited to the <span className="font-medium text-foreground">primary admin</span> (the
+          first-created admin) — secondary admins can view the list but not change it. You cannot{" "}
+          demote or delete your own account — use{" "}
           <span className="font-medium text-foreground">Transfer Admin</span> to hand control to
           someone else (this signs you out).
         </span>
@@ -266,6 +326,15 @@ export default function AdminsPage() {
       <AdminFormDialog open={addOpen} onOpenChange={setAddOpen} mode="add" />
 
       <PromoteAdminDialog open={promoteOpen} onOpenChange={setPromoteOpen} onPromoted={invalidate} />
+
+      <DemoteAdminDialog
+        target={demoteTarget}
+        onOpenChange={(open) => !open && setDemoteTarget(null)}
+        onDemoted={() => {
+          setDemoteTarget(null);
+          invalidate();
+        }}
+      />
 
       <AdminFormDialog
         open={transferOpen}

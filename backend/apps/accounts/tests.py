@@ -1055,6 +1055,326 @@ class AdminManagementTests(TestCase):
             [u["roll_number"] for u in searched.data], ["21IT01"]
         )
 
+    # -- demoting EXISTING admins -------------------------------------------
+
+    def test_admin_demotes_another_admin_to_student(self):
+        from apps.core.models import Notification
+
+        other = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        response = self._client().post(
+            f"/api/admins/{other.id}/demote/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        other.refresh_from_db()
+        self.assertTrue(other.is_student)
+        self.assertFalse(other.is_super_admin)
+        self.assertFalse(other.is_staff)
+        self.assertFalse(other.is_superuser)
+        # The demoted user is notified inside the portal.
+        self.assertTrue(
+            Notification.objects.filter(
+                user=other, kind=Notification.Kind.ANNOUNCEMENT,
+                title__icontains="admin access",
+            ).exists()
+        )
+        # Their next login no longer returns the admin role.
+        login = APIClient().post(
+            "/api/auth/login/",
+            {"roll_number": "ADMIN2", "password": "x"},
+            format="json",
+        )
+        self.assertEqual(login.status_code, 200)
+        self.assertEqual(login.data["user"]["role"], "STUDENT")
+
+    def test_admin_demotes_another_admin_to_faculty(self):
+        other = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        response = self._client().post(
+            f"/api/admins/{other.id}/demote/",
+            {"role": "FACULTY"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        other.refresh_from_db()
+        self.assertTrue(other.is_faculty)
+        self.assertFalse(other.is_staff)
+
+    def test_admin_cannot_demote_self(self):
+        response = self._client().post(
+            f"/api/admins/{self.admin.id}/demote/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Transfer admin", str(response.data))
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_super_admin)  # nothing changed
+
+    def test_demote_rejects_non_admin_target(self):
+        student = User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya"
+        )
+        response = self._client().post(
+            f"/api/admins/{student.id}/demote/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not an admin", str(response.data))
+
+    def test_demote_rejects_invalid_role(self):
+        other = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        response = self._client().post(
+            f"/api/admins/{other.id}/demote/",
+            {"role": "CR"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        other.refresh_from_db()
+        self.assertTrue(other.is_super_admin)  # nothing changed
+
+    def test_non_admin_cannot_demote(self):
+        other = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        faculty = User.objects.create_user(
+            roll_number="FAC01", password="x", full_name="Prof. Rao",
+            role=User.Role.FACULTY,
+        )
+        client = self._client(faculty)
+        response = client.post(f"/api/admins/{other.id}/demote/", {}, format="json")
+        self.assertEqual(response.status_code, 403)
+        other.refresh_from_db()
+        self.assertTrue(other.is_super_admin)
+
+    # -- only the PRIMARY admin may manage the admin roster ------------------
+
+    def test_is_primary_admin_flags_first_admin_only(self):
+        self.assertTrue(self.admin.is_primary_admin)
+        other = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        self.assertFalse(other.is_primary_admin)
+        # The flag travels with the serialized user (auth/me + admins list).
+        me = self._client().get("/api/auth/me/")
+        self.assertTrue(me.data["is_primary_admin"])
+        listed = self._client().get("/api/admins/")
+        by_roll = {a["roll_number"]: a for a in listed.data["results"]}
+        self.assertTrue(by_roll["admin"]["is_primary_admin"])
+        self.assertFalse(by_roll["ADMIN2"]["is_primary_admin"])
+
+    def _secondary_client(self):
+        secondary = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        return self._client(secondary), secondary
+
+    def test_secondary_admin_cannot_promote(self):
+        student = User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya"
+        )
+        client, _secondary = self._secondary_client()
+        response = client.post(f"/api/admins/{student.id}/promote/", {}, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("primary admin", str(response.data))
+        student.refresh_from_db()
+        self.assertFalse(student.is_super_admin)
+
+    def test_secondary_admin_cannot_demote_or_delete_admins(self):
+        client, _secondary = self._secondary_client()
+        # Demote the primary admin - blocked.
+        demoted = client.post(f"/api/admins/{self.admin.id}/demote/", {}, format="json")
+        self.assertEqual(demoted.status_code, 403)
+        # Delete the primary admin - blocked.
+        deleted = client.delete(f"/api/admins/{self.admin.id}/")
+        self.assertEqual(deleted.status_code, 403)
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_super_admin)
+
+    def test_secondary_admin_cannot_create_or_transfer_admins(self):
+        client, _secondary = self._secondary_client()
+        created = client.post(
+            "/api/admins/",
+            {"roll_number": "ADMIN3", "full_name": "Nope"},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 403)
+        transferred = client.post(
+            "/api/admins/transfer/",
+            {"roll_number": "ADMIN4", "full_name": "Nope"},
+            format="json",
+        )
+        self.assertEqual(transferred.status_code, 403)
+        # Nothing changed and no admin accounts were created.
+        self.assertFalse(User.objects.filter(roll_number="ADMIN3").exists())
+        self.assertFalse(User.objects.filter(roll_number="ADMIN4").exists())
+        _secondary.refresh_from_db()
+        self.assertTrue(_secondary.is_super_admin)
+
+    def test_secondary_admin_cannot_reset_admin_password(self):
+        client, _secondary = self._secondary_client()
+        response = client.post(
+            f"/api/admins/{self.admin.id}/reset_password/",
+            {"new_password": "Hacked@123"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.admin.refresh_from_db()
+        self.assertFalse(self.admin.check_password("Hacked@123"))
+
+    def test_secondary_admin_can_still_read_the_admin_list(self):
+        client, _secondary = self._secondary_client()
+        response = client.get("/api/admins/")
+        self.assertEqual(response.status_code, 200)
+        rolls = {a["roll_number"] for a in response.data["results"]}
+        self.assertEqual(rolls, {"admin", "ADMIN2"})
+
+    def test_student_lists_do_not_carry_the_primary_flag(self):
+        """Locks in the perf intent: hot list endpoints skip the lookup."""
+        User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya"
+        )
+        response = self._client().get("/api/students/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("is_primary_admin", response.data["results"][0])
+        # A non-admin's own login reports the flag as false (field present,
+        # but no lookup query is run for non-admins).
+        student_client = APIClient()
+        login = student_client.post(
+            "/api/auth/login/",
+            {"roll_number": "21IT01", "password": "x"},
+            format="json",
+        )
+        self.assertIs(login.data["user"]["is_primary_admin"], False)
+
+    # -- the rest of the admin team is kept in the loop ----------------------
+
+    def test_transfer_notifies_other_admins(self):
+        from apps.core.models import Notification
+
+        other_admin = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        response = self._client().post(
+            "/api/admins/transfer/",
+            {"roll_number": "NEWADMIN", "full_name": "New Boss"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(
+            Notification.objects.filter(
+                user=other_admin, kind=Notification.Kind.ANNOUNCEMENT,
+                title="Admin access transferred",
+                message__icontains="handed admin access over to New Boss",
+            ).exists()
+        )
+        # The caller (who did it) and the new admin are not spammed.
+        self.assertFalse(
+            Notification.objects.filter(
+                user=self.admin, kind=Notification.Kind.ANNOUNCEMENT,
+                title="Admin access transferred",
+            ).exists()
+        )
+
+    def test_promoting_notifies_other_admins(self):
+        from apps.core.models import Notification
+
+        other_admin = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        student = User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya"
+        )
+        response = self._client().post(
+            f"/api/admins/{student.id}/promote/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        # The other admin hears about the new admin.
+        self.assertTrue(
+            Notification.objects.filter(
+                user=other_admin, kind=Notification.Kind.ANNOUNCEMENT,
+                title="New admin added",
+            ).exists()
+        )
+        # The promoted user gets their own "you have admin access" message.
+        self.assertTrue(
+            Notification.objects.filter(
+                user=student, kind=Notification.Kind.ANNOUNCEMENT,
+                title="You now have admin access",
+            ).exists()
+        )
+        # The actor (who did it) is not spammed about their own action.
+        self.assertFalse(
+            Notification.objects.filter(
+                user=self.admin, kind=Notification.Kind.ANNOUNCEMENT,
+                title="New admin added",
+            ).exists()
+        )
+
+    def test_demoting_notifies_other_admins(self):
+        from apps.core.models import Notification
+
+        other_admin = User.objects.create_superuser(
+            roll_number="ADMIN2", password="x", full_name="Second Admin"
+        )
+        target = User.objects.create_superuser(
+            roll_number="ADMIN3", password="x", full_name="Third Admin"
+        )
+        response = self._client().post(
+            f"/api/admins/{target.id}/demote/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        # The other admin hears that admin access was removed.
+        self.assertTrue(
+            Notification.objects.filter(
+                user=other_admin, kind=Notification.Kind.ANNOUNCEMENT,
+                title="Admin access removed",
+                message__icontains="They are now a Student",
+            ).exists()
+        )
+        # The demoted user gets their own message; the actor does not.
+        self.assertTrue(
+            Notification.objects.filter(
+                user=target, kind=Notification.Kind.ANNOUNCEMENT,
+                title="Your admin access was removed",
+            ).exists()
+        )
+        self.assertFalse(
+            Notification.objects.filter(
+                user=self.admin, kind=Notification.Kind.ANNOUNCEMENT,
+                title="Admin access removed",
+            ).exists()
+        )
+
+    def test_transfer_hands_over_primary_status(self):
+        """After a handover the new admin becomes the primary admin."""
+        response = self._client().post(
+            "/api/admins/transfer/",
+            {"roll_number": "NEWADMIN", "full_name": "New Boss"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        new_admin = User.objects.get(roll_number="NEWADMIN")
+        self.assertTrue(new_admin.is_primary_admin)
+        self.admin.refresh_from_db()
+        self.assertFalse(self.admin.is_super_admin)  # demoted to student
+        # The new primary can promote others; the old admin is just a student.
+        student = User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya"
+        )
+        promoted = APIClient()
+        login = promoted.post(
+            "/api/auth/login/",
+            {"roll_number": "NEWADMIN", "password": "NEWADMIN"},
+            format="json",
+        )
+        promoted.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        ok = promoted.post(f"/api/admins/{student.id}/promote/", {}, format="json")
+        self.assertEqual(ok.status_code, 200, ok.data)
+        student.refresh_from_db()
+        self.assertTrue(student.is_super_admin)
+
 
 class ResumeTests(TestCase):
     def setUp(self):
@@ -1951,20 +2271,20 @@ class ResumeTests(TestCase):
     # -- AI usage limits ------------------------------------------------
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
-    def test_resume_upload_limit_blocks_second_upload_today(self, mock_upload):
+    def test_resume_upload_limit_blocks_second_upload_in_window(self, mock_upload):
         mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
         client = self._client(self.student)
-        # The first upload succeeds (default daily limit = 1).
+        # The first upload succeeds (default window limit = 1).
         first = client.post(
             "/api/resumes/", {"file": self._resume_file()}, format="multipart"
         )
         self.assertEqual(first.status_code, 201)
-        # The second upload of the day is blocked with a friendly message.
+        # The second upload within the 2-day window is blocked with a friendly message.
         second = client.post(
             "/api/resumes/", {"file": self._resume_file()}, format="multipart"
         )
         self.assertEqual(second.status_code, 400)
-        self.assertIn("per day", str(second.data))
+        self.assertIn("every 2 days", str(second.data))
         # An admin override raises the limit.
         from .models import AiAccessConfig
 
@@ -1975,7 +2295,7 @@ class ResumeTests(TestCase):
         self.assertEqual(allowed.status_code, 201)
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
-    def test_ai_request_limit_blocks_extra_analyzes_today(self, mock_upload):
+    def test_ai_request_limit_blocks_extra_analyzes_in_window(self, mock_upload):
         from django.test import override_settings
 
         from apps.placements.models import AiUsageLog
@@ -1984,7 +2304,7 @@ class ResumeTests(TestCase):
         services.upload_resume(self.student, self._resume_file())
         resume = Resume.objects.get(student=self.student)
 
-        # Simulate the student having used their daily AI budget already.
+        # Simulate the student having used their weekly AI budget already.
         for _ in range(5):
             AiUsageLog.objects.create(
                 user=self.student, action=AiUsageLog.Action.RESUME,
@@ -1993,12 +2313,14 @@ class ResumeTests(TestCase):
         client = self._client(self.student)
         response = client.post(f"/api/resumes/{resume.id}/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 400)
-        self.assertIn("today", str(response.data))
+        self.assertIn("7-day window", str(response.data))
 
-        # The daily budget resets the next day.
+        # The weekly budget resets once the rolling window passes.
         from django.utils import timezone
 
-        AiUsageLog.objects.update(created_at=timezone.now() - __import__("datetime").timedelta(days=1))
+        AiUsageLog.objects.update(
+            created_at=timezone.now() - __import__("datetime").timedelta(days=8)
+        )
         with (
             patch("apps.placements.resume_ai._extract_resume_text", return_value=("Python", "")),
             patch("apps.placements.resume_ai.ai_json", return_value={"score": 60, "summary": "ok", "strengths": [], "improvements": [], "skills": [], "ats_keywords": []}),
@@ -2066,9 +2388,12 @@ class ResumeTests(TestCase):
         url = f"/api/students/{self.student.id}/ai_access/"
         get = client.get(url)
         self.assertEqual(get.status_code, 200)
-        # Portal default: one AI review per day (admin can raise per student).
+        # Portal default: one AI review per week, one resume upload per 2 days
+        # (admin can raise either per student).
         self.assertEqual(get.data["effective"]["daily_ai_requests"], 1)
         self.assertEqual(get.data["effective"]["daily_resume_uploads"], 1)
+        self.assertEqual(get.data["effective"]["ai_review_window_days"], 7)
+        self.assertEqual(get.data["effective"]["resume_upload_window_days"], 2)
 
         patch_resp = client.patch(
             url,

@@ -240,7 +240,8 @@ DOCUMENT_COMPRESS_AFTER_BYTES = (
 # ---------------------------------------------------------------------------
 # AI usage limits (per student, admin-adjustable via AiAccessConfig)
 # ---------------------------------------------------------------------------
-# How many AI resume reviews/asks a student can run per day (default: one).
+# How many AI resume reviews/asks a student can run per rolling window
+# (default: one review per week - see AI_REVIEW_WINDOW_DAYS below).
 # Provider API keys are encrypted at rest in the database with AES-GCM. The
 # encryption key MUST be stable across deploys (Render generates a new
 # SECRET_KEY per deploy, so set AI_ENCRYPTION_KEY explicitly in the Render env
@@ -248,10 +249,17 @@ DOCUMENT_COMPRESS_AFTER_BYTES = (
 AI_ENCRYPTION_KEY = os.getenv("AI_ENCRYPTION_KEY", "")
 
 AI_DAILY_REQUEST_LIMIT = int(os.getenv("AI_DAILY_REQUEST_LIMIT", "1"))
-# How often the full ATS report may be opened (days). Default: once per day.
+# The AI review budget is a ROLLING window, not a calendar day: a student may
+# run ``AI_DAILY_REQUEST_LIMIT`` reviews per ``AI_REVIEW_WINDOW_DAYS`` days
+# (default: one AI review per week).
+AI_REVIEW_WINDOW_DAYS = int(os.getenv("AI_REVIEW_WINDOW_DAYS", "7"))
+# How often the full ATS report may be opened (days). Default: every 10 days.
 ATS_VIEW_INTERVAL_DAYS = int(os.getenv("ATS_VIEW_INTERVAL_DAYS", "10"))
-# How many resume uploads/replacements a student may do per day (default: one).
+# Resume uploads are also a ROLLING window: a student may do
+# ``RESUME_DAILY_UPLOAD_LIMIT`` uploads per ``RESUME_UPLOAD_WINDOW_DAYS`` days
+# (default: one resume upload every 2 days).
 RESUME_DAILY_UPLOAD_LIMIT = int(os.getenv("RESUME_DAILY_UPLOAD_LIMIT", "1"))
+RESUME_UPLOAD_WINDOW_DAYS = int(os.getenv("RESUME_UPLOAD_WINDOW_DAYS", "2"))
 # Run the AI resume review automatically right after an upload (background
 # thread). Tests disable this so upload tests stay fast and hermetic.
 AI_AUTO_ANALYZE_ON_UPLOAD = os.getenv(

@@ -704,20 +704,27 @@ export default function ResumePage() {
           <div className="mt-6 rounded-xl border bg-muted/30 p-4">
             <div className="grid gap-3 text-center sm:grid-cols-2">
               <div className="rounded-lg border bg-card px-3 py-2">
-                <p className="text-[10px] text-muted-foreground uppercase">AI reviews today</p>
+                <p className="text-[10px] text-muted-foreground uppercase">
+                  AI reviews · {resume.limits.ai_review_window_days ?? 7} days
+                </p>
                 <p className="text-sm font-semibold tabular-nums">
-                  {resume.limits.ai_requests_used_today} / {resume.limits.daily_ai_requests}
+                  {resume.limits.ai_requests_used} / {resume.limits.daily_ai_requests}
                 </p>
               </div>
               <div className="rounded-lg border bg-card px-3 py-2">
-                <p className="text-[10px] text-muted-foreground uppercase">Resume uploads today</p>
+                <p className="text-[10px] text-muted-foreground uppercase">
+                  Resume uploads · {resume.limits.resume_upload_window_days ?? 2} days
+                </p>
                 <p className="text-sm font-semibold tabular-nums">
-                  {resume.limits.resume_uploads_used_today} / {resume.limits.daily_resume_uploads}
+                  {resume.limits.resume_uploads_used} / {resume.limits.daily_resume_uploads}
                 </p>
               </div>
             </div>
             <p className="mt-2 text-center text-[11px] text-muted-foreground">
-              Daily limits reset at midnight. Need more? Ask the admin to raise your limits.
+              Rolling windows — AI reviews renew every{" "}
+              {resume.limits.ai_review_window_days ?? 7} days, resume uploads every{" "}
+              {resume.limits.resume_upload_window_days ?? 2} days. Need more? Ask the
+              admin to raise your limits.
             </p>
           </div>
         )}

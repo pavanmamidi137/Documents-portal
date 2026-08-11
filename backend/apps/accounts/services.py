@@ -125,7 +125,7 @@ def promote_to_admin(target: User, actor: User, request=None) -> None:
 
     try:
         notify(
-            User.objects.filter(pk=target.pk),
+            [target],  # the instance is already in memory - no re-query
             Notification.Kind.ANNOUNCEMENT,
             "You now have admin access",
             f"{actor.full_name} promoted you to Super Admin. You can manage the whole portal.",
@@ -133,8 +133,69 @@ def promote_to_admin(target: User, actor: User, request=None) -> None:
         )
     except Exception:
         pass  # a failed notification must never roll back the promotion
+    # Keep the rest of the admin team in the loop (the actor already knows).
+    try:
+        notify(
+            User.objects.filter(role=User.Role.SUPER_ADMIN, is_active=True)
+            .exclude(pk__in=[target.pk, actor.pk]),
+            Notification.Kind.ANNOUNCEMENT,
+            "New admin added",
+            f"{actor.full_name} promoted {target.full_name} ({target.roll_number}) to Super Admin.",
+            "/admin/admins",
+        )
+    except Exception:
+        pass  # a failed notification must never roll back the promotion
     log_audit(actor, "ADMIN_PROMOTE", "Admin", target.id,
               {"roll_number": target.roll_number, "promoted_by": actor.roll_number}, request)
+
+
+@transaction.atomic
+def demote_from_admin(target: User, actor: User, request=None, role: str = "STUDENT") -> None:
+    """Remove admin access from another admin account.
+
+    The account is reverted to a regular student (default) or faculty member -
+    it keeps its roll number, password and branch, so the person simply logs
+    in as before but without admin powers. The caller is never demoted here
+    (that is what 'Transfer admin' is for) - the view enforces it.
+    """
+    if not target.is_super_admin:
+        raise ValueError("This user is not an admin.")
+    role = (role or "STUDENT").upper()
+    if role not in (User.Role.STUDENT, User.Role.FACULTY):
+        raise ValueError("Revert the admin to either 'STUDENT' or 'FACULTY'.")
+    target.role = role
+    target.is_staff = False
+    target.is_superuser = False
+    target.save(update_fields=["role", "is_staff", "is_superuser"])
+    from apps.core.models import Notification
+    from apps.core.utils import notify
+
+    try:
+        notify(
+            [target],  # the instance is already in memory - no re-query
+            Notification.Kind.ANNOUNCEMENT,
+            "Your admin access was removed",
+            f"{actor.full_name} removed your admin access. You can still log in as a {target.role_label}.",
+            "/",
+        )
+    except Exception:
+        pass  # a failed notification must never roll back the demotion
+    # Keep the rest of the admin team in the loop (the actor already knows).
+    try:
+        notify(
+            User.objects.filter(role=User.Role.SUPER_ADMIN, is_active=True)
+            .exclude(pk__in=[target.pk, actor.pk]),
+            Notification.Kind.ANNOUNCEMENT,
+            "Admin access removed",
+            f"{actor.full_name} removed admin access from {target.full_name} "
+            f"({target.roll_number}). They are now a {target.role_label}.",
+            "/admin/admins",
+        )
+    except Exception:
+        pass  # a failed notification must never roll back the demotion
+    log_audit(actor, "ADMIN_DEMOTE", "Admin", target.id,
+              {"roll_number": target.roll_number, "reverted_to": role,
+               "demoted_by": actor.roll_number}, request)
 
 
 @transaction.atomic
@@ -413,8 +474,12 @@ def _effective_ai_limits(student: User) -> dict:
 
     defaults = {
         "daily_ai_requests": settings.AI_DAILY_REQUEST_LIMIT,
+        # The AI review budget is a rolling window (default: one per week).
+        "ai_review_window_days": settings.AI_REVIEW_WINDOW_DAYS,
         "ats_view_interval_days": settings.ATS_VIEW_INTERVAL_DAYS,
         "daily_resume_uploads": settings.RESUME_DAILY_UPLOAD_LIMIT,
+        # Resume uploads use a rolling window too (default: one per 2 days).
+        "resume_upload_window_days": settings.RESUME_UPLOAD_WINDOW_DAYS,
         "unlimited_ai": False,
     }
     config = getattr(student, "ai_access", None)
@@ -430,30 +495,45 @@ def _effective_ai_limits(student: User) -> dict:
     return defaults
 
 
-def _today_start():
+def _window_cutoff(days: int):
+    """Datetime marking the start of a rolling window of ``days`` days."""
+    from datetime import timedelta
+
     from django.utils import timezone
 
-    return timezone.localdate()
+    return timezone.now() - timedelta(days=days)
 
 
-def _ai_requests_used_today(student: User) -> int:
-    """Count the student's AI review/ask/chat calls made today."""
+def _ai_requests_used_in_window(student: User) -> int:
+    """Count the student's AI review/ask/chat calls in the current window.
+
+    A rolling window (default 7 days = one review per week) instead of a
+    calendar day, so the budget resets continuously rather than at midnight.
+    """
+    from django.conf import settings
+
     from apps.placements.models import AiUsageLog
 
     return AiUsageLog.objects.filter(
         user=student,
-        created_at__date=_today_start(),
+        created_at__gte=_window_cutoff(settings.AI_REVIEW_WINDOW_DAYS),
     ).count()
 
 
-def _resume_uploads_used_today(student: User) -> int:
-    """Count resume uploads/replacements the student made today (audit trail)."""
+def _resume_uploads_used_in_window(student: User) -> int:
+    """Count resume uploads/replacements within the current window.
+
+    A rolling window (default 2 days = one upload every 2 days) instead of a
+    calendar day.
+    """
+    from django.conf import settings
+
     from apps.core.models import AuditLog
 
     return AuditLog.objects.filter(
         actor=student,
         action__in=["RESUME_UPLOAD", "RESUME_UPDATE"],
-        created_at__date=_today_start(),
+        created_at__gte=_window_cutoff(settings.RESUME_UPLOAD_WINDOW_DAYS),
     ).count()
 
 
@@ -497,21 +577,25 @@ def upload_resume(student: User, resume_file, request=None) -> Resume:
 
     One resume per student: an existing Cloudinary file is removed first, then
     the new file is uploaded and the Resume row is updated in place. Enforces
-    the student's per-day resume upload limit and kicks off an automatic AI
-    analysis right after the upload so the review is ready immediately.
+    the student's rolling resume-upload window (default: one every 2 days) and
+    kicks off an automatic AI analysis right after the upload so the review is
+    ready immediately.
     """
     from django.conf import settings
 
     from apps.documents.services import delete_document_file, upload_document
 
     _validate_resume_file(resume_file)
-    # Per-day upload limit (default 2, admin-adjustable per student).
-    limit = _effective_ai_limits(student)["daily_resume_uploads"]
-    if limit and _resume_uploads_used_today(student) >= limit:
+    # Rolling-window upload limit (default: one upload every 2 days, admin-
+    # adjustable per student).
+    limits = _effective_ai_limits(student)
+    limit = limits["daily_resume_uploads"]
+    window = limits["resume_upload_window_days"]
+    if limit and _resume_uploads_used_in_window(student) >= limit:
         raise ValidationError({
             "detail": (
-                f"You can upload a resume only {limit} time(s) per day. "
-                "Try again tomorrow, or ask the admin for a higher limit."
+                f"You can upload a resume only {limit} time(s) every {window} days. "
+                "Try again in a couple of days, or ask the admin for a higher limit."
             )
         })
     folder = _resume_folder(student)
@@ -596,8 +680,8 @@ def _auto_analyze_in_thread(resume_id: int):
             return
         limits = _effective_ai_limits(resume.student)
         if not limits["unlimited_ai"] and \
-                _ai_requests_used_today(resume.student) >= limits["daily_ai_requests"]:
-            return  # the student already used today's AI quota - leave it PENDING
+                _ai_requests_used_in_window(resume.student) >= limits["daily_ai_requests"]:
+            return  # the student already used the current window's AI quota - leave it PENDING
         analyze_resume(resume, resume.student)
     except Exception:
         pass  # background analysis must never crash anything
