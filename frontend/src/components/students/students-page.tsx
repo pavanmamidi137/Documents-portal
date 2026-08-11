@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpCircle,
@@ -133,9 +133,22 @@ export function StudentsPage({ meta, isCr = false }: Props) {
       const next = { ...prev };
       if (value) next[key] = value;
       else delete next[key];
+      // Changing the branch must not keep a section from another branch
+      // selected - reset it so the section dropdown stays consistent.
+      if (key === "branch") delete next.section;
       return next;
     });
   };
+
+  // Section options follow the branch: pick a branch and only that branch's
+  // sections are listed (no repeats from other branches). Without a branch
+  // every section is shown, each labelled with its branch code so same-named
+  // sections ("A" in CSE vs "A" in IT) stay distinguishable instead of
+  // looking like repeated entries.
+  const sectionOptions = useMemo(() => {
+    if (!filters.branch) return meta.sections;
+    return meta.sections.filter((s) => String(s.branch) === filters.branch);
+  }, [meta.sections, filters.branch]);
 
   const handleExport = async () => {
     try {
@@ -537,9 +550,9 @@ export function StudentsPage({ meta, isCr = false }: Props) {
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {meta.sections.map((s) => (
+                {sectionOptions.map((s) => (
                   <SelectItem key={s.id} value={String(s.id)}>
-                    {s.name}
+                    {filters.branch ? s.name : `${s.name} · ${s.branch_code || s.branch_name || ""}`.trim()}
                   </SelectItem>
                 ))}
               </SelectContent>
