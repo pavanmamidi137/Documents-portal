@@ -205,6 +205,76 @@ class DriveApiTests(APITestCase):
         # Only new posts notify - edits must not spam every student.
         self.assertEqual(Notification.objects.filter(kind=Notification.Kind.DRIVE).count(), 0)
 
+    def test_deleting_drive_removes_its_notifications(self):
+        """Deleting a drive deletes the drive notifications so the bell never
+        shows dead links to a removed drive."""
+        response = self._client(self.admin).post(
+            "/api/drives/", self._payload(), format="json"
+        )
+        drive_id = response.data["id"]
+        self.assertGreater(
+            Notification.objects.filter(kind=Notification.Kind.DRIVE).count(), 0
+        )
+        deleted = self._client(self.admin).delete(f"/api/drives/{drive_id}/")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(
+            Notification.objects.filter(
+                kind=Notification.Kind.DRIVE, link=f"/placements/{drive_id}"
+            ).count(),
+            0,
+        )
+
+    def test_deleting_drive_keeps_unrelated_notifications(self):
+        """Only notifications pointing at the deleted drive are removed - other
+        kinds and other drives' notifications stay untouched."""
+        drive_a = Drive.objects.create(
+            company_name="TCS", last_date_to_apply=self.today + timedelta(days=10),
+            posted_by=self.admin,
+        )
+        drive_b = Drive.objects.create(
+            company_name="Infy", last_date_to_apply=self.today + timedelta(days=10),
+            posted_by=self.admin,
+        )
+        Notification.objects.create(
+            user=self.student, kind=Notification.Kind.DRIVE,
+            title="TCS", message="", link=f"/placements/{drive_a.id}",
+        )
+        Notification.objects.create(
+            user=self.student, kind=Notification.Kind.DRIVE,
+            title="Infy", message="", link=f"/placements/{drive_b.id}",
+        )
+        Notification.objects.create(
+            user=self.student, kind=Notification.Kind.ANNOUNCEMENT,
+            title="Holiday", message="", link="/announcements/1",
+        )
+        deleted = self._client(self.admin).delete(f"/api/drives/{drive_a.id}/")
+        self.assertEqual(deleted.status_code, 204)
+        remaining = list(Notification.objects.values_list("kind", "link"))
+        self.assertIn((Notification.Kind.DRIVE, f"/placements/{drive_b.id}"), remaining)
+        self.assertIn((Notification.Kind.ANNOUNCEMENT, "/announcements/1"), remaining)
+        self.assertNotIn((Notification.Kind.DRIVE, f"/placements/{drive_a.id}"), remaining)
+
+    def test_expiry_cleanup_removes_drive_notifications(self):
+        """The 30-day expiry cleanup deletes a drive AND its notifications."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        drive = Drive.objects.create(
+            company_name="OldCo",
+            last_date_to_apply=self.today - timedelta(days=31),
+            posted_by=self.admin,
+        )
+        Notification.objects.create(
+            user=self.student, kind=Notification.Kind.DRIVE,
+            title="OldCo", message="", link=f"/placements/{drive.id}",
+        )
+        call_command("cleanup_expired_drives", stdout=StringIO())
+        self.assertFalse(Drive.objects.filter(pk=drive.pk).exists())
+        self.assertFalse(
+            Notification.objects.filter(link=f"/placements/{drive.id}").exists()
+        )
+
     # ---- Auto match refresh when a drive is posted ----
 
     @patch("apps.placements.views.maybe_refresh_drive_matches")
