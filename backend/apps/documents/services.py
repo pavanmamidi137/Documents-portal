@@ -279,6 +279,7 @@ def _notify_section_document(sections, primary):
         f"New document: {primary.title}",
         f"{primary.subject.name} · {primary.category.name} ({primary.semester.name}) is now available in your section.",
         "/documents",
+        document_public_id=primary.public_id,
     )
 
 
@@ -555,6 +556,24 @@ def fork_document(document, section, actor, request=None):
     return forked
 
 
+def delete_document_notifications(public_id: str) -> None:
+    """Remove the 'new document' bell notifications that announced this file.
+
+    Only called when the file is gone for good (last copy deleted) so the bell
+    never points at a deleted document. Never raises - notification cleanup
+    must not block the actual deletion.
+    """
+    try:
+        from apps.core.models import Notification
+
+        Notification.objects.filter(
+            kind=Notification.Kind.DOCUMENT_UPLOAD,
+            document_public_id=public_id,
+        ).delete()
+    except Exception:  # pragma: no cover
+        pass
+
+
 def delete_document(document, actor, request=None) -> None:
     """Delete the record; only delete the Cloudinary file when it is the last copy."""
     from .models import Document
@@ -565,6 +584,7 @@ def delete_document(document, actor, request=None) -> None:
     cloudinary_ok = None
     if other_copies == 0:
         cloudinary_ok = delete_document_file(public_id)
+        delete_document_notifications(public_id)
     document.delete()
     log_audit(
         actor, "DOCUMENT_DELETE", "Document", title,

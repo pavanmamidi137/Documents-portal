@@ -205,6 +205,73 @@ class DocumentApiTests(TestCase):
         mock_delete.assert_called_once_with([doc.public_id], resource_type="raw")
         self.assertEqual(Document.objects.count(), 0)
 
+    def test_delete_last_copy_removes_upload_notifications(self, mock_delete, mock_upload):
+        """Deleting the file's last copy drops its 'new document' bell notifications."""
+        from apps.core.models import Notification
+
+        student = User.objects.create_user(
+            roll_number="stu1", password="x", full_name="Student One",
+            branch=self.branch, section=self.section, role=User.Role.STUDENT,
+        )
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/dbms.pdf",
+            "public_id": "documents/cse/a/3-1/notes/dbms/abc123",
+        }
+        client = APIClient()
+        response = self._upload(client, self.section, self.admin)
+        self.assertEqual(response.status_code, 201, response.data)
+
+        doc = Document.objects.first()
+        notifs = Notification.objects.filter(
+            kind=Notification.Kind.DOCUMENT_UPLOAD,
+            document_public_id=doc.public_id,
+        )
+        # Uploaded to a section with a student + CR -> both get notified.
+        self.assertEqual(set(notifs.values_list("user_id", flat=True)), {student.id, self.cr.id})
+
+        # Deleting the only copy removes the file AND its notifications.
+        delete_resp = client.delete(f"/api/documents/{doc.id}/")
+        self.assertEqual(delete_resp.status_code, 204)
+        self.assertFalse(notifs.exists())
+
+    def test_delete_shared_copy_keeps_notifications(self, mock_delete, mock_upload):
+        """Removing one section's copy keeps notifications - the file still exists."""
+        from apps.core.models import Notification
+
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/dbms.pdf",
+            "public_id": "documents/cse/a/3-1/notes/dbms/abc123",
+        }
+        client = APIClient()
+        self.assertEqual(self._upload(client, self.section, self.admin).status_code, 201)
+        primary = Document.objects.first()
+        # Same file shared into section B (a second copy, same public_id).
+        shared = Document.objects.create(
+            title=primary.title, description="",
+            file_name=primary.file_name, file_size=primary.file_size,
+            cloudinary_url=primary.cloudinary_url,
+            public_id=primary.public_id,
+            branch=self.branch, section=self.other_section,
+            semester=self.semester, category=self.category, subject=self.subject,
+            uploaded_by=self.admin,
+        )
+        notifs = Notification.objects.filter(
+            kind=Notification.Kind.DOCUMENT_UPLOAD,
+            document_public_id=primary.public_id,
+        )
+        self.assertEqual(notifs.count(), 1)  # CR of section A
+
+        # Deleting one copy (the file lives on in section B) keeps notifications.
+        delete_resp = client.delete(f"/api/documents/{shared.id}/")
+        self.assertEqual(delete_resp.status_code, 204)
+        mock_delete.assert_not_called()
+        self.assertEqual(notifs.count(), 1)
+
+        # Deleting the last remaining copy clears the bell for good.
+        delete_resp = client.delete(f"/api/documents/{primary.id}/")
+        self.assertEqual(delete_resp.status_code, 204)
+        self.assertFalse(notifs.exists())
+
     def test_cr_upload_to_own_section_succeeds(self, mock_delete, mock_upload):
         mock_upload.return_value = {
             "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/f.pdf",
@@ -1035,6 +1102,53 @@ class DocumentBulkDeleteTests(TestCase):
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
         return client
+
+    def test_bulk_delete_removes_upload_notifications(self, mock_delete):
+        """Bulk-deleting a file everywhere also clears its bell notifications."""
+        from apps.core.models import Notification
+
+        doc = self._doc("DBMS Unit 1", "pid-notif", self.section_a)
+        # Simulate the "new document" notification the upload flow would have
+        # fanned out (the _doc helper creates the record directly).
+        Notification.objects.create(
+            user=self.cr_a, kind=Notification.Kind.DOCUMENT_UPLOAD,
+            title=f"New document: {doc.title}", message="available",
+            link="/documents", document_public_id="pid-notif",
+        )
+        notifs = Notification.objects.filter(
+            kind=Notification.Kind.DOCUMENT_UPLOAD,
+            document_public_id="pid-notif",
+        )
+        self.assertEqual(notifs.count(), 1)
+        response = self._client(self.admin).post(
+            "/api/documents/bulk_delete/",
+            {"public_ids": ["pid-notif"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 1)
+        self.assertFalse(notifs.exists())
+
+    def test_bulk_delete_keeps_notifications_when_copy_remains(self, mock_delete):
+        """Bulk-deleting one copy keeps notifications while the file is shared."""
+        from apps.core.models import Notification
+
+        self._doc("DBMS Unit 1", "pid-1", self.section_b)
+        Notification.objects.create(
+            user=self.cr_a, kind=Notification.Kind.DOCUMENT_UPLOAD,
+            title="New document: DBMS Unit 1", message="available",
+            link="/documents", document_public_id="pid-1",
+        )
+        notifs = Notification.objects.filter(document_public_id="pid-1")
+        # Delete only section A's copy (section B keeps the file alive).
+        response = self._client(self.admin).post(
+            "/api/documents/bulk_delete/",
+            {"ids": [self.doc1.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_delete.assert_not_called()
+        self.assertEqual(notifs.count(), 1)
 
     def test_admin_bulk_delete_by_public_ids_removes_every_copy(self, mock_delete):
         """Grouped view: one public_id deletes the file from ALL sections."""

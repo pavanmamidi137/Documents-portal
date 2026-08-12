@@ -403,8 +403,11 @@ class DocumentViewSet(viewsets.ModelViewSet):
         )
         # One Cloudinary call per unique file (two selected rows can share a
         # public_id via sharing/forking - the file must not be deleted twice).
-        for public_id in {d.public_id for d in docs} - keep_public_ids:
+        # Files removed everywhere also lose their "new document" notifications.
+        removed_public_ids = {d.public_id for d in docs} - keep_public_ids
+        for public_id in removed_public_ids:
             services.delete_document_file(public_id)
+            services.delete_document_notifications(public_id)
         Document.objects.filter(id__in=doc_ids).delete()
         log_audit(request.user, "BULK_DELETE", "Document", "",
                   {"count": len(docs), "all_matching": all_matching,

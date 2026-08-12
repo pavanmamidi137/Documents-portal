@@ -86,6 +86,13 @@ class Notification(models.Model):
     message = models.CharField(max_length=500)
     # Frontend route the notification links to (e.g. "/documents").
     link = models.CharField(max_length=200, blank=True, default="")
+    # Cloudinary public_id of the announced file (DOCUMENT_UPLOAD only). The
+    # notification is removed together with the file when its last copy is
+    # deleted; storing the id (instead of an FK) keeps cleanup reliable even
+    # when the row the notification pointed at was already removed.
+    document_public_id = models.CharField(
+        max_length=255, blank=True, default="", db_index=True
+    )
     read = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 

@@ -111,8 +111,12 @@ def log_audit(actor, action, target_type="", target_id="", details=None, request
         pass
 
 
-def notify(users, kind, title, message, link=""):
-    """Fan out an in-app notification to a list of users. Never raises."""
+def notify(users, kind, title, message, link="", document_public_id=""):
+    """Fan out an in-app notification to a list of users. Never raises.
+
+    ``document_public_id`` (optional) records the Cloudinary id of the announced
+    file so the notification can be removed when the file is deleted.
+    """
     try:
         recipients = [u for u in users if u is not None and getattr(u, "is_active", True)]
         if not recipients:
@@ -120,7 +124,8 @@ def notify(users, kind, title, message, link=""):
         Notification.objects.bulk_create(
             [
                 Notification(
-                    user=u, kind=kind, title=title, message=message, link=link
+                    user=u, kind=kind, title=title, message=message, link=link,
+                    document_public_id=document_public_id,
                 )
                 for u in recipients
             ]
