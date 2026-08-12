@@ -66,7 +66,9 @@ def validate_document(document_file) -> None:
     if document_file.size <= 0:
         raise ValidationError({"file": "The uploaded file is empty."})
 
-    content_type = (getattr(document_file, "content_type", "") or "").lower()
+    # Strip any MIME parameters (e.g. "; charset=...") so the comparison below
+    # never false-rejects a generic type because of a charset suffix.
+    content_type = ((getattr(document_file, "content_type", "") or "").lower().split(";")[0].strip())
     name = (getattr(document_file, "name", "") or "").lower()
     _, _, ext_part = name.rpartition(".")
     ext = f".{ext_part}" if ext_part else ""
@@ -76,7 +78,22 @@ def validate_document(document_file) -> None:
         raise ValidationError({"file": "Only PDF, PPT, PPTX, DOC, DOCX or TXT files are allowed."})
 
     magic, content_types = allowed
-    if content_types and content_type and content_type not in content_types:
+    # The MIME check is best-effort only: many real sources report a generic
+    # type (WhatsApp downloads, some browsers, renamed files all commonly send
+    # application/octet-stream), which would false-reject perfectly valid
+    # documents. The magic-byte check below is the authoritative content
+    # validation, so only reject on a MIME that clearly conflicts with the
+    # extension; generic/unknown types are allowed through.
+    generic_types = {
+        "", "application/octet-stream", "application/binary",
+        "binary/octet-stream", "application/x-msdownload", "application/x-binary",
+    }
+    if (
+        content_types
+        and content_type
+        and content_type not in generic_types
+        and content_type not in content_types
+    ):
         raise ValidationError(
             {"file": "The file type does not match its extension."}
         )

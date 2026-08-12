@@ -37,6 +37,15 @@ class DocumentValidationTests(TestCase):
         fake = SimpleUploadedFile("notes.pdf", b"%PDF-1.4 fake", content_type="application/pdf")
         validate_document(fake)  # should not raise
 
+    def test_accepts_pdf_with_generic_octet_stream_mime(self):
+        """WhatsApp/browser downloads often report application/octet-stream -
+        the magic-byte check is the real validator, so a generic MIME must
+        not false-reject a valid PDF."""
+        fake = SimpleUploadedFile(
+            "notes.pdf", b"%PDF-1.4 fake", content_type="application/octet-stream"
+        )
+        validate_document(fake)  # should not raise
+
     def test_accepts_pptx(self):
         fake = SimpleUploadedFile(
             "slides.pptx", b"PK\x03\x04fakezip",
@@ -258,6 +267,33 @@ class DocumentApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(Document.objects.first().file_name, "slides.pptx")
+
+    def test_upload_succeeds_with_generic_octet_stream_mime(self, mock_delete, mock_upload):
+        """Valid PDFs with a generic MIME (WhatsApp/downloads) upload fine."""
+        mock_upload.return_value = {
+            "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/wa.pdf",
+            "public_id": "documents/cse/a/3-1/notes/dbms/wa123",
+        }
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.post(
+            "/api/documents/",
+            {
+                "title": "WhatsApp Notes",
+                "file": SimpleUploadedFile(
+                    "notes.pdf", b"%PDF-1.4 fake pdf content",
+                    content_type="application/octet-stream",
+                ),
+                "branch": self.branch.id,
+                "section": self.section.id,
+                "semester": self.semester.id,
+                "category": self.category.id,
+                "subject": self.subject.id,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        mock_upload.assert_called_once()
 
     def test_large_docx_compressed_on_upload(self, mock_delete, mock_upload):
         import io

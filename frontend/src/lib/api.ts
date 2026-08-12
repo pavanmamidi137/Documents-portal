@@ -93,6 +93,26 @@ api.interceptors.response.use(
   }
 );
 
+/**
+ * Pull the first human-readable message out of a DRF-style error body, e.g.
+ * {"detail": "..."}, {"non_field_errors": [...]}, {"file": "..."} or
+ * {"subject": ["..."]}. Returns null when nothing readable is found so the
+ * caller can fall back to a generic message.
+ */
+function extractApiErrorMessage(data: unknown): string | null {
+  if (typeof data === "string" && data.trim()) return data.trim();
+  if (data && typeof data === "object") {
+    for (const value of Object.values(data as Record<string, unknown>)) {
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (Array.isArray(value) && value.length > 0) {
+        const first = value[0];
+        if (typeof first === "string" && first.trim()) return first.trim();
+      }
+    }
+  }
+  return null;
+}
+
 /** Typed helpers used across the app. */
 export const http = {
   get: <T>(url: string, params?: Record<string, unknown>) =>
@@ -147,11 +167,11 @@ export const http = {
           resolve(xhr.response as T);
           return;
         }
-        const data = xhr.response as { detail?: string; file?: string[] } | null;
+        // Show the real backend reason (e.g. "The file is not a valid PDF
+        // document." or "Subject does not belong to the selected semester.")
+        // instead of a generic "Upload failed (400)."
         const message =
-          (typeof data?.detail === "string" && data.detail) ||
-          (Array.isArray(data?.file) && data.file[0]) ||
-          `Upload failed (${xhr.status}).`;
+          extractApiErrorMessage(xhr.response) ?? `Upload failed (${xhr.status}).`;
         reject(new Error(message));
       };
       xhr.onerror = () => reject(new Error("Network error - please try again."));
