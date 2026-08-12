@@ -632,8 +632,40 @@ export default function ProfilePage() {
         className="relative mb-6 overflow-hidden rounded-2xl border bg-card shadow-sm"
       >
         <div className="pointer-events-none absolute -top-20 -right-20 size-64 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-3xl" />
-        {/* Quick actions — icons expand/collapse the matching card below */}
+        {/* Quick actions — completion ring + icons expand/collapse the cards below */}
         <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+          {(user.is_student || user.is_cr) && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div
+                    className="relative flex size-9 cursor-default items-center justify-center rounded-full border bg-background/80 shadow-sm backdrop-blur"
+                    aria-label={`Profile ${user.profile_completion}% complete`}
+                  >
+                    <svg className="absolute size-7 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
+                      <circle cx="18" cy="18" r="15.5" fill="none" strokeWidth="3.5" className="stroke-muted" />
+                      <motion.circle
+                        cx="18"
+                        cy="18"
+                        r="15.5"
+                        fill="none"
+                        strokeWidth="3.5"
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0 }}
+                        animate={{ pathLength: (user.profile_completion ?? 0) / 100 }}
+                        transition={{ duration: 0.8, ease: "easeOut" }}
+                        className="stroke-primary"
+                      />
+                    </svg>
+                    <span className="text-[9px] font-bold tabular-nums text-primary">
+                      {user.profile_completion ?? 0}%
+                    </span>
+                  </div>
+                }
+              />
+              <TooltipContent>Profile completion: {user.profile_completion ?? 0}%</TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
