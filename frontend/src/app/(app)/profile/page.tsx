@@ -11,6 +11,7 @@ import {
   CalendarDays,
   Camera,
   GraduationCap,
+  Keyboard,
   KeyRound,
   Loader2,
   Mail,
@@ -20,6 +21,7 @@ import {
   ShieldCheck,
   Trash2,
   VenusAndMars,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -590,10 +592,23 @@ export default function ProfilePage() {
   // The Edit Details and Change Password widgets open from the hero icons.
   const [editOpen, setEditOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  // First-visit hint for the E / P shortcuts (dismissed once, remembered).
+  // Lazy initializer keeps it out of an effect (lint) and is safe because the
+  // page renders null until auth loads, so there's no hydration mismatch.
+  const [showShortcutHint, setShowShortcutHint] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem("profile_shortcut_hint_dismissed") !== "1";
+    } catch {
+      /* private mode - show the hint */
+      return true;
+    }
+  });
 
   // Keyboard shortcuts: E opens Edit Details, P opens Change Password.
   // Ignored while typing in a field or with modifier keys held, so normal
-  // form entry (e.g. an email address) is never hijacked.
+  // form entry (e.g. an email address) is never hijacked. The widgets
+  // themselves already close on Escape (base-ui Dialog default).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -617,6 +632,15 @@ export default function ProfilePage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const dismissShortcutHint = () => {
+    setShowShortcutHint(false);
+    try {
+      localStorage.setItem("profile_shortcut_hint_dismissed", "1");
+    } catch {
+      /* private mode */
+    }
+  };
+
   if (!user) return null;
 
   const canContactAdmin = user.is_faculty || user.is_cr;
@@ -624,6 +648,37 @@ export default function ProfilePage() {
   return (
     <div>
       <PageHeader title="My Profile" description="Your account details and security settings." />
+
+      {/* First-visit keyboard shortcut hint (dismissed once, then hidden) */}
+      {showShortcutHint && (
+        <div className="mb-6 flex items-start justify-between gap-3 rounded-xl border bg-primary/5 px-4 py-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <Keyboard className="mt-0.5 size-4 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Quick edit shortcuts</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Press{" "}
+                <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold">
+                  E
+                </kbd>{" "}
+                to edit your details or{" "}
+                <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold">
+                  P
+                </kbd>{" "}
+                to change your password. <span className="text-muted-foreground/70">Esc closes them.</span>
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={dismissShortcutHint}
+            aria-label="Dismiss shortcut hint"
+            className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
 
       {/* ------------------------------------------------ Hero card */}
       <motion.div
