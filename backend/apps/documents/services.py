@@ -173,14 +173,7 @@ def upload_document(document_file, folder: str, target_bytes: int | None = None)
             )
         })
     try:
-        result = cloudinary.uploader.upload(
-            document_file,
-            resource_type="raw",
-            folder=folder,
-            use_filename=True,
-            unique_filename=True,
-            overwrite=False,
-        )
+        result = _cloudinary_upload(document_file, folder)
     except Exception as exc:  # network / API errors bubble up as a 400
         raise ValidationError({"file": f"Cloudinary upload failed: {exc}"})
     return {
@@ -189,6 +182,27 @@ def upload_document(document_file, folder: str, target_bytes: int | None = None)
         "file_name": document_file.name,
         "file_size": document_file.size,
     }
+
+
+def _cloudinary_upload(document_file, folder: str) -> dict:
+    """Upload a raw file to Cloudinary, chunked when it is large.
+
+    Cloudinary's standard ``upload`` endpoint rejects raw payloads at/over
+    10MB ("File size too large. Maximum is 10485760"), so files at or above
+    that cap go through ``upload_large`` (chunked upload, supports files up
+    to 100MB+). Smaller files keep the regular single-request upload.
+    """
+    options = dict(
+        resource_type="raw",
+        folder=folder,
+        use_filename=True,
+        unique_filename=True,
+        overwrite=False,
+    )
+    if document_file.size >= settings.CLOUDINARY_SINGLE_UPLOAD_BYTES:
+        options["chunk_size"] = settings.CLOUDINARY_CHUNK_BYTES
+        return cloudinary.uploader.upload_large(document_file, **options)
+    return cloudinary.uploader.upload(document_file, **options)
 
 
 def delete_document_file(public_id: str) -> bool:

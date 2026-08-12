@@ -232,10 +232,18 @@ MAX_DOCUMENT_SIZE_MB = int(
 # Hard input ceiling before compression (generous, so large files can still be
 # compressed down to fit under MAX_DOCUMENT_SIZE_MB).
 DOCUMENT_MAX_INPUT_MB = int(os.getenv("DOCUMENT_MAX_INPUT_MB", "40"))
-# Files larger than this are compressed automatically before upload.
+# Files larger than this are compressed automatically before upload. The
+# default equals the size limit so files up to MAX_DOCUMENT_SIZE_MB upload
+# untouched (no quality loss); only over-limit files get compressed to fit.
 DOCUMENT_COMPRESS_AFTER_BYTES = (
-    int(os.getenv("DOCUMENT_COMPRESS_AFTER_MB", "2")) * 1024 * 1024
+    int(os.getenv("DOCUMENT_COMPRESS_AFTER_MB", "20")) * 1024 * 1024
 )
+# Cloudinary's standard upload endpoint rejects raw payloads over 10MB
+# ("File size too large. Maximum is 10485760"), so files above that are sent
+# as a chunked upload via ``upload_large`` instead. The chunk size stays well
+# under the 10MB per-request cap.
+CLOUDINARY_SINGLE_UPLOAD_BYTES = 10 * 1024 * 1024
+CLOUDINARY_CHUNK_BYTES = int(os.getenv("CLOUDINARY_CHUNK_MB", "6")) * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # AI usage limits (per student, admin-adjustable via AiAccessConfig)

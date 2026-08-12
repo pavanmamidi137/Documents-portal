@@ -712,7 +712,7 @@ export function UploadDocumentDialog({
                 You can pick multiple files at once — each file uploads with its own progress bar.
               </p>
               <p className="text-[11px] text-muted-foreground">
-                PDF, PPT, PPTX, DOC, DOCX or TXT · compressed to fit under {MAX_DOCUMENT_SIZE_MB} MB
+                PDF, PPT, PPTX, DOC, DOCX or TXT · up to {MAX_DOCUMENT_SIZE_MB} MB (larger files are compressed automatically)
               </p>
               <input
                 ref={pickerRef}

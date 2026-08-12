@@ -649,8 +649,8 @@ def upload_resume(student: User, resume_file, request=None) -> Resume:
             )
         })
     folder = _resume_folder(student)
-    # PDFs/DOCX over 2MB are compressed automatically; after compression the
-    # resume must fit within the 500KB target.
+    # PDFs/DOCX over the 500KB resume target are compressed automatically;
+    # after compression the resume must fit within that target.
     uploaded = upload_document(resume_file, folder, target_bytes=RESUME_TARGET_BYTES)
 
     resume, created = Resume.objects.get_or_create(student=student)

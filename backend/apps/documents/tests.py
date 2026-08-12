@@ -372,13 +372,14 @@ class DocumentApiTests(TestCase):
             "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/report.docx",
             "public_id": "documents/cse/a/3-1/notes/dbms/report123",
         }
-        # A >2MB DOCX-style zip stored without compression (repetitive content
-        # re-zips to a fraction of its size).
+        # A >20MB DOCX-style zip stored without compression (repetitive
+        # content re-zips to a fraction of its size).
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
-            z.writestr("word/document.xml", b"repeat this text " * 400_000)
+            z.writestr("word/document.xml", b"repeat this text " * 1_300_000)
         original = buf.getvalue()
         self.assertGreater(len(original), settings.DOCUMENT_COMPRESS_AFTER_BYTES)
+        self.assertGreater(len(original), 20 * 1024 * 1024)
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
         response = client.post(
@@ -444,6 +445,50 @@ class DocumentApiTests(TestCase):
         stored = Document.objects.first()
         self.assertIsNotNone(stored)
         self.assertLess(stored.file_size, 20 * 1024 * 1024)
+
+    def test_file_between_10_and_20mb_uses_chunked_upload(self, mock_delete, mock_upload):
+        """Files over Cloudinary's 10MB single-request cap go via upload_large.
+
+        A 12MB PDF is under the 20MB size limit (so it is NOT compressed) but
+        above Cloudinary's 10MB standard-upload cap - it must be sent as a
+        chunked upload or Cloudinary rejects it with "File size too large."
+        """
+        from unittest.mock import patch
+
+        with patch("apps.documents.services.cloudinary.uploader.upload_large") as mock_large:
+            mock_large.return_value = {
+                "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/big.pdf",
+                "public_id": "documents/cse/a/3-1/notes/dbms/big123",
+            }
+            big_pdf = b"%PDF-1.4 " + b"x" * (12 * 1024 * 1024)
+            client = APIClient()
+            client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+            response = client.post(
+                "/api/documents/",
+                {
+                    "title": "Big PDF",
+                    "file": SimpleUploadedFile(
+                        "big.pdf",
+                        big_pdf,
+                        content_type="application/pdf",
+                    ),
+                    "branch": self.branch.id,
+                    "section": self.section.id,
+                    "semester": self.semester.id,
+                    "category": self.category.id,
+                    "subject": self.subject.id,
+                },
+                format="multipart",
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            # Chunked path used, with the chunk size option; the regular
+            # single-request upload was NOT called.
+            mock_large.assert_called_once()
+            self.assertEqual(mock_large.call_args.kwargs["resource_type"], "raw")
+            self.assertIn("chunk_size", mock_large.call_args.kwargs)
+            mock_upload.assert_not_called()
+            # No compression happened - the file was under the size limit.
+            self.assertEqual(Document.objects.first().file_size, len(big_pdf))
 
     def test_unsupported_format_rejected(self, mock_delete, mock_upload):
         client = APIClient()
