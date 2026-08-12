@@ -591,6 +591,32 @@ export default function ProfilePage() {
   const [editOpen, setEditOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
 
+  // Keyboard shortcuts: E opens Edit Details, P opens Change Password.
+  // Ignored while typing in a field or with modifier keys held, so normal
+  // form entry (e.g. an email address) is never hijacked.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName ?? "";
+      const typing =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        Boolean(target?.isContentEditable);
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "e") {
+        e.preventDefault();
+        setEditOpen(true);
+      } else if (key === "p") {
+        e.preventDefault();
+        setPasswordOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   if (!user) return null;
 
   const canContactAdmin = user.is_faculty || user.is_cr;
@@ -654,7 +680,7 @@ export default function ProfilePage() {
                 </button>
               }
             />
-            <TooltipContent>Edit Details</TooltipContent>
+            <TooltipContent>Edit Details (E)</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -669,7 +695,7 @@ export default function ProfilePage() {
                 </button>
               }
             />
-            <TooltipContent>Change Password</TooltipContent>
+            <TooltipContent>Change Password (P)</TooltipContent>
           </Tooltip>
         </div>
         <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:p-8">
