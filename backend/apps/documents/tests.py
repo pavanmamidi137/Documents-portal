@@ -125,6 +125,152 @@ class DocumentCreateSerializerTests(TestCase):
         self.assertFalse(serializer.is_valid())
 
 
+class CompressionLadderTests(TestCase):
+    """Target-aware compression: harder passes until the file fits the cap."""
+
+    def _textured_pdf(self, pages: int = 1) -> bytes:
+        """Build a photo-like PDF whose embedded image is big at q95."""
+        import io
+        import random
+
+        import pymupdf as fitz
+        from PIL import Image, ImageDraw, ImageFilter
+
+        def page_img():
+            random.seed(21)
+            img = Image.new("RGB", (2200, 2200))
+            d = ImageDraw.Draw(img)
+            for _ in range(120):
+                x, y = random.randrange(2200), random.randrange(2200)
+                r = random.randrange(60, 220)
+                c = (random.randrange(256), random.randrange(256), random.randrange(256))
+                d.ellipse([x - r, y - r, x + r, y + r], fill=c)
+            img = img.filter(ImageFilter.GaussianBlur(6))
+            # Fine texture so quality reductions genuinely shrink the file.
+            img = Image.effect_noise((2200, 2200), 24).convert("RGB")
+            return img
+
+        doc = fitz.open()
+        for _ in range(pages):
+            buf = io.BytesIO()
+            page_img().save(buf, "JPEG", quality=95)
+            page = doc.new_page(width=595, height=842)
+            page.insert_image(fitz.Rect(0, 0, 595, 842), stream=buf.getvalue())
+        data = doc.tobytes()
+        doc.close()
+        return data
+
+    def test_ladder_keeps_trying_until_it_fits_target(self):
+        """A single q75 pass stays over the target; the ladder fits it."""
+        from apps.documents.compress import compress_pdf
+
+        data = self._textured_pdf(pages=1)
+        self.assertGreater(len(data), 2 * 1024 * 1024)  # ~3.3MB
+        # Target between the q75 size (too big) and q60 size (fits) - only a
+        # second, harder pass can succeed.
+        target = int(1.5 * 1024 * 1024)
+        result = compress_pdf(data, target_bytes=target)
+        self.assertIsNotNone(result)
+        self.assertLessEqual(len(result), target)
+        self.assertLess(len(result), len(data))
+
+    def test_ladder_result_never_larger_than_original(self):
+        """Even when the target is unreachable, output is strictly smaller."""
+        from apps.documents.compress import compress_pdf
+
+        data = self._textured_pdf(pages=1)
+        result = compress_pdf(data, target_bytes=100 * 1024)  # unrealistically small
+        self.assertIsNotNone(result)
+        self.assertLess(len(result), len(data))
+
+    def test_office_zip_ladder_fits_target(self):
+        """DOCX/PPTX zip compression also escalates until it fits."""
+        import io
+        import random
+        import zipfile
+
+        from PIL import Image
+
+        from apps.documents.compress import compress_zip
+
+        random.seed(4)
+        img = Image.new("RGB", (1800, 1800))
+        px = img.load()
+        for y in range(0, 1800, 4):
+            for x in range(0, 1800, 4):
+                px[x, y] = (x % 256, (x + y) % 256, y % 256)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=95)
+        jpeg = buf.getvalue()
+        self.assertGreater(len(jpeg), 1024 * 1024)
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+            z.writestr("ppt/media/image1.jpg", jpeg)
+        data = out.getvalue()
+        target = 700 * 1024
+        result = compress_zip(data, target_bytes=target)
+        self.assertIsNotNone(result)
+        self.assertLessEqual(len(result), target)
+        self.assertLess(len(result), len(data))
+
+    def test_uncompressible_ole_formats_return_none(self):
+        """Old binary PPT/DOC cannot be shrunk without Office tooling."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from apps.documents.compress import compress_file
+
+        fake = SimpleUploadedFile(
+            "deck.ppt", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"x" * 1024,
+            content_type="application/vnd.ms-powerpoint",
+        )
+        self.assertIsNone(compress_file(fake, target_bytes=1024))
+        self.assertEqual(fake.tell(), 0)  # rewound for the caller
+
+    def test_png_embedded_pdf_stays_valid(self):
+        """Non-JPEG images are never stream-swapped (would corrupt /Filter).
+
+        The compressors only replace JPEG (DCTDecode) image streams, so a PDF
+        whose raster is stored as PNG/FlateDecode keeps its original bytes and
+        the re-saved PDF still renders.
+        """
+        import io
+        import random
+
+        import pymupdf as fitz
+        from PIL import Image
+
+        from apps.documents.compress import compress_pdf
+
+        random.seed(9)
+        img = Image.new("RGB", (1200, 1200))
+        px = img.load()
+        for y in range(0, 1200, 3):
+            for x in range(0, 1200, 3):
+                px[x, y] = (x % 256, (x + y) % 256, y % 256)
+        png = io.BytesIO()
+        img.save(png, "PNG")  # embedded as a FlateDecode raster in the PDF
+
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        page.insert_image(fitz.Rect(0, 0, 595, 842), stream=png.getvalue())
+        data = doc.tobytes()
+        doc.close()
+
+        # Compression must not corrupt the file: it either shrinks it (while
+        # still valid) or returns None - never a broken PDF.
+        result = compress_pdf(data, target_bytes=1024)
+        final = result if result is not None else data
+        check = fitz.open(stream=final, filetype="pdf")
+        try:
+            self.assertEqual(len(check), 1)
+            # Rendering proves the image is still decodable.
+            pix = check[0].get_pixmap(matrix=fitz.Matrix(0.2, 0.2))
+            self.assertGreater(pix.width, 0)
+        finally:
+            check.close()
+
+
 @patch("apps.documents.services.cloudinary.uploader.upload")
 @patch("apps.documents.services.cloudinary.api.delete_resources")
 class DocumentApiTests(TestCase):

@@ -137,19 +137,6 @@ def upload_document(document_file, folder: str, target_bytes: int | None = None)
     compression if it still exceeds that cap.
     """
     validate_document(document_file)
-    # Documents compress when larger than the general threshold; resumes (which
-    # pass a smaller ``target_bytes``) are compressed as soon as they exceed it.
-    compress_over = settings.DOCUMENT_COMPRESS_AFTER_BYTES
-    if target_bytes:
-        compress_over = min(compress_over, target_bytes)
-    if document_file.size > compress_over:
-        compressed = compress_file(document_file)
-        if compressed is not None:
-            document_file = SimpleUploadedFile(
-                document_file.name,
-                compressed,
-                content_type=getattr(document_file, "content_type", "") or "",
-            )
     # Post-compression size cap: resumes must fit their 500KB target;
     # documents must fit the regular size limit.
     cap_bytes = (
@@ -157,6 +144,21 @@ def upload_document(document_file, folder: str, target_bytes: int | None = None)
         if target_bytes is not None
         else settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024
     )
+    # Documents compress when larger than the general threshold; resumes (which
+    # pass a smaller ``target_bytes``) are compressed as soon as they exceed it.
+    compress_over = settings.DOCUMENT_COMPRESS_AFTER_BYTES
+    if target_bytes:
+        compress_over = min(compress_over, target_bytes)
+    if document_file.size > compress_over:
+        # Target-aware: the compressor keeps trying progressively more
+        # aggressive passes until the result fits under ``cap_bytes``.
+        compressed = compress_file(document_file, target_bytes=cap_bytes)
+        if compressed is not None:
+            document_file = SimpleUploadedFile(
+                document_file.name,
+                compressed,
+                content_type=getattr(document_file, "content_type", "") or "",
+            )
     if document_file.size > cap_bytes:
         if target_bytes is not None:
             raise ValidationError({
@@ -169,7 +171,10 @@ def upload_document(document_file, folder: str, target_bytes: int | None = None)
         raise ValidationError({
             "file": (
                 f"File still exceeds the {settings.MAX_DOCUMENT_SIZE_MB}MB size "
-                "limit even after automatic compression."
+                "limit even after automatic compression. The file could not be "
+                "shrunk enough - this can happen with mostly-text PDFs or older "
+                "PPT/DOC files. Try a smaller file, remove embedded images, or "
+                "split it into parts."
             )
         })
     try:
