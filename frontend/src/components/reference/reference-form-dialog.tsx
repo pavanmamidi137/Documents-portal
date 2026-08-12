@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -44,10 +44,13 @@ interface Props<T extends { id: number }> {
   fields: FieldConfig[];
   editing: T | null;
   meta?: { branches?: { id: number; name: string }[]; semesters?: { id: number; name: string }[] };
+  /** Defaults applied only when CREATING (editing values always win) - e.g.
+   * the currently running semester so it doesn't have to be re-picked. */
+  defaults?: Record<string, string>;
   onSaved: () => void;
 }
 
-export function ReferenceFormDialog<T extends { id: number }>({ open, onOpenChange, apiPath, singular, fields, editing, meta, onSaved }: Props<T>) {
+export function ReferenceFormDialog<T extends { id: number }>({ open, onOpenChange, apiPath, singular, fields, editing, meta, defaults: createDefaults, onSaved }: Props<T>) {
   const isEditing = Boolean(editing);
 
   const schema = useMemo(() => {
@@ -73,17 +76,25 @@ export function ReferenceFormDialog<T extends { id: number }>({ open, onOpenChan
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
+  // Tracks the previous open state so the form is only reset on the open
+  // transition - parent re-renders (e.g. a meta refetch) while the dialog is
+  // open must never wipe a form the user is mid-way through filling.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (open) {
-      const defaults: Record<string, string> = {};
+    if (open && !wasOpenRef.current) {
+      const initial: Record<string, string> = {};
       const editingRecord = editing as Record<string, unknown> | null;
       for (const field of fields) {
         const value = editingRecord?.[field.name];
-        defaults[field.name] = value !== undefined && value !== null ? String(value) : "";
+        initial[field.name] =
+          value !== undefined && value !== null
+            ? String(value)
+            : (createDefaults?.[field.name] ?? "");
       }
-      reset(defaults as FormValues);
+      reset(initial as FormValues);
     }
-  }, [open, editing, fields, reset]);
+    wasOpenRef.current = open;
+  }, [open, editing, fields, reset, createDefaults]);
 
   const semesters = meta?.semesters ?? [];
 

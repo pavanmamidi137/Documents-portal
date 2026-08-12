@@ -36,7 +36,11 @@ interface Props {
 }
 
 export function BulkSubjectImportDialog({ open, onOpenChange, meta, onImported }: Props) {
-  const [semester, setSemester] = useState("");
+  // Pre-select the currently running semester (guessed from the date) - the
+  // dialog is remounted per open, so this runs fresh every time.
+  const [semester, setSemester] = useState(
+    meta.current_semester ? String(meta.current_semester.id) : ""
+  );
   const [branch, setBranch] = useState("");
   const [names, setNames] = useState("");
   const [copyIds, setCopyIds] = useState<Set<number>>(new Set());

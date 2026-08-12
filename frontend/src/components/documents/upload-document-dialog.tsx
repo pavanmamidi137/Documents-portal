@@ -187,8 +187,12 @@ export function UploadDocumentDialog({
     setValue("unit", "");
   };
 
+  // Tracks the previous open state so the form is only reset on the open
+  // transition (false -> true) - meta refetches while the dialog is open must
+  // never wipe a form the user is mid-way through filling.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       // Refetch the shared reference data so subjects/branches/sections added
       // by the admin appear here instantly (the old bug: stale meta cache).
       void queryClient.invalidateQueries({ queryKey: ["meta"] });
@@ -198,7 +202,9 @@ export function UploadDocumentDialog({
         description: "",
         branch: lockBranchSection && user?.branch ? String(user.branch) : "",
         section: lockBranchSection && user?.section ? String(user.section) : "",
-        semester: "",
+        // The currently running semester (guessed from the date) is preselected
+        // so it never has to be re-picked - the admin can still change it.
+        semester: meta.current_semester ? String(meta.current_semester.id) : "",
         category: "",
         subject: "",
         unit: "",
@@ -207,7 +213,8 @@ export function UploadDocumentDialog({
       // Queue/file/error state starts fresh because the parent remounts the
       // dialog with a key per open.
     }
-  }, [open, reset, lockBranchSection, user?.branch, user?.section, queryClient]);
+    wasOpenRef.current = open;
+  }, [open, reset, lockBranchSection, user?.branch, user?.section, meta.current_semester, queryClient]);
 
   const handleFilesChange = (files: FileList | null) => {
     if (!files || files.length === 0) return;

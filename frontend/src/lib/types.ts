@@ -174,6 +174,8 @@ export interface MetaData {
   semesters: Semester[];
   categories: Category[];
   subjects: Subject[];
+  /** The semester currently running, guessed from the date - forms pre-select it. */
+  current_semester: Semester | null;
 }
 
 export interface SearchStudent {

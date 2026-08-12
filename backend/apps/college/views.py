@@ -10,6 +10,7 @@ from apps.core.permissions import IsSuperAdminForWrite, IsSuperAdminOrCRForWrite
 from apps.core.utils import log_audit
 
 from .models import Branch, Category, Section, Semester, Subject
+from .utils import get_current_semester
 
 
 def _branch_counts(queryset):
@@ -386,6 +387,7 @@ class MetaView(viewsets.ViewSet):
             if cached is not None:
                 return Response(cached)
 
+        current = get_current_semester()
         data = {
             "branches": BranchSerializer(
                 _branch_counts(Branch.objects.all()), many=True
@@ -404,6 +406,11 @@ class MetaView(viewsets.ViewSet):
                 _subject_counts(Subject.objects.select_related("semester", "branch").all()),
                 many=True,
             ).data,
+            # The semester currently running, guessed from the date - upload
+            # and subject forms pre-select it so nobody picks it every time.
+            "current_semester": (
+                SemesterSerializer(current).data if current is not None else None
+            ),
         }
         if cache is not None:
             cache.set(key, data, 30)

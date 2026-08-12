@@ -1,9 +1,13 @@
+from datetime import date
+from unittest import mock
+
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
+from apps.college.utils import get_current_semester
 
 from .models import Branch, Category, Section, Semester, Subject
 
@@ -321,3 +325,76 @@ class CrSubjectAccessTests(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         listing = client.get("/api/subjects/")
         self.assertEqual(listing.data["results"], [])
+
+
+class CurrentSemesterTests(TestCase):
+    """The date-based "current semester" guess behind the auto-filled forms.
+
+    Semesters run in two 6-month halves per year: June-November ("4-1") and
+    December-May ("4-2"). The year digit comes from the senior-most batch's
+    configured semesters and rolls over automatically as new ones are added.
+    """
+
+    def setUp(self):
+        # The default academic set: two 6-month semesters per year.
+        for order, name in enumerate(
+            ["1-1", "1-2", "2-1", "2-2", "3-1", "3-2", "4-1", "4-2"], start=1
+        ):
+            Semester.objects.create(name=name, order=order)
+
+    def test_june_to_november_is_first_half(self):
+        for month in (6, 7, 8, 9, 10, 11):
+            sem = get_current_semester(today=date(2026, month, 15))
+            self.assertEqual(sem.name, "4-1")
+
+    def test_december_to_may_is_second_half(self):
+        for month in (12, 1, 2, 3, 4, 5):
+            year = 2026 if month == 12 else 2027
+            sem = get_current_semester(today=date(year, month, 15))
+            self.assertEqual(sem.name, "4-2")
+
+    def test_year_digit_rolls_with_the_configured_senior_batch(self):
+        # Only the first-year semesters exist -> the current one is 1-1 / 1-2.
+        Semester.objects.all().delete()
+        Semester.objects.create(name="1-1", order=1)
+        Semester.objects.create(name="1-2", order=2)
+        self.assertEqual(get_current_semester(today=date(2026, 8, 15)).name, "1-1")
+        self.assertEqual(get_current_semester(today=date(2026, 12, 15)).name, "1-2")
+
+    def test_no_semesters_returns_none(self):
+        Semester.objects.all().delete()
+        self.assertIsNone(get_current_semester(today=date(2026, 8, 15)))
+
+    def test_falls_back_when_exact_semester_not_configured(self):
+        Semester.objects.all().delete()
+        Semester.objects.create(name="3-1", order=5)
+        Semester.objects.create(name="3-2", order=6)
+        # December targets 4-2; the closest configured semester is 3-2.
+        self.assertEqual(get_current_semester(today=date(2026, 12, 15)).name, "3-2")
+
+    def test_meta_endpoint_reports_current_semester(self):
+        User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": "admin", "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        fixed = date(2026, 8, 15)
+
+        class _FixedDate(date):
+            @classmethod
+            def today(cls):
+                return fixed
+
+        with mock.patch("apps.college.utils.date_type", _FixedDate):
+            response = client.get("/api/meta/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["current_semester"]["name"], "4-1")
+        self.assertEqual(
+            response.data["current_semester"]["id"],
+            Semester.objects.get(name="4-1").id,
+        )

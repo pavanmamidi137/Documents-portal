@@ -77,6 +77,11 @@ export default function SubjectsPage() {
         ]}
         columns={columns}
         meta={meta}
+        // Pre-select the currently running semester (from the date) so it
+        // doesn't have to be re-picked every time.
+        defaults={{
+          semester: meta.current_semester ? String(meta.current_semester.id) : "",
+        }}
       />
 
       {/* key remounts the dialog on open so its form state starts fresh. */}

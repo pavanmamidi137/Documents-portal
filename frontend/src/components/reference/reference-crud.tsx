@@ -28,6 +28,8 @@ interface Props<T extends { id: number }> {
   };
   /** Extra buttons rendered in the page header, before the "Add" button. */
   extraActions?: React.ReactNode;
+  /** Defaults applied when creating a record (editing values always win). */
+  defaults?: Record<string, string>;
 }
 
 export function ReferenceCrud<T extends { id: number }>({
@@ -39,6 +41,7 @@ export function ReferenceCrud<T extends { id: number }>({
   columns,
   meta,
   extraActions,
+  defaults,
 }: Props<T>) {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
@@ -255,6 +258,7 @@ export function ReferenceCrud<T extends { id: number }>({
         editing={editing}
         singular={singular}
         meta={meta}
+        defaults={defaults}
         onSaved={invalidate}
       />
 
