@@ -379,7 +379,7 @@ class DocumentApiTests(TestCase):
             z.writestr("word/document.xml", b"repeat this text " * 1_300_000)
         original = buf.getvalue()
         self.assertGreater(len(original), settings.DOCUMENT_COMPRESS_AFTER_BYTES)
-        self.assertGreater(len(original), 20 * 1024 * 1024)
+        self.assertGreater(len(original), settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024)
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
         response = client.post(
@@ -411,17 +411,19 @@ class DocumentApiTests(TestCase):
         import io
         import zipfile
 
+        from django.conf import settings
+
         mock_upload.return_value = {
             "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/report.docx",
             "public_id": "documents/cse/a/3-1/notes/dbms/report456",
         }
-        # A 25MB stored-zip DOCX sits above the 20MB limit, but re-zips to a
+        # A 25MB stored-zip DOCX sits above the size limit, but re-zips to a
         # tiny file, so compression rescues it.
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
             z.writestr("word/document.xml", b"a" * 25_000_000)
         original = buf.getvalue()
-        self.assertGreater(len(original), 20 * 1024 * 1024)
+        self.assertGreater(len(original), settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024)
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
         response = client.post(
@@ -444,18 +446,29 @@ class DocumentApiTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         stored = Document.objects.first()
         self.assertIsNotNone(stored)
-        self.assertLess(stored.file_size, 20 * 1024 * 1024)
+        self.assertLess(stored.file_size, settings.MAX_DOCUMENT_SIZE_MB * 1024 * 1024)
 
     def test_file_between_10_and_20mb_uses_chunked_upload(self, mock_delete, mock_upload):
         """Files over Cloudinary's 10MB single-request cap go via upload_large.
 
-        A 12MB PDF is under the 20MB size limit (so it is NOT compressed) but
-        above Cloudinary's 10MB standard-upload cap - it must be sent as a
-        chunked upload or Cloudinary rejects it with "File size too large."
+        Simulates an upgraded account (size limit raised above 10MB): a 12MB
+        PDF is under the size limit (so it is NOT compressed) but above
+        Cloudinary's 10MB standard-upload cap - it must be sent as a chunked
+        upload or Cloudinary rejects it with "File size too large."
         """
         from unittest.mock import patch
 
-        with patch("apps.documents.services.cloudinary.uploader.upload_large") as mock_large:
+        from django.test import override_settings
+
+        with override_settings(
+            MAX_DOCUMENT_SIZE_MB=15,
+            # Lift the compress threshold too, so the 12MB file is genuinely
+            # under the limit and is NOT compressed (not just failing to
+            # compress) before hitting the chunked upload path.
+            DOCUMENT_COMPRESS_AFTER_BYTES=15 * 1024 * 1024,
+        ), patch(
+            "apps.documents.services.cloudinary.uploader.upload_large"
+        ) as mock_large:
             mock_large.return_value = {
                 "secure_url": "https://res.cloudinary.com/x/raw/upload/v1/big.pdf",
                 "public_id": "documents/cse/a/3-1/notes/dbms/big123",

@@ -10,7 +10,10 @@ import {
 /** File extensions accepted by the document upload (mirrors the backend). */
 export const ALLOWED_UPLOAD_EXTENSIONS = ["pdf", "ppt", "pptx", "doc", "docx", "txt"] as const;
 
-export const MAX_DOCUMENT_SIZE_MB = 20;
+// Kept at 9MB so every uploaded raw file sits safely under Cloudinary's
+// Free-plan cap of 10MB (raise if the account is upgraded). Files up to this
+// size upload untouched; larger files are compressed server-side to fit.
+export const MAX_DOCUMENT_SIZE_MB = 9;
 // Files larger than this are rejected up front; anything below is compressed
 // server-side (PDF/PPTX/DOCX) to fit under MAX_DOCUMENT_SIZE_MB.
 export const MAX_DOCUMENT_INPUT_MB = 40;

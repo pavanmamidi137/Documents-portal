@@ -226,8 +226,10 @@ CLOUDINARY = {
     "API_SECRET": os.getenv("CLOUDINARY_API_SECRET", ""),
 }
 # Max upload size for documents (PDF / PPT / PPTX / DOC / DOCX / TXT).
+# The default (9MB) keeps every uploaded raw file safely under Cloudinary's
+# Free-plan cap of 10MB; raise MAX_DOCUMENT_SIZE_MB if the account is upgraded.
 MAX_DOCUMENT_SIZE_MB = int(
-    os.getenv("MAX_DOCUMENT_SIZE_MB", os.getenv("MAX_PDF_SIZE_MB", "20"))
+    os.getenv("MAX_DOCUMENT_SIZE_MB", os.getenv("MAX_PDF_SIZE_MB", "9"))
 )
 # Hard input ceiling before compression (generous, so large files can still be
 # compressed down to fit under MAX_DOCUMENT_SIZE_MB).
@@ -236,7 +238,7 @@ DOCUMENT_MAX_INPUT_MB = int(os.getenv("DOCUMENT_MAX_INPUT_MB", "40"))
 # default equals the size limit so files up to MAX_DOCUMENT_SIZE_MB upload
 # untouched (no quality loss); only over-limit files get compressed to fit.
 DOCUMENT_COMPRESS_AFTER_BYTES = (
-    int(os.getenv("DOCUMENT_COMPRESS_AFTER_MB", "20")) * 1024 * 1024
+    int(os.getenv("DOCUMENT_COMPRESS_AFTER_MB", "9")) * 1024 * 1024
 )
 # Cloudinary's standard upload endpoint rejects raw payloads over 10MB
 # ("File size too large. Maximum is 10485760"), so files above that are sent
