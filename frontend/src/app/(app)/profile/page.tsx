@@ -31,6 +31,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Palette } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/auth";
 import { http } from "@/lib/api";
 import { useSiteTheme } from "@/lib/site-theme";
@@ -508,12 +509,29 @@ function AvatarCard() {
 export default function ProfilePage() {
   const { user } = useAuth();
   const [submitting, setSubmitting] = useState(false);
+  const [highlighted, setHighlighted] = useState<"edit" | "password" | null>(null);
+  const editRef = useRef<HTMLDivElement>(null);
+  const passwordRef = useRef<HTMLDivElement>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const {
     register,
     handleSubmit,
     reset,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
+
+  /** Scroll to a section, flash a highlight ring around it, then focus its first input. */
+  const revealSection = (kind: "edit" | "password") => {
+    const target = kind === "edit" ? editRef.current : passwordRef.current;
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlighted(kind);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => {
+      setHighlighted(null);
+      const inputId = kind === "edit" ? "edit-name" : "old";
+      document.getElementById(inputId)?.focus({ preventScroll: true });
+    }, 700);
+  };
 
   const onSubmit = async (values: FormValues) => {
     setSubmitting(true);
@@ -547,6 +565,39 @@ export default function ProfilePage() {
         className="relative mb-6 overflow-hidden rounded-2xl border bg-card shadow-sm"
       >
         <div className="pointer-events-none absolute -top-20 -right-20 size-64 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-3xl" />
+        {/* Quick actions — icons open the matching section below */}
+        <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => revealSection("edit")}
+                  className="flex size-9 cursor-pointer items-center justify-center rounded-full border bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-all hover:scale-105 hover:border-primary/40 hover:text-primary"
+                  aria-label="Edit details"
+                >
+                  <Pencil className="size-4" />
+                </button>
+              }
+            />
+            <TooltipContent>Edit Details</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => revealSection("password")}
+                  className="flex size-9 cursor-pointer items-center justify-center rounded-full border bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-all hover:scale-105 hover:border-primary/40 hover:text-primary"
+                  aria-label="Change password"
+                >
+                  <KeyRound className="size-4" />
+                </button>
+              }
+            />
+            <TooltipContent>Change Password</TooltipContent>
+          </Tooltip>
+        </div>
         <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:p-8">
           <AvatarCard />
           <div className="min-w-0 flex-1 text-center sm:text-left">
@@ -646,17 +697,27 @@ export default function ProfilePage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-6">
+        <div
+          ref={editRef}
+          className={cn(
+            "space-y-6 rounded-2xl transition-shadow duration-300",
+            highlighted === "edit" && "ring-2 ring-primary/50 ring-offset-2"
+          )}
+        >
           <EditDetailsCard />
           <MyAiUsageCard />
         </div>
 
         <motion.div
+          ref={passwordRef}
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.1 }}
           id="password"
-          className="space-y-6"
+          className={cn(
+            "space-y-6 rounded-2xl transition-shadow duration-300",
+            highlighted === "password" && "ring-2 ring-primary/50 ring-offset-2"
+          )}
         >
           <Card>
             <CardHeader>

@@ -542,6 +542,12 @@ export default function ResumePage() {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  // Live upload progress: % + bytes sent while the resume is uploading.
+  const [uploadProgress, setUploadProgress] = useState<{
+    percent: number;
+    loaded: number;
+    total: number;
+  } | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -624,10 +630,15 @@ export default function ResumePage() {
   const handleFile = async (file: File | undefined) => {
     if (!file) return;
     setUploading(true);
+    setUploadProgress(null);
     try {
       const form = new FormData();
       form.append("file", file);
-      const saved = await http.upload<Resume>("/resumes/", form);
+      const saved = await http.uploadWithProgress<Resume>(
+        "/resumes/",
+        form,
+        (p) => setUploadProgress(p)
+      );
       toast.success(resume ? "Resume updated and delivered to faculty." : "Resume delivered to faculty.");
       queryClient.setQueryData(["resume", "mine"], saved);
       invalidate();
@@ -635,6 +646,7 @@ export default function ResumePage() {
       toast.error(`Failed to send to faculty — ${getErrorMessage(error)}`);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
@@ -758,7 +770,7 @@ export default function ResumePage() {
                 </Button>
                 <Button variant="outline" onClick={pickFile} disabled={uploading}>
                   {uploading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-                  Replace
+                  {uploading ? `Uploading… ${uploadProgress?.percent ?? 0}%` : "Replace"}
                 </Button>
                 <Button
                   variant="outline"
@@ -769,6 +781,24 @@ export default function ResumePage() {
                   <Trash2 className="size-4" /> Delete
                 </Button>
               </div>
+
+              {uploading && uploadProgress && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Uploading…</span>
+                    <span className="font-medium tabular-nums">
+                      {uploadProgress.percent}% · {formatBytes(uploadProgress.loaded)}
+                      {uploadProgress.total > 0 ? ` of ${formatBytes(uploadProgress.total)}` : ""}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+                      style={{ width: `${uploadProgress.percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         ) : (
@@ -779,11 +809,28 @@ export default function ResumePage() {
                 title="No resume uploaded yet"
                 description="Upload your resume (PDF, DOC or DOCX) — faculty in your branch will be able to view it."
               />
-              <div className="mt-6 flex justify-center">
+              <div className="mt-6 flex flex-col items-center gap-3">
                 <Button onClick={pickFile} disabled={uploading} className="gap-2">
                   {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                  {uploading ? "Uploading…" : "Upload Resume"}
+                  {uploading ? `Uploading… ${uploadProgress?.percent ?? 0}%` : "Upload Resume"}
                 </Button>
+                {uploading && uploadProgress && (
+                  <div className="w-full max-w-xs space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Uploading…</span>
+                      <span className="font-medium tabular-nums">
+                        {uploadProgress.percent}% · {formatBytes(uploadProgress.loaded)}
+                        {uploadProgress.total > 0 ? ` of ${formatBytes(uploadProgress.total)}` : ""}
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+                        style={{ width: `${uploadProgress.percent}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

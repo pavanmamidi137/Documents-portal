@@ -40,6 +40,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { UploadDocumentDialog } from "./upload-document-dialog";
 import { http } from "@/lib/api";
+import { downloadDocument } from "@/lib/download";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import type { DocumentItem, MetaData, Paginated } from "@/lib/types";
@@ -69,17 +70,23 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   // current search/filters in one request instead of one row at a time.
   const [selectAllMatching, setSelectAllMatching] = useState(false);
 
+  // Admins see ONE row per file with every section listed on it (a branch
+  // upload creates a row per section, which would otherwise flood the table
+  // with copies). CRs only ever see their own section, so no grouping needed.
+  const grouped = !isCr;
+
   // Debounce filter changes (like search) so rapid changes batch into one
   // request and the table doesn't flicker on every selection.
   const debouncedFilters = useDebouncedValue(filters, 250);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["documents", page, pageSize, debouncedQ, debouncedFilters],
+    queryKey: ["documents", page, pageSize, debouncedQ, debouncedFilters, grouped],
     queryFn: () =>
       http.get<Paginated<DocumentItem>>("/documents/", {
         page,
         page_size: pageSize,
         q: debouncedQ || undefined,
+        grouped: grouped ? 1 : undefined,
         ...debouncedFilters,
       }),
     // Keep the current rows visible while paging/filtering loads the next one.
@@ -97,12 +104,13 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
 
   const prefetchNextPage = (next: number) => {
     void queryClient.prefetchQuery({
-      queryKey: ["documents", next, pageSize, debouncedQ, debouncedFilters],
+      queryKey: ["documents", next, pageSize, debouncedQ, debouncedFilters, grouped],
       queryFn: () =>
         http.get<Paginated<DocumentItem>>("/documents/", {
           page: next,
           page_size: pageSize,
           q: debouncedQ || undefined,
+          grouped: grouped ? 1 : undefined,
           ...debouncedFilters,
         }),
       staleTime: 30_000,
@@ -153,14 +161,24 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const categoryName = meta.categories.find((c) => String(c.id) === filters.category)?.name;
   const subjectName = meta.subjects.find((s) => String(s.id) === filters.subject)?.name;
 
-  const currentQueryKey = ["documents", page, pageSize, debouncedQ, debouncedFilters] as const;
+  const currentQueryKey = [
+    "documents",
+    page,
+    pageSize,
+    debouncedQ,
+    debouncedFilters,
+    grouped,
+  ] as const;
 
   // Files deleted directly in Cloudinary disappear from this view instantly.
   useCloudinaryCheck<DocumentItem>({
     url: "/documents/check-files/",
-    params: { q: debouncedQ || undefined, ...debouncedFilters },
+    params: { q: debouncedQ || undefined, grouped: grouped ? 1 : undefined, ...debouncedFilters },
     queryKey: currentQueryKey,
     kind: "document",
+    // Grouped rows = one file across many sections - refetch instead of the
+    // optimistic id-based drop so badges/counts stay accurate.
+    invalidateOnMissing: grouped,
   });
 
   const confirmDelete = async () => {
@@ -178,8 +196,17 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         : old
     );
     try {
-      await http.delete(`/documents/${deleteTarget.id}/`);
-      toast.success("Document deleted.");
+      if (deleteTarget.public_id && grouped) {
+        // Grouped view: one row = the whole file. Deleting it removes the
+        // file from Cloudinary AND from every section that has it.
+        const res = await http.post<{ deleted: number }>("/documents/bulk_delete/", {
+          public_ids: [deleteTarget.public_id],
+        });
+        if (res.deleted > 0) toast.success("Document deleted from every section.");
+      } else {
+        await http.delete(`/documents/${deleteTarget.id}/`);
+        toast.success("Document deleted.");
+      }
       setDeleteTarget(null);
       // Background refetch keeps every page/filter consistent with the server.
       invalidateDocuments();
@@ -218,6 +245,8 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
           "/documents/bulk_delete/",
           selectAllMatching
             ? { all_matching: true }
+            : grouped
+            ? { public_ids: bulkDeleteTargets.map((d) => d.public_id) }
             : { ids: bulkDeleteTargets.map((d) => d.id) },
           selectAllMatching ? { q: debouncedQ || undefined, ...debouncedFilters } : undefined
         );
@@ -259,7 +288,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
   const handleUploaded = (doc: DocumentItem) => {
     if (!hasFilters) {
       queryClient.setQueryData<Paginated<DocumentItem>>(
-        ["documents", 1, pageSize, debouncedQ, debouncedFilters],
+        ["documents", 1, pageSize, debouncedQ, debouncedFilters, grouped],
         (old) =>
           old && !old.results.some((d) => d.id === doc.id)
             ? { ...old, count: old.count + 1, results: [doc, ...old.results] }
@@ -327,12 +356,43 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
     {
       key: "target",
       header: "Branch / Section",
-      cell: (d) => (
-        <div className="flex flex-wrap gap-1">
-          <Badge variant="secondary">{d.branch_code || d.branch_name}</Badge>
-          <Badge variant="outline">{d.section_name}</Badge>
-        </div>
-      ),
+      cell: (d) => {
+        const branchSectionCount = meta.sections.filter((s) => s.branch === d.branch).length;
+        const coversAll =
+          d.section_count != null &&
+          branchSectionCount > 0 &&
+          d.section_count >= branchSectionCount;
+        return (
+          <div className="flex max-w-full flex-wrap items-center gap-1">
+            <Badge variant="secondary">{d.branch_code || d.branch_name}</Badge>
+            {d.sections ? (
+              coversAll ? (
+                <Badge
+                  variant="outline"
+                  title={`${d.sections.join(", ")} · all ${d.section_count} sections`}
+                >
+                  All {d.section_count} sections
+                </Badge>
+              ) : (
+                <>
+                  {d.sections.slice(0, 8).map((s) => (
+                    <Badge key={s} variant="outline">
+                      {s}
+                    </Badge>
+                  ))}
+                  {d.sections.length > 8 && (
+                    <Badge variant="outline" title={d.sections.join(", ")}>
+                      +{d.sections.length - 8}
+                    </Badge>
+                  )}
+                </>
+              )
+            ) : (
+              <Badge variant="outline">{d.section_name}</Badge>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: "category",
@@ -352,7 +412,9 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
     {
       key: "downloads",
       header: "DLs",
-      cell: (d) => <span className="tabular-nums">{d.downloads}</span>,
+      cell: (d) => (
+        <span className="tabular-nums">{d.total_downloads ?? d.downloads}</span>
+      ),
       className: "text-center",
     },
     {
@@ -373,12 +435,7 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
             variant="ghost"
             className="size-8"
             onClick={async () => {
-              try {
-                const res = await http.post<{ download_url: string }>(`/documents/${d.id}/download/`);
-                window.open(res.download_url, "_blank", "noopener");
-              } catch (error) {
-                toast.error(getErrorMessage(error));
-              }
+              await downloadDocument(d);
             }}
           >
             <Download className="size-4" />
@@ -633,7 +690,11 @@ export function DocumentsManagement({ meta, isCr = false }: Props) {
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         title="Delete document?"
-        description={`"${deleteTarget?.title}" will be removed from Cloudinary and the portal. This cannot be undone.`}
+        description={
+          deleteTarget?.sections
+            ? `"${deleteTarget.title}" is shared to ${deleteTarget.section_count ?? deleteTarget.sections.length} section${(deleteTarget.section_count ?? deleteTarget.sections.length) === 1 ? "" : "s"}. Deleting it removes the file from Cloudinary and from every one of those sections. This cannot be undone.`
+            : `"${deleteTarget?.title}" will be removed from Cloudinary and the portal. This cannot be undone.`
+        }
         confirmLabel="Delete"
         destructive
         loading={deleting}

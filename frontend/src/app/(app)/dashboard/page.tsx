@@ -439,7 +439,19 @@ export default function DashboardPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{doc.title}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {doc.subject_name} · {doc.branch_code || doc.branch_name} {doc.section_name} ·{" "}
+                      {doc.subject_name} · {doc.branch_code || doc.branch_name}
+                      {doc.sections && doc.sections.length > 0 ? (
+                        <span
+                          title={`Sections: ${doc.sections.join(", ")}`}
+                        >
+                          {" · "}
+                          {doc.section_count} section{doc.section_count === 1 ? "" : "s"}{" "}
+                          ({doc.sections.join(", ")})
+                        </span>
+                      ) : (
+                        <span> {doc.section_name}</span>
+                      )}
+                      {" · "}
                       {formatBytes(doc.file_size)}
                     </p>
                   </div>

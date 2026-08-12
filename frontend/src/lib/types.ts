@@ -96,10 +96,17 @@ export interface DocumentItem {
   submission_deadline: string | null;
   file_name: string;
   file_size: number;
+  public_id: string;
   cloudinary_url: string;
   download_url: string;
   downloads: number;
   created_at: string;
+  /** Admin grouped view: every section this file is shared to. */
+  sections?: string[];
+  /** Admin grouped view: how many sections have this file. */
+  section_count?: number;
+  /** Admin grouped view: downloads summed across all copies. */
+  total_downloads?: number;
   branch: number;
   branch_name: string;
   branch_code: string;

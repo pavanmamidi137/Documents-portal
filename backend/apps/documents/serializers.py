@@ -26,7 +26,7 @@ class DocumentListSerializer(serializers.ModelSerializer):
         model = Document
         fields = [
             "id", "title", "description", "submission_deadline",
-            "file_name", "file_size",
+            "file_name", "file_size", "public_id",
             "cloudinary_url", "download_url", "downloads", "created_at",
             "branch", "branch_name", "branch_code", "section", "section_name",
             "semester", "semester_name", "category", "category_name",

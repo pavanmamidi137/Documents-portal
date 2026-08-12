@@ -32,11 +32,19 @@ export function useCloudinaryCheck<T extends { id: number }>({
   params,
   queryKey,
   kind,
+  invalidateOnMissing = false,
 }: {
   url: string;
   params: Record<string, unknown>;
   queryKey: readonly unknown[];
   kind: string;
+  /**
+   * Grouped views show one row per file (which is many copies), so dropping
+   * rows by id can't remove the right row and would miscount. Instead of the
+   * optimistic filter the hook refetches so the server rebuilds the groups
+   * without the missing copies.
+   */
+  invalidateOnMissing?: boolean;
 }) {
   const queryClient = useQueryClient();
   const lastRunRef = useRef(0);
@@ -53,18 +61,25 @@ export function useCloudinaryCheck<T extends { id: number }>({
         const res = await http.get<CheckFilesResponse>(url, params);
         if (cancelled) return;
         if (res.missing_ids.length > 0) {
-          const ids = new Set(res.missing_ids);
-          // Drop the missing rows from the current view without a server refetch
-          // (they are excluded server-side on the next fetch anyway).
-          queryClient.setQueryData<{ count: number; results: T[] }>(queryKey, (old) =>
-            old
-              ? {
-                  ...old,
-                  count: Math.max(0, old.count - ids.size),
-                  results: old.results.filter((r) => !ids.has(r.id)),
-                }
-              : old
-          );
+          if (invalidateOnMissing) {
+            // Grouped view: a row represents many copies - let the server
+            // rebuild the groups without the missing copies (and re-scope the
+            // section badges) instead of guessing which row to drop.
+            queryClient.invalidateQueries({ queryKey });
+          } else {
+            const ids = new Set(res.missing_ids);
+            // Drop the missing rows from the current view without a server refetch
+            // (they are excluded server-side on the next fetch anyway).
+            queryClient.setQueryData<{ count: number; results: T[] }>(queryKey, (old) =>
+              old
+                ? {
+                    ...old,
+                    count: Math.max(0, old.count - ids.size),
+                    results: old.results.filter((r) => !ids.has(r.id)),
+                  }
+                : old
+            );
+          }
           toast.info(
             `${res.missing_ids.length} ${kind}${res.missing_ids.length === 1 ? "" : "s"} were deleted from Cloudinary and removed from this view.`
           );

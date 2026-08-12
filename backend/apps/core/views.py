@@ -56,23 +56,57 @@ class DashboardView(APIView):
     def _super_admin_stats():
         from datetime import timedelta
 
-        from django.db.models import Count
+        from django.db.models import Count, Max, Sum
         from django.db.models.functions import TruncDate
         from django.utils import timezone
 
         from apps.accounts.models import User
 
-        recent_docs = Document.objects.select_related(
+        # A branch-wide upload creates one Document row PER section, so every
+        # stat below counts distinct files (public_id), not copies - otherwise
+        # the dashboard shows 8x the documents the college actually uploaded.
+        visible = Document.objects.exclude(is_missing=True)
+        # Latest files, one per public_id, with the sections each is shared to.
+        recent_groups = list(
+            visible.values("public_id")
+            .annotate(
+                newest=Max("created_at"),
+                copies=Count("id"),
+                total_downloads=Sum("downloads"),
+            )
+            .order_by("-newest")[:8]
+        )
+        recent_pub_ids = [g["public_id"] for g in recent_groups]
+        recent_rows = Document.objects.select_related(
             "branch", "section", "semester", "category", "subject", "uploaded_by"
-        ).exclude(is_missing=True).order_by("-created_at")[:8]
+        ).filter(public_id__in=recent_pub_ids)
+        sections_map: dict[str, list[str]] = {}
+        reps: dict[str, Document] = {}
+        for row in recent_rows:
+            sections_map.setdefault(row.public_id, []).append(row.section.name)
+            if (
+                row.public_id not in reps
+                or row.created_at > reps[row.public_id].created_at
+            ):
+                reps[row.public_id] = row
+        recent_uploads = []
+        for group in recent_groups:
+            doc = reps.get(group["public_id"])
+            if doc is None:
+                continue
+            data = DocumentListSerializer(doc).data
+            data["sections"] = sorted(sections_map.get(group["public_id"], []))
+            data["section_count"] = group["copies"]
+            data["total_downloads"] = group["total_downloads"]
+            recent_uploads.append(data)
         docs_by_category = (
-            Document.objects.values("category__name")
-            .annotate(count=Count("id"))
+            visible.values("category__name")
+            .annotate(count=Count("public_id", distinct=True))
             .order_by("-count")[:6]
         )
         docs_by_branch = (
-            Document.objects.values("branch__name")
-            .annotate(count=Count("id"))
+            visible.values("branch__name")
+            .annotate(count=Count("public_id", distinct=True))
             .order_by("-count")[:6]
         )
         # Students per pass-out batch (bar chart on the dashboard).
@@ -93,14 +127,15 @@ class DashboardView(APIView):
         )
         # Documents uploaded per day for the last 14 days (area chart). Days
         # without uploads are zero-filled so the line never jumps around.
+        # Counts distinct files - a branch-wide upload is one upload, not 8.
         since = timezone.now() - timedelta(days=13)
         day_counts = {
             row["day"]: row["count"]
             for row in (
-                Document.objects.filter(created_at__gte=since)
+                visible.filter(created_at__gte=since)
                 .annotate(day=TruncDate("created_at"))
                 .values("day")
-                .annotate(count=Count("id"))
+                .annotate(count=Count("public_id", distinct=True))
             )
         }
         over_time = []
@@ -115,7 +150,8 @@ class DashboardView(APIView):
                 "branches": Branch.objects.count(),
                 "sections": Section.objects.count(),
                 "subjects": Subject.objects.count(),
-                "documents": Document.objects.count(),
+                # Distinct files - the same file in 8 sections is one document.
+                "documents": visible.values("public_id").distinct().count(),
             },
             "charts": {
                 "by_category": list(docs_by_category),
@@ -124,7 +160,7 @@ class DashboardView(APIView):
                 "by_passout_year": list(students_by_batch),
                 "over_time": over_time,
             },
-            "recent_uploads": DocumentListSerializer(recent_docs, many=True).data,
+            "recent_uploads": recent_uploads,
         }
 
     @staticmethod

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarClock, Download, Eye, FileText, RotateCcw, Trash2 } from "lucide-react";
+import { CalendarClock, Download, Eye, FileText, RotateCcw, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentTypeMeta } from "@/lib/document-types";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { http } from "@/lib/api";
+import { downloadDocument } from "@/lib/download";
 import type { DocumentItem } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 import { DocumentTextDialog } from "./document-text-dialog";
@@ -49,12 +50,8 @@ export function DocumentCard({
   const FileIcon = typeMeta.Icon;
 
   const handleDownload = async () => {
-    try {
-      const res = await http.post<{ download_url: string }>(`/documents/${document.id}/download/`);
-      window.open(res.download_url, "_blank", "noopener");
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    }
+    // Streams through the browser with a live % + MB progress toast.
+    await downloadDocument(document);
   };
 
   const handleDelete = async () => {
@@ -143,6 +140,19 @@ export function DocumentCard({
             title='Readable text is available - click "Read text" to view it.'
           >
             <FileText className="size-3" /> Text
+          </Badge>
+        )}
+        {document.sections && document.sections.length > 0 && (
+          <Badge
+            variant="outline"
+            className="max-w-full gap-1 text-[11px]"
+            title={`Shared to sections: ${document.sections.join(", ")}`}
+          >
+            <Share2 className="size-3 shrink-0" />
+            <span className="block max-w-full truncate">
+              {document.section_count} section{document.section_count === 1 ? "" : "s"}{" "}
+              ({document.sections.join(", ")})
+            </span>
           </Badge>
         )}
       </div>

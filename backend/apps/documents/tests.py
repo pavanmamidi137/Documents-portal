@@ -1000,6 +1000,34 @@ class DocumentBulkDeleteTests(TestCase):
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
         return client
 
+    def test_admin_bulk_delete_by_public_ids_removes_every_copy(self, mock_delete):
+        """Grouped view: one public_id deletes the file from ALL sections."""
+        # Same file also lives in section B (shared/forked copy).
+        self._doc("DBMS Unit 1", "pid-1", self.section_b)
+        response = self._client(self.admin).post(
+            "/api/documents/bulk_delete/",
+            {"public_ids": ["pid-1"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        # pid-1 is gone everywhere; the unrelated pid-2 file is untouched.
+        self.assertEqual(Document.objects.count(), 1)
+        self.assertFalse(Document.objects.filter(public_id="pid-1").exists())
+        self.assertTrue(Document.objects.filter(public_id="pid-2").exists())
+        # Both copies were the last ones -> the Cloudinary file is removed once.
+        mock_delete.assert_called_once_with(["pid-1"], resource_type="raw")
+
+    def test_cr_cannot_bulk_delete_by_public_ids(self, mock_delete):
+        """public_ids deletes across sections - Super Admin only."""
+        response = self._client(self.cr_a).post(
+            "/api/documents/bulk_delete/",
+            {"public_ids": ["pid-1"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Document.objects.filter(public_id="pid-1").exists())
+
     def test_admin_bulk_deletes_and_removes_cloudinary_files(self, mock_delete):
         response = self._client(self.admin).post(
             "/api/documents/bulk_delete/",
@@ -1368,4 +1396,159 @@ class DocumentOcrTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["documents"]), 1)
         self.assertEqual(response.data["documents"][0]["title"], "Physics Lab Manual")
+
+
+class GroupedListTests(TestCase):
+    """Super-admin list: ONE row per file with every section listed on it."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.branch = Branch.objects.create(name="CSE", code="CS")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.semester = Semester.objects.create(name="3-1", order=5)
+        self.category = Category.objects.create(name="Notes")
+        self.subject = Subject.objects.create(
+            name="DBMS", code="CS303", semester=self.semester, branch=self.branch
+        )
+        self.cr = User.objects.create_user(
+            roll_number="cr1", password="x", full_name="CR",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        self.shared = self._doc("DBMS Unit 1", "pid-shared", self.section_a)
+        # Same file in section B - the duplicate the grouped view collapses.
+        self._doc("DBMS Unit 1", "pid-shared", self.section_b)
+        self.other = self._doc("Python Unit 1", "pid-python", self.section_a)
+
+    def _doc(self, title, public_id, section, downloads=0):
+        return Document.objects.create(
+            title=title, description="",
+            file_name="notes.pdf", file_size=1024,
+            cloudinary_url="https://x.example/n.pdf",
+            public_id=public_id, branch=self.branch, section=section,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.admin,
+            downloads=downloads,
+        )
+
+    def _client(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
+        return client
+
+    def test_grouped_list_returns_one_row_per_file_with_sections(self):
+        self.shared.downloads = 3
+        self.shared.save(update_fields=["downloads"])
+        response = self._client(self.admin).get("/api/documents/?grouped=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 2)  # files, not copies
+        by_pid = {r["public_id"]: r for r in response.data["results"]}
+        self.assertIn("pid-shared", by_pid)
+        row = by_pid["pid-shared"]
+        self.assertEqual(row["section_count"], 2)
+        self.assertEqual(row["sections"], ["A", "B"])
+        self.assertEqual(row["total_downloads"], 3)
+        self.assertIn(row["section_name"], ["A", "B"])  # representative copy
+
+    def test_plain_admin_list_still_returns_every_copy(self):
+        response = self._client(self.admin).get("/api/documents/")
+        self.assertEqual(response.data["count"], 3)
+        self.assertNotIn("sections", response.data["results"][0])
+
+    def test_grouped_param_ignored_for_cr(self):
+        """CRs are scoped to their own section - grouping would hide nothing."""
+        response = self._client(self.cr).get("/api/documents/?grouped=1")
+        self.assertEqual(response.status_code, 200)
+        # Only section A's two rows - the section-B copy stays invisible.
+        self.assertEqual(response.data["count"], 2)
+        self.assertNotIn("sections", response.data["results"][0])
+
+    def test_grouped_list_respects_filters(self):
+        response = self._client(self.admin).get(
+            "/api/documents/?grouped=1&section=%d" % self.section_a.id
+        )
+        self.assertEqual(response.status_code, 200)
+        # Filtered to section A: pid-shared now appears with only section A.
+        self.assertEqual(response.data["count"], 2)
+        row = next(
+            r for r in response.data["results"] if r["public_id"] == "pid-shared"
+        )
+        self.assertEqual(row["sections"], ["A"])
+        self.assertEqual(row["section_count"], 1)
+
+
+class DocumentCompressionTests(TestCase):
+    """Automatic compression shrinks image-heavy files without data loss."""
+
+    def _noisy_image(self, size=(1200, 800), fmt="JPEG", quality=95) -> bytes:
+        """A photo-like image (smooth gradient + noise) that compresses well."""
+        import io
+        import random
+
+        from PIL import Image
+
+        random.seed(7)
+        w, h = size
+        raw = bytearray()
+        for y in range(h):
+            for x in range(w):
+                base = ((x * 255) // w + (y * 255) // h) // 2
+                raw += bytes(
+                    (base + random.randint(-25, 25)) % 256 for _ in range(3)
+                )
+        img = Image.frombytes("RGB", (w, h), bytes(raw))
+        buf = io.BytesIO()
+        img.save(buf, fmt, quality=quality)
+        return buf.getvalue()
+
+    def test_compress_pdf_shrinks_image_heavy_pdf(self):
+        """Embedded images are re-encoded so the PDF gets genuinely smaller."""
+        import fitz
+
+        from .compress import compress_pdf
+
+        jpeg = self._noisy_image()
+        doc = fitz.open()
+        page = doc.new_page(width=1200, height=800)
+        page.insert_image(page.rect, stream=jpeg)
+        original = doc.tobytes()
+        doc.close()
+        self.assertGreater(len(original), 100_000)
+
+        result = compress_pdf(original)
+        self.assertIsNotNone(result)
+        self.assertLess(len(result), len(original))
+
+    def test_compress_zip_shrinks_office_archive_with_media(self):
+        """DOCX/PPTX media (JPEG) is re-encoded inside the re-zipped archive."""
+        import io
+        import zipfile
+
+        from .compress import compress_zip
+
+        jpeg = self._noisy_image()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+            z.writestr("word/document.xml", b"<w:p>" + b"x" * 400_000 + b"</w:p>")
+            z.writestr("word/media/image1.jpeg", jpeg)
+        original = buf.getvalue()
+
+        result = compress_zip(original)
+        self.assertIsNotNone(result)
+        self.assertLess(len(result), len(original))
+
+    def test_compress_file_keeps_original_when_not_smaller(self):
+        """A tiny text file is returned untouched (None) - never bloated."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from .compress import compress_file
+
+        tiny = SimpleUploadedFile("notes.txt", b"hello")
+        self.assertIsNone(compress_file(tiny))
+        tiny.seek(0)
+        self.assertEqual(tiny.read(), b"hello")
 

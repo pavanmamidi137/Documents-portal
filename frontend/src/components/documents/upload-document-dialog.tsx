@@ -48,7 +48,7 @@ import {
 import { http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { MetaData, DocumentItem } from "@/lib/types";
-import { getErrorMessage } from "@/lib/utils";
+import { formatBytes, getErrorMessage } from "@/lib/utils";
 
 const schema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters"),
@@ -87,6 +87,12 @@ export function UploadDocumentDialog({
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fileError, setFileError] = useState("");
+  // Live upload progress: % + bytes sent, shown as a bar while submitting.
+  const [uploadProgress, setUploadProgress] = useState<{
+    percent: number;
+    loaded: number;
+    total: number;
+  } | null>(null);
   // Admin only: "all" = entire branch, "specific" = ticked sections.
   const [target, setTarget] = useState<"all" | "specific">("all");
   // Ticked sections for the admin target grid + the CR share-request targets.
@@ -266,8 +272,13 @@ export function UploadDocumentDialog({
     }
 
     setSubmitting(true);
+    setUploadProgress(null);
     try {
-      const doc = await http.upload<DocumentItem>("/documents/", form);
+      const doc = await http.uploadWithProgress<DocumentItem>(
+        "/documents/",
+        form,
+        (p) => setUploadProgress(p)
+      );
       if (isAdmin) {
         toast.success(
           target === "all"
@@ -657,13 +668,35 @@ export function UploadDocumentDialog({
             </div>
           )}
 
+          {submitting && uploadProgress && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Uploading…</span>
+                <span className="font-medium tabular-nums">
+                  {uploadProgress.percent}% · {formatBytes(uploadProgress.loaded)}
+                  {uploadProgress.total > 0
+                    ? ` of ${formatBytes(uploadProgress.total)}`
+                    : ""}
+                </span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+                  style={{ width: `${uploadProgress.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button type="submit" disabled={submitting || !file}>
+            <Button type="submit" disabled={submitting || !file} className="min-w-36">
               {submitting && <Loader2 className="size-4 animate-spin" />}
-              {submitting ? "Uploading…" : "Upload Document"}
+              {submitting
+                ? `Uploading… ${uploadProgress?.percent ?? 0}%`
+                : "Upload Document"}
             </Button>
           </div>
         </form>

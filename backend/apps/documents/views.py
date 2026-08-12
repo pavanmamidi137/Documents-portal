@@ -39,8 +39,13 @@ class DocumentViewSet(viewsets.ModelViewSet):
         Everyone using the same filters gets the same rows, so repeated page
         loads (across many users) skip the SQL + serialization entirely.
         Document writes bump the generation, so new uploads/deletes show up
-        right away.
+        right away. Super Admins asking with ``grouped=1`` get one row per
+        FILE (not per section) with the sections listed on the row.
         """
+        if request.user.is_super_admin and request.query_params.get("grouped") in (
+            "1", "true", "True",
+        ):
+            return self._grouped_list(request)
         from apps.core.utils import get_or_set_list_cache
 
         data = get_or_set_list_cache(
@@ -49,6 +54,66 @@ class DocumentViewSet(viewsets.ModelViewSet):
             request.query_params,
             5,
             lambda: super(DocumentViewSet, self).list(request, *args, **kwargs).data,
+        )
+        return Response(data)
+
+    def _grouped_list(self, request):
+        """Super-admin list: ONE row per file, with every section listed.
+
+        Uploading to a whole branch creates one Document row per section, so
+        the plain list repeats the same file once per section. Grouping by the
+        Cloudinary ``public_id`` collapses those copies into a single row that
+        shows which sections have the file (``sections``), how many copies
+        (``section_count``) and the downloads summed across them
+        (``total_downloads``). Filters/search still apply to the underlying
+        rows, and pagination counts files - not copies.
+        """
+        from django.db.models import Count, Max, Sum
+
+        from apps.core.utils import get_or_set_list_cache
+
+        def build():
+            groups = list(
+                self.get_queryset()
+                .values("public_id")
+                .annotate(
+                    newest=Max("created_at"),
+                    copies=Count("id"),
+                    total_downloads=Sum("downloads"),
+                )
+                .order_by("-newest")
+            )
+            page = self.paginate_queryset(groups)
+            if page is None:
+                return self.get_paginated_response([]).data
+            pub_ids = [g["public_id"] for g in page]
+            # Scoped to the SAME filters/queryset as the list, so a section
+            # filter only shows that section's copies on the row.
+            rows = self.get_queryset().filter(public_id__in=pub_ids)
+            sections: dict[str, list[str]] = {}
+            reps: dict[str, Document] = {}
+            for row in rows:
+                sections.setdefault(row.public_id, []).append(row.section.name)
+                if (
+                    row.public_id not in reps
+                    or row.created_at > reps[row.public_id].created_at
+                ):
+                    reps[row.public_id] = row
+            results = []
+            for group in page:
+                doc = reps.get(group["public_id"])
+                if doc is None:
+                    continue
+                data = DocumentListSerializer(doc).data
+                data["sections"] = sorted(sections.get(group["public_id"], []))
+                data["section_count"] = group["copies"]
+                data["total_downloads"] = group["total_downloads"]
+                results.append(data)
+            return self.get_paginated_response(results).data
+
+        # Same group as the plain list so document writes invalidate it too.
+        data = get_or_set_list_cache(
+            "list:docs", request.user, request.query_params, 5, build
         )
         return Response(data)
 
@@ -275,14 +340,15 @@ class DocumentViewSet(viewsets.ModelViewSet):
     def bulk_delete(self, request):
         """Delete many documents in ONE request instead of one call per row.
 
-        Pass ``{ids: [...]}`` for a specific selection, or
-        ``{all_matching: true}`` (with the same q/branch/section/semester/
-        category/subject query params as the list) to delete every matching
-        document at once. Scope rules match the list/destroy endpoints: CRs
-        may only delete documents in their own assigned section. The
-        Cloudinary file is only removed when the deleted rows were the last
-        copies of that file across every section (sharing/forking keeps the
-        file alive for others).
+        Pass ``{ids: [...]}`` for a specific selection, ``{public_ids: [...]}``
+        (Super Admin only) to delete an entire file from EVERY section at once
+        (used by the grouped "one row per file" view), or ``{all_matching:
+        true}`` (with the same q/branch/section/semester/category/subject
+        query params as the list) to delete every matching document at once.
+        Scope rules match the list/destroy endpoints: CRs may only delete
+        documents in their own assigned section. The Cloudinary file is only
+        removed when the deleted rows were the last copies of that file across
+        every section (sharing/forking keeps the file alive for others).
         """
         all_matching = request.data.get("all_matching") in (True, "true", "1", 1)
         qs = self.get_queryset()
@@ -302,13 +368,30 @@ class DocumentViewSet(viewsets.ModelViewSet):
                     )
                 })
         else:
-            raw_ids = request.data.get("ids")
-            if not isinstance(raw_ids, list) or not raw_ids:
-                raise ValidationError({"ids": "Provide a list of document ids to delete."})
-            ids = [int(i) for i in raw_ids if str(i).lstrip("-").isdigit()]
-            if not ids:
-                raise ValidationError({"ids": "Provide valid document ids."})
-            docs = list(qs.filter(id__in=ids))
+            raw_pub_ids = request.data.get("public_ids")
+            if raw_pub_ids is not None:
+                if not request.user.is_super_admin:
+                    raise PermissionDenied(
+                        "Only Super Admins can delete a file from every section at once."
+                    )
+                if not isinstance(raw_pub_ids, list) or not raw_pub_ids:
+                    raise ValidationError({
+                        "public_ids": "Provide a list of document public ids to delete."
+                    })
+                pub_ids = [str(p).strip() for p in raw_pub_ids if str(p).strip()]
+                if not pub_ids:
+                    raise ValidationError({
+                        "public_ids": "Provide valid document public ids."
+                    })
+                docs = list(qs.filter(public_id__in=pub_ids))
+            else:
+                raw_ids = request.data.get("ids")
+                if not isinstance(raw_ids, list) or not raw_ids:
+                    raise ValidationError({"ids": "Provide a list of document ids to delete."})
+                ids = [int(i) for i in raw_ids if str(i).lstrip("-").isdigit()]
+                if not ids:
+                    raise ValidationError({"ids": "Provide valid document ids."})
+                docs = list(qs.filter(id__in=ids))
         if not docs:
             return Response({"deleted": 0})
         doc_ids = [d.id for d in docs]

@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { http } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { downloadDocument } from "@/lib/download";
 import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import { getUnitLabel } from "@/lib/document-types";
 import type { DocumentItem } from "@/lib/types";
@@ -71,6 +73,8 @@ function unitSortKey(label: string): [number, number] {
 }
 
 export function StudentBrowser() {
+  const { user } = useAuth();
+  const isAdmin = user?.is_super_admin ?? false;
   const [step, setStep] = useState<Step>({ level: "subjects" });
   const [subjectSearch, setSubjectSearch] = useState("");
   const [docSearch, setDocSearch] = useState("");
@@ -101,7 +105,34 @@ export function StudentBrowser() {
     kind: "document",
   });
 
-  const documents = useMemo(() => data?.results ?? [], [data]);
+  // Admins see every section, so a branch-wide upload would repeat the same
+  // file once per section. Group by file (public_id): keep the newest copy
+  // and attach the full list of sections it was shared to.
+  const documents = useMemo(() => {
+    const rows = data?.results ?? [];
+    if (!isAdmin) return rows;
+    const byFile = new Map<string, DocumentItem>();
+    for (const doc of rows) {
+      const existing = byFile.get(doc.public_id);
+      if (!existing || doc.created_at > existing.created_at) {
+        byFile.set(doc.public_id, {
+          ...doc,
+          sections: [doc.section_name],
+          section_count: 1,
+          total_downloads: doc.downloads,
+        });
+      } else {
+        byFile.set(doc.public_id, {
+          ...existing,
+          sections: [...(existing.sections ?? []), doc.section_name],
+          section_count: (existing.section_count ?? 1) + 1,
+          total_downloads:
+            (existing.total_downloads ?? existing.downloads) + doc.downloads,
+        });
+      }
+    }
+    return [...byFile.values()];
+  }, [data, isAdmin]);
 
   // Build Subjects → Categories → Units from the flat list once.
   const subjects = useMemo(() => {
@@ -189,29 +220,9 @@ export function StudentBrowser() {
     setSelecting(false);
   };
 
-  // Tries a blob download first (no popup), falls back to opening the tab.
+  // Streams through the browser with a live % + MB progress toast.
   const downloadOne = async (doc: DocumentItem): Promise<boolean> => {
-    try {
-      const res = await http.post<{ download_url: string }>(`/documents/${doc.id}/download/`);
-      try {
-        const blobRes = await fetch(res.download_url);
-        if (!blobRes.ok) throw new Error("Download failed");
-        const blob = await blobRes.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = doc.file_name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      } catch {
-        window.open(res.download_url, "_blank", "noopener");
-      }
-      return true;
-    } catch {
-      return false;
-    }
+    return downloadDocument(doc);
   };
 
   const downloadSelected = async (docs: DocumentItem[]) => {

@@ -260,6 +260,46 @@ class AdminDashboardTests(TestCase):
         self.assertTrue(all(r["count"] == 0 for r in charts["over_time"]))
         self.assertEqual(response.data["totals"]["students"], 2)
 
+    def test_dashboard_counts_unique_files_not_section_copies(self):
+        """One file shared to many sections is one document, not many."""
+        from apps.documents.models import Document
+
+        section_b = Section.objects.create(branch=self.branch, name="B")
+        semester = Semester.objects.create(name="3-1", order=5)
+        category = Category.objects.create(name="Notes")
+        subject = Subject.objects.create(
+            name="DBMS", semester=semester, branch=self.branch
+        )
+        common = {
+            "title": "DBMS Unit 1", "description": "",
+            "file_name": "dbms.pdf", "file_size": 1024,
+            "cloudinary_url": "https://x.example/dbms.pdf",
+            "public_id": "pid-1", "branch": self.branch,
+            "semester": semester, "category": category,
+            "subject": subject, "uploaded_by": self.admin,
+        }
+        # One upload shared to both sections -> 2 rows, 1 file.
+        Document.objects.create(section=self.section, **common)
+        Document.objects.create(section=section_b, **common)
+        Document.objects.create(
+            title="Python Unit 1", description="",
+            file_name="py.pdf", file_size=1024,
+            cloudinary_url="https://x.example/py.pdf",
+            public_id="pid-2", branch=self.branch,
+            semester=semester, category=category,
+            subject=subject, uploaded_by=self.admin,
+            section=self.section,
+        )
+
+        response = self._client().get("/api/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["totals"]["documents"], 2)
+        uploads = response.data["recent_uploads"]
+        self.assertEqual(len(uploads), 2)
+        shared = next(u for u in uploads if u["public_id"] == "pid-1")
+        self.assertEqual(shared["sections"], ["A", "B"])
+        self.assertEqual(shared["section_count"], 2)
+
 
 class NotificationApiTests(TestCase):
     """The notifications bell: scoped list, unread count, read actions."""

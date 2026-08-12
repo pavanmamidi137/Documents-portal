@@ -111,6 +111,53 @@ export const http = {
         timeout,
       })
       .then((r) => r.data),
+  /**
+   * Upload with a live progress callback (% of bytes sent).
+   *
+   * fetch() has no upload-progress API, so this uses XMLHttpRequest (same
+   * auth header + token refresh flow via getTokens). ``onProgress`` receives
+   * {percent, loaded, total} as the browser reports it.
+   */
+  uploadWithProgress: <T>(
+    url: string,
+    form: FormData,
+    onProgress?: (p: { percent: number; loaded: number; total: number }) => void,
+    timeout = 300_000
+  ) =>
+    new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", API_URL + url);
+      const { access } = getTokens();
+      if (access) xhr.setRequestHeader("Authorization", `Bearer ${access}`);
+      xhr.responseType = "json";
+      xhr.timeout = timeout;
+      if (onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            onProgress({
+              percent: Math.round((e.loaded / e.total) * 100),
+              loaded: e.loaded,
+              total: e.total,
+            });
+          }
+        };
+      }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.response as T);
+          return;
+        }
+        const data = xhr.response as { detail?: string; file?: string[] } | null;
+        const message =
+          (typeof data?.detail === "string" && data.detail) ||
+          (Array.isArray(data?.file) && data.file[0]) ||
+          `Upload failed (${xhr.status}).`;
+        reject(new Error(message));
+      };
+      xhr.onerror = () => reject(new Error("Network error - please try again."));
+      xhr.ontimeout = () => reject(new Error("Upload timed out - please try again."));
+      xhr.send(form);
+    }),
   /** Fetch a file as a blob (used to open previews without auth headers). */
   blob: (url: string, params?: Record<string, unknown>) =>
     api.get<Blob>(url, { params, responseType: "blob" }).then((r) => r.data),
