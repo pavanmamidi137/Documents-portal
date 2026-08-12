@@ -5,12 +5,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   BrainCircuit,
   CalendarDays,
   Camera,
-  ChevronDown,
   GraduationCap,
   KeyRound,
   Loader2,
@@ -26,6 +25,13 @@ import { toast } from "sonner";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -137,76 +143,12 @@ function MyAiUsageCard() {
 }
 
 /**
- * A card with a clickable header (icon + title + description + chevron) and a
- * smoothly animated, collapsible body. Used for the profile's Edit Details and
- * Change Password sections - the hero icons expand exactly one of them.
+ * "Edit Details" widget - opened from the pencil icon in the profile hero.
+ * The form lives in a dialog so the profile page itself stays compact.
  */
-function CollapsibleSection({
-  id,
-  open,
-  onToggle,
-  disabled = false,
-  icon,
-  title,
-  description,
-  children,
-}: {
-  id: string;
-  open: boolean;
-  onToggle: () => void;
-  disabled?: boolean;
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card className="overflow-hidden">
-      <button
-        type="button"
-        onClick={onToggle}
-        disabled={disabled}
-        aria-expanded={open}
-        aria-controls={`${id}-panel`}
-        className="flex w-full cursor-pointer items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        <span className="flex min-w-0 items-center gap-2.5">
-          {icon}
-          <span className="min-w-0">
-            <span className="block text-sm font-semibold">{title}</span>
-            <span className="block truncate text-xs text-muted-foreground">{description}</span>
-          </span>
-        </span>
-        <ChevronDown
-          className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
-            open && "rotate-180"
-          )}
-        />
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            key={`${id}-panel`}
-            id={`${id}-panel`}
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: "easeInOut" }}
-            className="overflow-hidden"
-          >
-            <div className="border-t px-5 py-4">{children}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </Card>
-  );
-}
-
-function EditDetailsCard({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+function EditDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { user, refreshUser } = useAuth();
   const [saving, setSaving] = useState(false);
-  const wasPrefilled = useRef(false);
   const {
     register,
     handleSubmit,
@@ -217,10 +159,9 @@ function EditDetailsCard({ open, onToggle }: { open: boolean; onToggle: () => vo
     defaultValues: { full_name: "", email: "", phone: "" },
   });
 
-  // Prefill once the profile loads (or after refreshUser() post-save).
+  // Prefill the form every time the dialog opens (fresh values after saves).
   useEffect(() => {
-    if (user && !wasPrefilled.current) {
-      wasPrefilled.current = true;
+    if (open && user) {
       reset({
         roll_number: user.roll_number,
         full_name: user.full_name,
@@ -230,7 +171,7 @@ function EditDetailsCard({ open, onToggle }: { open: boolean; onToggle: () => vo
         passout_year: user.passout_year ? String(user.passout_year) : "",
       });
     }
-  }, [user, reset]);
+  }, [open, user, reset]);
 
   const onSubmit = async (values: EditFormValues) => {
     setSaving(true);
@@ -249,14 +190,7 @@ function EditDetailsCard({ open, onToggle }: { open: boolean; onToggle: () => vo
       await http.patch("/auth/me/", payload);
       toast.success("Profile updated.");
       await refreshUser();
-      reset({
-        roll_number: user?.is_super_admin ? (values.roll_number?.trim().toUpperCase() ?? "") : user?.roll_number ?? "",
-        full_name: values.full_name.trim(),
-        email: values.email?.trim() ?? "",
-        phone: values.phone?.trim() ?? "",
-        gender: values.gender ?? "",
-        passout_year: values.passout_year ?? "",
-      });
+      onOpenChange(false);
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -267,15 +201,17 @@ function EditDetailsCard({ open, onToggle }: { open: boolean; onToggle: () => vo
   if (!user) return null;
 
   return (
-    <CollapsibleSection
-      id="edit-details"
-      open={open}
-      onToggle={onToggle}
-      icon={<Pencil className="size-5 text-primary" />}
-      title="Edit Details"
-      description="Update your name and contact details. Your branch and section stay fixed."
-    >
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil className="size-5 text-primary" /> Edit Details
+          </DialogTitle>
+          <DialogDescription>
+            Update your name and contact details. Your branch and section stay fixed.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           {user.is_super_admin && (
             <div className="space-y-2">
               <Label htmlFor="edit-username">Username (Roll Number)</Label>
@@ -295,7 +231,7 @@ function EditDetailsCard({ open, onToggle }: { open: boolean; onToggle: () => vo
           )}
           <div className="space-y-2">
             <Label htmlFor="edit-name">Full Name</Label>
-            <Input id="edit-name" {...register("full_name")} />
+            <Input id="edit-name" autoFocus {...register("full_name")} />
             {errors.full_name && (
               <p className="text-xs text-destructive">{errors.full_name.message}</p>
             )}
@@ -339,7 +275,85 @@ function EditDetailsCard({ open, onToggle }: { open: boolean; onToggle: () => vo
             Save Changes
           </Button>
         </form>
-    </CollapsibleSection>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * "Change Password" widget - opened from the key icon in the profile hero.
+ */
+function ChangePasswordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<FormValues>({ resolver: zodResolver(schema) });
+
+  const onSubmit = async (values: FormValues) => {
+    setSubmitting(true);
+    try {
+      await http.post("/auth/change-password/", {
+        old_password: values.old_password,
+        new_password: values.new_password,
+      });
+      toast.success("Password changed successfully.");
+      reset();
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        // Never let ESC/backdrop close the dialog mid-submit.
+        if (submitting && !v) return;
+        onOpenChange(v);
+      }}
+    >
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="size-5 text-primary" /> Change Password
+          </DialogTitle>
+          <DialogDescription>Keep your account secure with a strong password.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="old">Current Password</Label>
+            <Input id="old" type="password" autoFocus {...register("old_password")} />
+            {errors.old_password && (
+              <p className="text-xs text-destructive">{errors.old_password.message}</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="new">New Password</Label>
+            <Input id="new" type="password" {...register("new_password")} />
+            {errors.new_password && (
+              <p className="text-xs text-destructive">{errors.new_password.message}</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="confirm">Confirm New Password</Label>
+            <Input id="confirm" type="password" {...register("confirm")} />
+            {errors.confirm && (
+              <p className="text-xs text-destructive">{errors.confirm.message}</p>
+            )}
+          </div>
+          <Button type="submit" disabled={submitting} className="w-full">
+            {submitting && <Loader2 className="size-4 animate-spin" />}
+            Update Password
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -573,48 +587,9 @@ function AvatarCard() {
 
 export default function ProfilePage() {
   const { user } = useAuth();
-  const [submitting, setSubmitting] = useState(false);
-  // Which profile section is expanded (accordion - one at a time, or none).
-  const [openCard, setOpenCard] = useState<"edit" | "password" | null>("edit");
-  const editRef = useRef<HTMLDivElement>(null);
-  const passwordRef = useRef<HTMLDivElement>(null);
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors },
-  } = useForm<FormValues>({ resolver: zodResolver(schema) });
-
-  /** Expand/collapse a profile card. Opening scrolls to it and focuses its first input. */
-  const toggleCard = (kind: "edit" | "password") => {
-    const opening = openCard !== kind;
-    setOpenCard(opening ? kind : null);
-    if (opening) {
-      const target = kind === "edit" ? editRef.current : passwordRef.current;
-      const inputId = kind === "edit" ? "edit-name" : "old";
-      // Wait for the expand animation, then bring the card into view and focus.
-      setTimeout(() => {
-        target?.scrollIntoView({ behavior: "smooth", block: "start" });
-        document.getElementById(inputId)?.focus({ preventScroll: true });
-      }, 280);
-    }
-  };
-
-  const onSubmit = async (values: FormValues) => {
-    setSubmitting(true);
-    try {
-      await http.post("/auth/change-password/", {
-        old_password: values.old_password,
-        new_password: values.new_password,
-      });
-      toast.success("Password changed successfully.");
-      reset();
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  // The Edit Details and Change Password widgets open from the hero icons.
+  const [editOpen, setEditOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
 
   if (!user) return null;
 
@@ -632,7 +607,7 @@ export default function ProfilePage() {
         className="relative mb-6 overflow-hidden rounded-2xl border bg-card shadow-sm"
       >
         <div className="pointer-events-none absolute -top-20 -right-20 size-64 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 blur-3xl" />
-        {/* Quick actions — completion ring + icons expand/collapse the cards below */}
+        {/* Quick actions — completion ring + icons open the edit/password widgets */}
         <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
           {(user.is_student || user.is_cr) && (
             <Tooltip>
@@ -671,42 +646,30 @@ export default function ProfilePage() {
               render={
                 <button
                   type="button"
-                  onClick={() => toggleCard("edit")}
-                  aria-pressed={openCard === "edit"}
-                  className={cn(
-                    "flex size-9 cursor-pointer items-center justify-center rounded-full border bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-all hover:scale-105 hover:border-primary/40 hover:text-primary",
-                    openCard === "edit" && "border-primary/50 bg-primary/10 text-primary"
-                  )}
+                  onClick={() => setEditOpen(true)}
+                  className="flex size-9 cursor-pointer items-center justify-center rounded-full border bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-all hover:scale-105 hover:border-primary/40 hover:text-primary"
                   aria-label="Edit details"
                 >
                   <Pencil className="size-4" />
                 </button>
               }
             />
-            <TooltipContent>
-              {openCard === "edit" ? "Collapse Edit Details" : "Edit Details"}
-            </TooltipContent>
+            <TooltipContent>Edit Details</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
               render={
                 <button
                   type="button"
-                  onClick={() => toggleCard("password")}
-                  aria-pressed={openCard === "password"}
-                  className={cn(
-                    "flex size-9 cursor-pointer items-center justify-center rounded-full border bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-all hover:scale-105 hover:border-primary/40 hover:text-primary",
-                    openCard === "password" && "border-primary/50 bg-primary/10 text-primary"
-                  )}
+                  onClick={() => setPasswordOpen(true)}
+                  className="flex size-9 cursor-pointer items-center justify-center rounded-full border bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-all hover:scale-105 hover:border-primary/40 hover:text-primary"
                   aria-label="Change password"
                 >
                   <KeyRound className="size-4" />
                 </button>
               }
             />
-            <TooltipContent>
-              {openCard === "password" ? "Collapse Change Password" : "Change Password"}
-            </TooltipContent>
+            <TooltipContent>Change Password</TooltipContent>
           </Tooltip>
         </div>
         <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:p-8">
@@ -807,59 +770,11 @@ export default function ProfilePage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div ref={editRef} className="space-y-6">
-          <EditDetailsCard open={openCard === "edit"} onToggle={() => toggleCard("edit")} />
-          <MyAiUsageCard />
-        </div>
+      <MyAiUsageCard />
 
-        <motion.div
-          ref={passwordRef}
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.1 }}
-          id="password"
-          className="space-y-6"
-        >
-          <CollapsibleSection
-            id="password"
-            open={openCard === "password"}
-            onToggle={() => toggleCard("password")}
-            disabled={submitting}
-            icon={<KeyRound className="size-5 text-primary" />}
-            title="Change Password"
-            description="Keep your account secure with a strong password."
-          >
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="old">Current Password</Label>
-                <Input id="old" type="password" {...register("old_password")} />
-                {errors.old_password && (
-                  <p className="text-xs text-destructive">{errors.old_password.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="new">New Password</Label>
-                <Input id="new" type="password" {...register("new_password")} />
-                {errors.new_password && (
-                  <p className="text-xs text-destructive">{errors.new_password.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirm">Confirm New Password</Label>
-                <Input id="confirm" type="password" {...register("confirm")} />
-                {errors.confirm && (
-                  <p className="text-xs text-destructive">{errors.confirm.message}</p>
-                )}
-              </div>
-              <Button type="submit" disabled={submitting} className="w-full">
-                {submitting && <Loader2 className="size-4 animate-spin" />}
-                Update Password
-              </Button>
-            </form>
-          </CollapsibleSection>
-        </motion.div>
-      </div>
+      {/* Edit Details / Change Password widgets - opened from the hero icons */}
+      <EditDetailsDialog open={editOpen} onOpenChange={setEditOpen} />
+      <ChangePasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
 
       {/* Footer — Support is only shown to CRs and faculty (admins manage support
           from their own pages). */}
