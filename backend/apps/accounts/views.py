@@ -991,6 +991,14 @@ class ResumeViewSet(viewsets.ModelViewSet):
 
         from apps.documents.services import signed_raw_url
 
+        if not request.user.is_super_admin:
+            from apps.core.views_settings import get_resume_download_enabled
+
+            if not get_resume_download_enabled():
+                raise PermissionDenied(
+                    "Resume downloads are currently disabled by the admin."
+                )
+
         max_files = 100
         max_bytes = 150 * 1024 * 1024
         files: list[tuple[str, bytes]] = []
@@ -1237,6 +1245,14 @@ class ResumeViewSet(viewsets.ModelViewSet):
             raise NotFound(
                 "This resume's file was deleted from storage. Re-upload it from your profile."
             )
+        download = request.query_params.get("download", "").lower() in ("1", "true", "yes")
+        if download and not request.user.is_super_admin:
+            from apps.core.views_settings import get_resume_download_enabled
+
+            if not get_resume_download_enabled():
+                raise PermissionDenied(
+                    "Resume downloads are currently disabled by the admin. You can still preview resumes."
+                )
         try:
             from apps.documents.services import signed_raw_url
 
@@ -1250,7 +1266,6 @@ class ResumeViewSet(viewsets.ModelViewSet):
             raise NotFound("Could not load the resume file from storage.")
         except Exception:
             raise NotFound("Could not load the resume file from storage.")
-        download = request.query_params.get("download", "").lower() in ("1", "true", "yes")
         disposition = "attachment" if download else "inline"
         response = HttpResponse(
             content, content_type=_resume_content_type(resume.file_name)

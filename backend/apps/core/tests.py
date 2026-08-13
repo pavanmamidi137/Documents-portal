@@ -13,7 +13,7 @@ from apps.college.models import Branch, Category, Section, Semester, Subject
 from apps.core.models import AuditLog, ContactRequest, Notification, SiteSetting
 from apps.core.permissions import IsSuperAdmin, IsSuperAdminOrCR, IsStudent
 from apps.core.utils import csv_safe
-from apps.core.views_settings import get_site_theme
+from apps.core.views_settings import get_resume_download_enabled, get_site_theme
 
 
 class CsvSafeTests(TestCase):
@@ -655,3 +655,53 @@ class ContactRequestTests(TestCase):
             f"/api/contact-requests/{req['id']}/resolve/"
         )
         self.assertEqual(response.status_code, 403)
+
+
+class ResumeDownloadSettingTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.cr = User.objects.create_user(
+            roll_number="cr1", password="x", full_name="CR", role=User.Role.CR
+        )
+
+    def _token(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        return str(AccessToken.for_user(user))
+
+    def test_public_get_returns_default_enabled(self):
+        response = APIClient().get("/api/resume-download-setting/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["resume_download_enabled"])
+        self.assertTrue(get_resume_download_enabled())
+
+    def test_admin_can_toggle_downloads_off_and_back_on(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.admin)}")
+        response = client.put(
+            "/api/resume-download-setting/", {"enabled": False}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["resume_download_enabled"])
+        self.assertFalse(get_resume_download_enabled())
+
+        # An anonymous GET now sees the flag as off.
+        anon = APIClient()
+        self.assertFalse(anon.get("/api/resume-download-setting/").data["resume_download_enabled"])
+
+        response = client.put(
+            "/api/resume-download-setting/", {"enabled": True}, format="json"
+        )
+        self.assertTrue(response.data["resume_download_enabled"])
+        self.assertTrue(get_resume_download_enabled())
+
+    def test_non_admin_cannot_change_setting(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._token(self.cr)}")
+        response = client.put(
+            "/api/resume-download-setting/", {"enabled": False}, format="json"
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(get_resume_download_enabled())

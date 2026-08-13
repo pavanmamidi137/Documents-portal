@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import {
   Building2,
+  Download,
   FileText,
   FileUser,
   FolderOpen,
@@ -34,6 +35,8 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { useResumeDownloadSetting } from "@/lib/use-resume-download-setting";
 import { getDocumentTypeMeta } from "@/lib/document-types";
 import { fetchMyResume, http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -112,6 +115,8 @@ export default function DashboardPage() {
   });
 
   const isAdmin = user?.is_super_admin ?? false;
+  // Admin-controlled: whether faculty may download students' resumes.
+  const resumeDownloads = useResumeDownloadSetting();
   const isFaculty = user?.is_faculty ?? false;
   // CRs are students too - the resume reminder applies to them as well.
   const isStudent = user?.is_student ?? user?.is_cr ?? false;
@@ -212,6 +217,40 @@ export default function DashboardPage() {
               );
             })}
       </div>
+
+      {/* Admin: control whether faculty can download students' resumes */}
+      {isAdmin && (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.15 }}
+          className="mt-6 flex flex-col gap-4 rounded-2xl border bg-card p-5 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 shadow-md shadow-primary/30">
+              <Download className="size-5 text-primary-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-semibold">Resume downloads</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Allow faculty to download students&apos; resumes. When off, they can still preview them
+                but the download and ZIP buttons are hidden.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="text-sm text-muted-foreground">
+              {resumeDownloads.enabled ? "Allowed" : "Disabled"}
+            </span>
+            <Switch
+              checked={resumeDownloads.enabled}
+              onCheckedChange={(v) => resumeDownloads.setEnabled(v === true)}
+              disabled={resumeDownloads.isPending}
+              aria-label="Toggle resume downloads"
+            />
+          </div>
+        </motion.div>
+      )}
 
       {/* Admin charts: area, pie and bar visualisations */}
       {isAdmin && data?.charts && (

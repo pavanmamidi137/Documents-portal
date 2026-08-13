@@ -49,6 +49,23 @@ def get_site_theme() -> str:
     return DEFAULT_THEME
 
 
+# Whether faculty/admins may download students' resumes. The Super Admin can
+# turn downloads off entirely (files stay viewable/previewable, just not
+# downloadable) - enforced server-side in the resume preview/zip endpoints.
+RESUME_DOWNLOAD_KEY = "resume_download_enabled"
+
+
+def get_resume_download_enabled() -> bool:
+    """Read the persisted setting (default: downloads allowed)."""
+    try:
+        setting = SiteSetting.objects.filter(key=RESUME_DOWNLOAD_KEY).first()
+        if setting:
+            return setting.value != "0"
+    except Exception:
+        pass
+    return True
+
+
 class SiteThemeView(APIView):
     """The portal-wide color theme.
 
@@ -80,3 +97,35 @@ class SiteThemeView(APIView):
             {"theme": theme}, request,
         )
         return Response({"theme": theme})
+
+
+class ResumeDownloadSettingView(APIView):
+    """Whether students' resumes can be downloaded.
+
+    GET -> any visitor reads the flag (downloads may be hidden in the UI
+           accordingly). PUT -> Super Admin only; turns resume downloads
+           on/off portal-wide.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get_permissions(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return [IsSuperAdmin()]
+        return [AllowAny()]
+
+    def get(self, request):
+        return Response({"resume_download_enabled": get_resume_download_enabled()})
+
+    def put(self, request):
+        enabled = bool(request.data.get("enabled", True))
+        if isinstance(request.data.get("enabled"), str):
+            enabled = request.data["enabled"].lower() in ("1", "true", "yes", "on")
+        SiteSetting.objects.update_or_create(
+            key=RESUME_DOWNLOAD_KEY, defaults={"value": "1" if enabled else "0"}
+        )
+        log_audit(
+            request.user, "UPDATE", "SiteSetting", RESUME_DOWNLOAD_KEY,
+            {"resume_download_enabled": enabled}, request,
+        )
+        return Response({"resume_download_enabled": enabled})

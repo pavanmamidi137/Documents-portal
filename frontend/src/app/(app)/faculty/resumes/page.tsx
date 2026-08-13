@@ -45,6 +45,7 @@ import { http, openResumeInNewTab } from "@/lib/api";
 import type { Paginated, Resume, StudentStatusRow } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 import { scoreTone, StarRating } from "@/lib/resume-score";
+import { useResumeDownloadSetting } from "@/lib/use-resume-download-setting";
 
 /** Admin-only: the resume's AI review state - status badge, star rating, ATS
  * score and (when failed) the error. Faculty keep the plain table. */
@@ -117,6 +118,10 @@ export default function FacultyResumesPage() {
   const { data: meta } = useMetaData();
   const queryClient = useQueryClient();
   const isAdmin = user?.is_super_admin ?? false;
+  // The Super Admin decides whether faculty can download resumes. When off,
+  // download buttons are hidden (preview stays available); admins keep access.
+  const { enabled: downloadsEnabled } = useResumeDownloadSetting();
+  const downloadsAllowed = isAdmin || downloadsEnabled;
 
   const [tab, setTab] = useState<"uploaded" | "students">("uploaded");
   const [page, setPage] = useState(1);
@@ -448,16 +453,25 @@ export default function FacultyResumesPage() {
           >
             <Eye className="size-4" />
           </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-8"
-            title="Download resume"
-            aria-label={`Download ${r.student_name}'s resume`}
-            onClick={() => handleDownload(r)}
-          >
-            <Download className="size-4" />
-          </Button>
+          {downloadsAllowed ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8"
+              title="Download resume"
+              aria-label={`Download ${r.student_name}'s resume`}
+              onClick={() => handleDownload(r)}
+            >
+              <Download className="size-4" />
+            </Button>
+          ) : (
+            <span
+              title="Resume downloads are disabled by the admin"
+              className="inline-flex size-8 items-center justify-center text-muted-foreground/50"
+            >
+              <Download className="size-4" />
+            </span>
+          )}
         </div>
       ),
     },
@@ -598,20 +612,30 @@ export default function FacultyResumesPage() {
           )}
         </TabsContent>
         <TabsContent value="uploaded" className="mt-4">
+          {!downloadsAllowed && (
+            <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <p className="text-sm">
+                Resume downloads are currently disabled by the admin. You can still preview resumes.
+              </p>
+            </div>
+          )}
           {filtersBar(
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={handleZip}
-              disabled={zipping}
-              title={
-                (data?.count ?? 0) > 100
-                  ? "ZIP includes the first 100 resumes in the current view"
-                  : "Download every resume in the current view as a ZIP"
-              }
-            >
-              <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
-            </Button>
+            downloadsAllowed ? (
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={handleZip}
+                disabled={zipping}
+                title={
+                  (data?.count ?? 0) > 100
+                    ? "ZIP includes the first 100 resumes in the current view"
+                    : "Download every resume in the current view as a ZIP"
+                }
+              >
+                <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
+              </Button>
+            ) : undefined
           )}
 
           <DataTable

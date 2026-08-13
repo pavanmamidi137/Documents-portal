@@ -1765,6 +1765,55 @@ class ResumeTests(TestCase):
         self.assertTrue("s--" in signed_url or "sig=" in signed_url, signed_url)
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_download_blocked_when_disabled_for_faculty(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "https://storage.example/r.pdf", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        from apps.core.models import SiteSetting
+
+        SiteSetting.objects.update_or_create(
+            key="resume_download_enabled", defaults={"value": "0"}
+        )
+        client = self._client(self.faculty)
+        # Preview (inline) still works - only downloads are blocked.
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 hi"
+            response = client.get(f"/api/resumes/{resume.id}/preview/")
+        self.assertEqual(response.status_code, 200)
+        # Download forces attachment and is denied.
+        response = client.get(f"/api/resumes/{resume.id}/preview/?download=1")
+        self.assertEqual(response.status_code, 403)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_zip_blocked_when_disabled_for_faculty(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file("diya.pdf"))
+        from apps.core.models import SiteSetting
+
+        SiteSetting.objects.update_or_create(
+            key="resume_download_enabled", defaults={"value": "0"}
+        )
+        response = self._client(self.faculty).get("/api/resumes/download_zip/")
+        self.assertEqual(response.status_code, 403)
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
+    def test_admin_can_still_download_when_disabled(self, mock_upload):
+        mock_upload.return_value = {"secure_url": "https://storage.example/r.pdf", "public_id": "r"}
+        services.upload_resume(self.student, self._resume_file())
+        resume = Resume.objects.get(student=self.student)
+        from apps.core.models import SiteSetting
+
+        SiteSetting.objects.update_or_create(
+            key="resume_download_enabled", defaults={"value": "0"}
+        )
+        client = self._client(self.admin)
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4 hi"
+            response = client.get(f"/api/resumes/{resume.id}/preview/?download=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment", response["Content-Disposition"])
+
+    @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_check_files_flags_deleted_resume_and_hides_it(self, mock_upload):
         mock_upload.return_value = {"secure_url": "x", "public_id": "r"}
         services.upload_resume(self.student, self._resume_file())
