@@ -3,16 +3,12 @@
 import { useState, type ReactNode } from "react";
 import {
   keepPreviousData,
-  useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Archive,
-  CheckCheck,
-  CheckCircle2,
-  Circle,
   Clock,
   Download,
   Eye,
@@ -46,7 +42,6 @@ import { useAuth } from "@/lib/auth";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import { http, openResumeInNewTab } from "@/lib/api";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Paginated, Resume, StudentStatusRow } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 import { scoreTone, StarRating } from "@/lib/resume-score";
@@ -130,9 +125,7 @@ export default function FacultyResumesPage() {
   const debouncedQ = useDebouncedValue(q);
   const [branch, setBranch] = useState("");
   const [section, setSection] = useState("");
-  const [status, setStatus] = useState("");
   const [crOnly, setCrOnly] = useState("");
-  const [markAllOpen, setMarkAllOpen] = useState(false);
   const [zipping, setZipping] = useState(false);
 
   const branches = meta?.branches ?? [];
@@ -148,7 +141,6 @@ export default function FacultyResumesPage() {
     if (key === "branch") setSection("");
     if (key === "branch") setBranch(value);
     else if (key === "section") setSection(value);
-    else if (key === "status") setStatus(value);
     else if (key === "cr") setCrOnly(value);
   };
 
@@ -160,7 +152,6 @@ export default function FacultyResumesPage() {
     debouncedQ,
     branch,
     section,
-    status,
     crOnly,
   ] as const;
 
@@ -171,7 +162,6 @@ export default function FacultyResumesPage() {
       search: debouncedQ || undefined,
       branch: branch || undefined,
       section: section || undefined,
-      status: status || undefined,
       cr: crOnly || undefined,
     },
     queryKey: currentQueryKey,
@@ -187,71 +177,9 @@ export default function FacultyResumesPage() {
         search: debouncedQ || undefined,
         branch: branch || undefined,
         section: section || undefined,
-        status: status || undefined,
         cr: crOnly || undefined,
       }),
     placeholderData: keepPreviousData,
-  });
-
-  // Toggle review status with an optimistic update - the badge flips instantly.
-  const markReviewed = useMutation({
-    mutationFn: (r: Resume) =>
-      http.post<Resume>(`/resumes/${r.id}/mark_reviewed/`, { reviewed: !r.is_reviewed }),
-    onMutate: async (r) => {
-      await queryClient.cancelQueries({ queryKey: ["resumes", "list"] });
-      const previous = queryClient.getQueryData<Paginated<Resume>>(currentQueryKey);
-      queryClient.setQueryData<Paginated<Resume>>(currentQueryKey, (old) =>
-        old
-          ? {
-              ...old,
-              results: old.results.map((x) =>
-                x.id === r.id ? { ...x, is_reviewed: !x.is_reviewed } : x
-              ),
-            }
-          : old
-      );
-      return { previous };
-    },
-    onError: (error, r, ctx) => {
-      if (ctx?.previous) queryClient.setQueryData(currentQueryKey, ctx.previous);
-      toast.error(getErrorMessage(error));
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["resumes", "list"] }),
-  });
-
-  /** Open/download a resume and automatically mark it as reviewed. */
-  const viewResume = (r: Resume, open: (r: Resume) => Promise<void> | void) => {
-    // Read the live review state from the cache so a fast second click on the
-    // same row can't double-toggle (the optimistic flip already updated it).
-    const live = queryClient
-      .getQueryData<Paginated<Resume>>(currentQueryKey)
-      ?.results.find((x) => x.id === r.id);
-    if (!(live?.is_reviewed ?? r.is_reviewed)) markReviewed.mutate(r);
-    void open(r);
-  };
-
-  // Bulk action: mark every resume in the current filtered view as reviewed.
-  const markAll = useMutation({
-    // Send the current filter params so the backend marks exactly the resumes
-    // visible in this filtered view (search/branch/section/status/CR).
-    mutationFn: () =>
-      http.post<{ updated: number }>(
-        "/resumes/mark_all_reviewed/",
-        {},
-        {
-          search: q || undefined,
-          branch: branch || undefined,
-          section: section || undefined,
-          status: status || undefined,
-          cr: crOnly || undefined,
-        }
-      ),
-    onSuccess: (res) => {
-      setMarkAllOpen(false);
-      toast.success(`Marked ${res.updated} resume${res.updated === 1 ? "" : "s"} as reviewed.`);
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["resumes", "list"] }),
   });
 
   const prefetchNextPage = (next: number) => {
@@ -264,7 +192,6 @@ export default function FacultyResumesPage() {
         debouncedQ,
         branch,
         section,
-        status,
         crOnly,
       ],
       queryFn: () =>
@@ -274,7 +201,6 @@ export default function FacultyResumesPage() {
           search: debouncedQ || undefined,
           branch: branch || undefined,
           section: section || undefined,
-          status: status || undefined,
           cr: crOnly || undefined,
         }),
       staleTime: 30_000,
@@ -301,7 +227,6 @@ export default function FacultyResumesPage() {
           search: q || undefined,
           branch: branch || undefined,
           section: section || undefined,
-          status: status || undefined,
           cr: crOnly || undefined,
         },
         "resumes.zip"
@@ -315,26 +240,24 @@ export default function FacultyResumesPage() {
     }
   };
 
-  const hasFilters = q !== "" || branch !== "" || section !== "" || status !== "" || crOnly !== "";
+  const hasFilters = q !== "" || branch !== "" || section !== "" || crOnly !== "";
   const clearFilters = () => {
     setQ("");
     setBranch("");
     setSection("");
-    setStatus("");
     setCrOnly("");
     setPage(1);
   };
 
-  // Every student of the branch with their resume upload/review status - the
+  // Every student of the branch with their resume upload status - the
   // faculty member can see at a glance who has uploaded and who hasn't.
   const { data: statusRows, isLoading: statusLoading } = useQuery({
-    queryKey: ["resumes", "student-status", debouncedQ, branch, section, status, crOnly],
+    queryKey: ["resumes", "student-status", debouncedQ, branch, section, crOnly],
     queryFn: () =>
       http.get<{ results: StudentStatusRow[] }>("/resumes/student_status/", {
         search: debouncedQ || undefined,
         branch: branch || undefined,
         section: section || undefined,
-        status: status || undefined,
         cr: crOnly || undefined,
       }),
     enabled: tab === "students",
@@ -407,28 +330,6 @@ export default function FacultyResumesPage() {
           >
             <FileUp className="size-3.5" /> Not uploaded
           </Badge>
-        ),
-    },
-    {
-      key: "review",
-      header: "Review",
-      cell: (s) =>
-        s.is_reviewed ? (
-          <Badge
-            variant="outline"
-            className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          >
-            <CheckCircle2 className="size-3.5" /> Reviewed
-          </Badge>
-        ) : s.has_resume ? (
-          <Badge
-            variant="outline"
-            className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-          >
-            <Clock className="size-3.5" /> Pending
-          </Badge>
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
         ),
     },
     ...(isAdmin
@@ -530,26 +431,6 @@ export default function FacultyResumesPage() {
         ]
       : []),
     {
-      key: "status",
-      header: "Status",
-      cell: (r) =>
-        r.is_reviewed ? (
-          <Badge
-            variant="outline"
-            className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          >
-            <CheckCircle2 className="size-3.5" /> Reviewed
-          </Badge>
-        ) : (
-          <Badge
-            variant="outline"
-            className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-          >
-            <Clock className="size-3.5" /> Pending
-          </Badge>
-        ),
-    },
-    {
       key: "actions",
       header: "",
       cell: (r) => (
@@ -558,14 +439,12 @@ export default function FacultyResumesPage() {
             size="icon"
             variant="ghost"
             className="size-8"
-            title="Preview resume (marks as reviewed)"
+            title="Preview resume"
             aria-label={`Preview ${r.student_name}'s resume`}
-            onClick={() =>
-              viewResume(r, async (res) => {
-                const err = await openResumeInNewTab(res);
-                if (err) toast.error(err);
-              })
-            }
+            onClick={async () => {
+              const err = await openResumeInNewTab(r);
+              if (err) toast.error(err);
+            }}
           >
             <Eye className="size-4" />
           </Button>
@@ -573,34 +452,19 @@ export default function FacultyResumesPage() {
             size="icon"
             variant="ghost"
             className="size-8"
-            title="Download resume (marks as reviewed)"
+            title="Download resume"
             aria-label={`Download ${r.student_name}'s resume`}
-            onClick={() => viewResume(r, (res) => handleDownload(res))}
+            onClick={() => handleDownload(r)}
           >
             <Download className="size-4" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className={cn("size-8", r.is_reviewed ? "text-emerald-500" : "text-muted-foreground")}
-            title={r.is_reviewed ? "Mark as not reviewed" : "Mark as reviewed"}
-            aria-label={
-              r.is_reviewed
-                ? `Mark ${r.student_name}'s resume as not reviewed`
-                : `Mark ${r.student_name}'s resume as reviewed`
-            }
-            onClick={() => markReviewed.mutate(r)}
-            disabled={markReviewed.isPending}
-          >
-            {r.is_reviewed ? <CheckCircle2 className="size-4" /> : <Circle className="size-4" />}
           </Button>
         </div>
       ),
     },
   ];
 
-  // Shared filter bar - shown on both tabs. Search, review status, CR-only,
-  // branch (admins) and section filters apply to whichever list is visible.
+  // Shared filter bar - shown on both tabs. Search, CR-only, branch (admins)
+  // and section filters apply to whichever list is visible.
   const filtersBar = (actions?: ReactNode) => (
     <div className="mb-4 flex flex-wrap items-center gap-2">
       <div className="relative w-full max-w-xs">
@@ -614,17 +478,6 @@ export default function FacultyResumesPage() {
           className="h-9 bg-muted/50 pl-3"
         />
       </div>
-      <Select value={status} onValueChange={(v) => setFilter("status", v ?? "")}>
-        <SelectTrigger className="w-36">
-          <SelectValue placeholder="Status">
-            {status === "reviewed" ? "Reviewed" : status === "pending" ? "Pending" : undefined}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="reviewed">Reviewed</SelectItem>
-          <SelectItem value="pending">Pending</SelectItem>
-        </SelectContent>
-      </Select>
       <Select value={crOnly} onValueChange={(v) => setFilter("cr", v ?? "")}>
         <SelectTrigger className="w-36">
           <SelectValue placeholder="All students">
@@ -746,29 +599,19 @@ export default function FacultyResumesPage() {
         </TabsContent>
         <TabsContent value="uploaded" className="mt-4">
           {filtersBar(
-            <>
-              <Button
-                variant="outline"
-                className="gap-2"
-                disabled={!data?.count || markAll.isPending}
-                onClick={() => setMarkAllOpen(true)}
-              >
-                <CheckCheck className="size-4" /> Mark all reviewed
-              </Button>
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={handleZip}
-                disabled={zipping}
-                title={
-                  (data?.count ?? 0) > 100
-                    ? "ZIP includes the first 100 resumes in the current view"
-                    : "Download every resume in the current view as a ZIP"
-                }
-              >
-                <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
-              </Button>
-            </>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleZip}
+              disabled={zipping}
+              title={
+                (data?.count ?? 0) > 100
+                  ? "ZIP includes the first 100 resumes in the current view"
+                  : "Download every resume in the current view as a ZIP"
+              }
+            >
+              <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
+            </Button>
           )}
 
           <DataTable
@@ -786,20 +629,11 @@ export default function FacultyResumesPage() {
           />
 
           <p className="mt-4 text-xs text-muted-foreground">
-            Students manage their own resumes — they can upload, preview, replace or delete them from their profile. Viewing or downloading a resume marks it as reviewed.
+            Students manage their own resumes — they can upload, preview, replace or delete them from their profile.
           </p>
         </TabsContent>
       </Tabs>
 
-      <ConfirmDialog
-        open={markAllOpen}
-        onOpenChange={setMarkAllOpen}
-        title="Mark all resumes as reviewed?"
-        description={`This marks every resume in the current filtered view (${data?.count ?? 0} resume${(data?.count ?? 0) === 1 ? "" : "s"}) as reviewed.`}
-        confirmLabel="Mark all reviewed"
-        loading={markAll.isPending}
-        onConfirm={() => markAll.mutate()}
-      />
     </RoleGuard>
   );
 }
