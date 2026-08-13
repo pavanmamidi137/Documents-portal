@@ -2461,6 +2461,7 @@ class ResumeTests(TestCase):
             student=self.student, file_name="r.pdf", file_size=10,
             cloudinary_url="https://x.example/r.pdf", public_id="r",
             is_reviewed=True,
+            ai_status=Resume.AiStatus.COMPLETE, ai_score=72,
         )
         no_resume = User.objects.create_user(
             roll_number="21IT04", password="x", full_name="Zoya",
@@ -2473,8 +2474,11 @@ class ResumeTests(TestCase):
         self.assertIn("21IT01", by_roll)
         self.assertTrue(by_roll["21IT01"]["has_resume"])
         self.assertTrue(by_roll["21IT01"]["is_reviewed"])
+        self.assertEqual(by_roll["21IT01"]["ai_status"], "COMPLETE")
+        self.assertEqual(by_roll["21IT01"]["ai_score"], 72)
         self.assertIn("21IT04", by_roll)
         self.assertFalse(by_roll["21IT04"]["has_resume"])
+        self.assertIsNone(by_roll["21IT04"]["ai_score"])
 
     def test_gender_imported_from_csv(self):
         csv_content = (

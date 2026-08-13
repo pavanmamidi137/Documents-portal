@@ -30,6 +30,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import { initials } from "@/lib/utils";
 
 const fadeUp = {
@@ -170,7 +171,197 @@ function InstallAppButton() {
   );
 }
 
+/** Phone-sized home: a compact hero plus instant-access tiles to each section. */
+function MobileHomePage() {
+  const { user } = useAuth();
+  const { theme, setTheme } = useTheme();
+
+  const quickActions = [
+    {
+      icon: FolderOpen,
+      label: "Documents",
+      desc: "Notes, manuals & papers",
+      href: "/documents",
+      tint: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 ring-indigo-500/20",
+    },
+    {
+      icon: Briefcase,
+      label: "Placements",
+      desc: "Drives & eligibility",
+      href: "/placements",
+      tint: "bg-teal-500/10 text-teal-600 dark:text-teal-400 ring-teal-500/20",
+    },
+    {
+      icon: FileText,
+      label: "My Resume",
+      desc: "AI review & ATS score",
+      href: "/resume",
+      tint: "bg-violet-500/10 text-violet-600 dark:text-violet-400 ring-violet-500/20",
+    },
+    {
+      icon: BellRing,
+      label: "Notifications",
+      desc: "Updates & alerts",
+      href: "/notifications",
+      tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400 ring-amber-500/20",
+    },
+  ];
+
+  return (
+    <div className="min-h-screen overflow-x-hidden bg-background">
+      {/* ------------------------------------------------ Navbar */}
+      <header className="sticky top-0 z-40 border-b bg-background/75 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-md items-center justify-between px-4">
+          <Link href="/" className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-md shadow-primary/25">
+              <Handshake className="size-4" />
+            </div>
+            <p className="text-sm font-bold tracking-tight">PlaceMate</p>
+          </Link>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Toggle light/dark mode"
+              title="Toggle light/dark mode"
+            >
+              {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            </button>
+            {user ? (
+              <Link
+                href="/dashboard"
+                title={user?.full_name ?? "Go to dashboard"}
+                className="group relative size-8 overflow-hidden rounded-full ring-2 ring-primary/40 transition-all hover:ring-primary"
+              >
+                {user?.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={user.avatar_url}
+                    alt={user?.full_name ?? "Profile"}
+                    className="size-full object-cover"
+                  />
+                ) : (
+                  <span className="flex size-full items-center justify-center bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                    {initials(user?.full_name ?? "?")}
+                  </span>
+                )}
+              </Link>
+            ) : (
+              <Link
+                href="/login"
+                className="rounded-lg px-2.5 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/10"
+              >
+                Sign in
+              </Link>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* ------------------------------------------------ Hero + quick actions */}
+      <main className="mx-auto max-w-md px-4 pt-10 pb-12">
+        <motion.div {...fadeUp} transition={{ duration: 0.4 }}>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            <Handshake className="size-3.5" /> Your campus hub
+          </span>
+        </motion.div>
+
+        <motion.h1
+          {...fadeUp}
+          transition={{ duration: 0.4, delay: 0.06 }}
+          className="mt-4 text-3xl leading-tight font-extrabold tracking-tight"
+        >
+          Every note, resume &amp; drive.{" "}
+          <span className="bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+            One place.
+          </span>
+        </motion.h1>
+
+        <motion.p
+          {...fadeUp}
+          transition={{ duration: 0.4, delay: 0.12 }}
+          className="mt-3 text-sm text-muted-foreground"
+        >
+          Documents, resumes and placement drives for your college — organized by semester,
+          subject and section.
+        </motion.p>
+
+        <motion.div
+          {...fadeUp}
+          transition={{ duration: 0.4, delay: 0.18 }}
+          className="mt-6 flex flex-col gap-2.5"
+        >
+          {user ? (
+            <Button
+              size="lg"
+              render={<Link href="/dashboard" />}
+              className="w-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+            >
+              <LayoutDashboard className="size-4" /> Go to dashboard
+            </Button>
+          ) : (
+            <Button
+              size="lg"
+              render={<Link href="/login" />}
+              className="w-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+            >
+              Get started <ArrowRight className="size-4" />
+            </Button>
+          )}
+          <InstallAppButton />
+        </motion.div>
+
+        <div className="mt-8 grid grid-cols-2 gap-3">
+          {quickActions.map((action, i) => (
+            <motion.div
+              key={action.label}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.2 + i * 0.05 }}
+            >
+              <Link
+                href={action.href}
+                className="group flex h-full min-w-0 flex-col rounded-2xl border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+              >
+                <div className={`flex size-10 items-center justify-center rounded-xl ring-1 ${action.tint}`}>
+                  <action.icon className="size-5" />
+                </div>
+                <p className="mt-3 truncate text-sm font-semibold">{action.label}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{action.desc}</p>
+              </Link>
+            </motion.div>
+          ))}
+        </div>
+
+        {!user && (
+          <p className="mt-6 text-center text-xs text-muted-foreground">
+            Students &amp; CRs sign in with their roll number — the first-time password is the roll
+            number itself.
+          </p>
+        )}
+      </main>
+
+      {/* ------------------------------------------------ Footer */}
+      <footer className="border-t bg-muted/30">
+        <div className="mx-auto flex max-w-md items-center justify-center gap-2 px-4 py-6 text-xs text-muted-foreground">
+          <div className="flex size-6 items-center justify-center rounded-md bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
+            <Handshake className="size-3.5" />
+          </div>
+          <p>PlaceMate — built for students, CRs, faculty &amp; admins.</p>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
 export default function HomePage() {
+  const isMobile = useIsMobile();
+  // Phones get a compact, app-style home with instant-access tiles; larger
+  // screens keep the full marketing page.
+  return isMobile ? <MobileHomePage /> : <DesktopHomePage />;
+}
+
+function DesktopHomePage() {
   const { user } = useAuth();
   const { theme, setTheme } = useTheme();
 

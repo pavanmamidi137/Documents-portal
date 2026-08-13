@@ -3,16 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle,
   BrainCircuit,
   CalendarRange,
-  ChevronDown,
-  ChevronRight,
   Coins,
   Loader2,
   Save,
   Search,
-  Star,
 } from "lucide-react";
 import {
   Bar,
@@ -51,50 +47,6 @@ interface DailyTooltipEntry {
   value?: number | string | (number | string)[];
 }
 
-/** 0-100 AI score -> 0-5 stars (matches the student resume page). */
-function scoreToStars(score: number | null): number {
-  if (score == null) return 0;
-  return Math.min(5, Math.max(0, Math.round(score / 10) / 2));
-}
-
-function scoreTone(score: number | null) {
-  if (score == null) return "text-muted-foreground";
-  if (score >= 70) return "text-emerald-600 dark:text-emerald-400";
-  if (score >= 45) return "text-amber-600 dark:text-amber-400";
-  return "text-red-600 dark:text-red-400";
-}
-
-function matchBarTone(score: number) {
-  if (score >= 70) return "bg-emerald-500";
-  if (score >= 45) return "bg-amber-500";
-  return "bg-red-500";
-}
-
-function StarRating({ score }: { score: number | null }) {
-  const stars = scoreToStars(score);
-  return (
-    <div className="flex items-center gap-0.5" aria-label={`${stars} out of 5 stars`}>
-      {[1, 2, 3, 4, 5].map((i) => {
-        const filled = stars >= i;
-        const half = !filled && stars >= i - 0.5;
-        return (
-          <Star
-            key={i}
-            className={
-              filled
-                ? "size-4 fill-amber-400 text-amber-400"
-                : half
-                  ? "size-4 fill-amber-400/40 text-amber-400"
-                  : "size-4 text-muted-foreground/40"
-            }
-          />
-        );
-      })}
-      <span className="ml-1.5 text-xs font-semibold tabular-nums">{stars.toFixed(1)}</span>
-    </div>
-  );
-}
-
 function DailyTooltip({
   active,
   payload,
@@ -131,17 +83,7 @@ export default function AiUsagePage() {
   const queryClient = useQueryClient();
   const [budgetInput, setBudgetInput] = useState("");
   const [saving, setSaving] = useState(false);
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [studentSearch, setStudentSearch] = useState("");
-
-  const toggleExpanded = (userId: number) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId);
-      else next.add(userId);
-      return next;
-    });
-  };
 
   const { data, isLoading } = useQuery({
     queryKey: ["ai-usage"],
@@ -342,9 +284,7 @@ export default function AiUsagePage() {
                 <div>
                   <h3 className="font-semibold">Usage by Student</h3>
                   <p className="text-xs text-muted-foreground">
-                    How many AI credits each account has consumed so far. Expand a
-                    student to see their resume AI review (rating, ATS score,
-                    summary and any error) — Super Admin only.
+                    How many AI credits each account has consumed so far — Super Admin only.
                   </p>
                 </div>
                 {data?.per_user?.length ? (
@@ -385,7 +325,6 @@ export default function AiUsagePage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-10" />
                         <TableHead className="w-12">#</TableHead>
                         <TableHead>Student</TableHead>
                         <TableHead>Role</TableHead>
@@ -398,19 +337,14 @@ export default function AiUsagePage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredUsers.map((u, i) => {
-                        const isOpen = expanded.has(u.user_id);
-                        return (
-                          <ResumeUsageRow
-                            key={u.user_id}
-                            user={u}
-                            index={i}
-                            isOpen={isOpen}
-                            onToggle={() => toggleExpanded(u.user_id)}
-                            totalAcrossUsers={totalAcrossUsers}
-                          />
-                        );
-                      })}
+                      {filteredUsers.map((u, i) => (
+                        <ResumeUsageRow
+                          key={u.user_id}
+                          user={u}
+                          index={i}
+                          totalAcrossUsers={totalAcrossUsers}
+                        />
+                      ))}
                     </TableBody>
                   </Table>
                 </div>
@@ -426,46 +360,15 @@ export default function AiUsagePage() {
 function ResumeUsageRow({
   user,
   index,
-  isOpen,
-  onToggle,
   totalAcrossUsers,
 }: {
   user: AiUsageUser;
   index: number;
-  isOpen: boolean;
-  onToggle: () => void;
   totalAcrossUsers: number;
 }) {
-  const resume = user.resume;
-  const analysis = resume?.ai_analysis ?? null;
-  const matches = resume?.ai_match
-    ? Object.entries(resume.ai_match)
-        .filter(([, m]) => typeof m.score === "number")
-        .sort((a, b) => b[1].score - a[1].score)
-        .slice(0, 4)
-    : [];
   return (
-    <>
-      <TableRow className="cursor-pointer" onClick={onToggle}>
-        <TableCell>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            aria-label={isOpen ? "Collapse AI review" : "Expand AI review"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle();
-            }}
-          >
-            {isOpen ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-          </Button>
-        </TableCell>
-        <TableCell className="text-muted-foreground">{index + 1}</TableCell>
+    <TableRow>
+      <TableCell className="text-muted-foreground">{index + 1}</TableCell>
         <TableCell>
           <span className="font-medium">{user.name}</span>
           <span className="block font-mono text-xs text-muted-foreground">
@@ -494,137 +397,5 @@ function ResumeUsageRow({
             : "—"}
         </TableCell>
       </TableRow>
-      {isOpen && (
-        <TableRow className="bg-muted/30">
-          <TableCell colSpan={10} className="p-0">
-            <div className="grid gap-4 border-t px-5 py-4 lg:grid-cols-[240px_1fr]">
-              {/* Verdict column */}
-              <div className="space-y-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  {!resume ? (
-                    <Badge variant="outline" className="bg-muted text-muted-foreground">No resume</Badge>
-                  ) : resume.ai_status === "COMPLETE" ? (
-                    <Badge variant="outline" className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                      Analyzed
-                    </Badge>
-                  ) : resume.ai_status === "FAILED" ? (
-                    <Badge variant="outline" className="bg-red-500/15 text-red-600 dark:text-red-400">
-                      Analysis failed
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="bg-amber-500/15 text-amber-600 dark:text-amber-400">
-                      Pending
-                    </Badge>
-                  )}
-                  {resume?.ai_analyzed_at && (
-                    <span className="text-[11px] text-muted-foreground">
-                      {new Date(resume.ai_analyzed_at).toLocaleString()}
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Rating
-                  </p>
-                  <StarRating score={resume?.ai_score ?? null} />
-                </div>
-                <div>
-                  <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    ATS score
-                  </p>
-                  <p className={cn("text-2xl font-bold tabular-nums", scoreTone(resume?.ai_score ?? null))}>
-                    {resume?.ai_score ?? "—"}
-                    {resume?.ai_score != null && (
-                      <span className="text-sm font-normal text-muted-foreground"> / 100</span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              {/* Details column */}
-              <div className="min-w-0 space-y-3">
-                {resume?.ai_status === "FAILED" && resume.ai_error ? (
-                  <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
-                    <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                    <span>{resume.ai_error}</span>
-                  </div>
-                ) : analysis?.summary ? (
-                  <p className="text-sm text-muted-foreground">{analysis.summary}</p>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {resume
-                      ? "This resume has not been analyzed yet — run the AI review from the student's resume page."
-                      : "This account has not uploaded a resume yet."}
-                  </p>
-                )}
-                {analysis?.strengths?.length ? (
-                  <div>
-                    <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Strengths
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {analysis.strengths.slice(0, 8).map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border bg-card px-2 py-0.5 text-[11px] text-muted-foreground"
-                        >
-                          {item}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {analysis?.improvements?.length ? (
-                  <div>
-                    <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Improvements
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {analysis.improvements.slice(0, 8).map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border border-amber-500/20 bg-amber-500/5 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400"
-                        >
-                          {item}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {matches.length > 0 ? (
-                  <div>
-                    <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Best drive matches
-                    </p>
-                    <div className="space-y-2">
-                      {matches.map(([driveId, m]) => (
-                        <div key={driveId} className="flex items-center gap-2.5">
-                          <span className="w-40 truncate text-xs font-medium">
-                            {m.company_name || `Drive #${driveId}`}
-                          </span>
-                          <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className={cn("h-full rounded-full", matchBarTone(m.score))}
-                              style={{ width: `${Math.min(100, Math.max(0, m.score))}%` }}
-                            />
-                          </div>
-                          <span
-                            className={cn(
-                              "w-10 text-right text-xs font-semibold tabular-nums",
-                              scoreTone(m.score)
-                            )}
-                          >
-                            {Math.round(m.score)}%
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </TableCell>
-        </TableRow>
-      )}
-    </>
   );
 }

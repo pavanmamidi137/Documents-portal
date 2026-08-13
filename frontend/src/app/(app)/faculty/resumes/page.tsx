@@ -8,6 +8,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   Archive,
   CheckCheck,
   CheckCircle2,
@@ -19,6 +20,7 @@ import {
   FileUp,
   Loader2,
   RotateCcw,
+  Sparkles,
   UserRoundCheck,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -47,6 +49,73 @@ import { http, openResumeInNewTab } from "@/lib/api";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Paginated, Resume, StudentStatusRow } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
+import { scoreTone, StarRating } from "@/lib/resume-score";
+
+/** Admin-only: the resume's AI review state - status badge, star rating, ATS
+ * score and (when failed) the error. Faculty keep the plain table. */
+function AiReviewSummary({
+  status,
+  score,
+  error,
+  analyzedAt,
+  summary,
+}: {
+  status: Resume["ai_status"] | null;
+  score: number | null;
+  error?: string;
+  analyzedAt?: string | null;
+  summary?: string;
+}) {
+  if (!status) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {status === "COMPLETE" ? (
+          <Badge
+            variant="outline"
+            className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          >
+            <Sparkles className="size-3" /> Analyzed
+          </Badge>
+        ) : status === "FAILED" ? (
+          <Badge
+            variant="outline"
+            className="gap-1 border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400"
+            title={error || "AI analysis failed"}
+          >
+            <AlertTriangle className="size-3" /> Failed
+          </Badge>
+        ) : (
+          <Badge
+            variant="outline"
+            className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+          >
+            <Clock className="size-3" /> Pending
+          </Badge>
+        )}
+        {analyzedAt && (
+          <span className="text-[11px] text-muted-foreground">{formatDate(analyzedAt)}</span>
+        )}
+      </div>
+      {status === "COMPLETE" && score != null && (
+        <div className="flex flex-wrap items-center gap-2">
+          <StarRating score={score} />
+          <span className={cn("text-sm font-bold tabular-nums", scoreTone(score))}>
+            {score}
+            <span className="text-xs font-normal text-muted-foreground"> /100</span>
+          </span>
+        </div>
+      )}
+      {status === "COMPLETE" && summary ? (
+        <p className="line-clamp-2 max-w-56 text-xs text-muted-foreground">{summary}</p>
+      ) : status === "FAILED" && error ? (
+        <p className="line-clamp-2 max-w-56 text-xs text-destructive">{error}</p>
+      ) : null}
+    </div>
+  );
+}
 
 export default function FacultyResumesPage() {
   const { user } = useAuth();
@@ -362,6 +431,17 @@ export default function FacultyResumesPage() {
           <span className="text-xs text-muted-foreground">—</span>
         ),
     },
+    ...(isAdmin
+      ? [
+          {
+            key: "ai",
+            header: "AI Review",
+            cell: (s: StudentStatusRow) => (
+              <AiReviewSummary status={s.ai_status} score={s.ai_score} />
+            ),
+          },
+        ]
+      : []),
   ];
 
   const uploadedCount = data?.count ?? 0;
@@ -432,6 +512,23 @@ export default function FacultyResumesPage() {
       header: "Updated",
       cell: (r) => <span className="text-sm text-muted-foreground">{formatDate(r.updated_at)}</span>,
     },
+    ...(isAdmin
+      ? [
+          {
+            key: "ai-review",
+            header: "AI Review",
+            cell: (r: Resume) => (
+              <AiReviewSummary
+                status={r.ai_status}
+                score={r.ai_score}
+                error={r.ai_error}
+                analyzedAt={r.ai_analyzed_at}
+                summary={r.ai_analysis?.summary}
+              />
+            ),
+          },
+        ]
+      : []),
     {
       key: "status",
       header: "Status",

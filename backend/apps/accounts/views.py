@@ -1205,6 +1205,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
                     "file_name": resume.file_name if resume else None,
                     "updated_at": resume.updated_at if resume else None,
                     "ai_status": resume.ai_status if resume else None,
+                    "ai_score": resume.ai_score if resume else None,
                 })
             return {"results": rows}
 

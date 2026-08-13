@@ -297,6 +297,8 @@ export interface StudentStatusRow {
   file_name: string | null;
   updated_at: string | null;
   ai_status: "PENDING" | "COMPLETE" | "FAILED" | null;
+  /** 0-100 AI ATS score - null when not analyzed. */
+  ai_score: number | null;
 }
 
 export interface ImportResult {
