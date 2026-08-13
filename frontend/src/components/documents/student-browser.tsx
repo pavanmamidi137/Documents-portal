@@ -19,8 +19,16 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useMetaData } from "@/lib/use-meta";
 import { downloadDocument } from "@/lib/download";
 import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import { getUnitLabel } from "@/lib/document-types";
@@ -43,6 +51,7 @@ interface CategoryNode {
 interface SubjectNode {
   id: number;
   name: string;
+  semester: number;
   semester_name: string;
   categories: CategoryNode[];
 }
@@ -72,12 +81,60 @@ function unitSortKey(label: string): [number, number] {
   return match ? [0, Number(match[1])] : [1, 0];
 }
 
+// Semester filter persists per user so their choice survives page reloads.
+// The "All semesters" option (an empty filter) is stored as a sentinel so a
+// deliberate choice of "All" is not confused with "never picked one".
+const SEMESTER_FILTER_STORAGE_KEY = "placemate.semester-filter";
+const ALL_SEMESTERS_STORED = "all";
+
+function readSavedSemesterFilter(): { saved: boolean; value: string } {
+  if (typeof window === "undefined") return { saved: false, value: "" };
+  try {
+    const raw = localStorage.getItem(SEMESTER_FILTER_STORAGE_KEY);
+    if (raw === null) return { saved: false, value: "" };
+    return { saved: true, value: raw === ALL_SEMESTERS_STORED ? "" : raw };
+  } catch {
+    return { saved: false, value: "" };
+  }
+}
+
+function writeSemesterFilter(value: string) {
+  try {
+    localStorage.setItem(SEMESTER_FILTER_STORAGE_KEY, value ? value : ALL_SEMESTERS_STORED);
+  } catch {
+    // localStorage unavailable (private mode etc.) - the filter still works for this session.
+  }
+}
+
 export function StudentBrowser() {
   const { user } = useAuth();
   const isAdmin = user?.is_super_admin ?? false;
+  const { data: meta } = useMetaData();
   const [step, setStep] = useState<Step>({ level: "subjects" });
   const [subjectSearch, setSubjectSearch] = useState("");
+  // Semester filter on the subjects level: defaults to the currently running
+  // semester, and the student's own choice is remembered across visits via
+  // localStorage. `savedChoice` is read once - `saved` tells us whether the
+  // student ever picked a filter, so a deliberate "All semesters" choice is
+  // not mistaken for a first-ever visit.
+  const [savedChoice] = useState<{ saved: boolean; value: string }>(readSavedSemesterFilter);
+  const [semesterFilter, setSemesterFilter] = useState<string>(savedChoice.value);
+  // Tracks whether the student picked a filter this session, so the
+  // date-derived default only applies until they make a choice.
+  const [filterTouched, setFilterTouched] = useState(false);
   const [docSearch, setDocSearch] = useState("");
+
+  // The filter actually applied: an explicit choice wins; otherwise a student
+  // who never picked one gets the currently running semester (from the date).
+  // A saved filter pointing at a deleted semester falls back to All.
+  const resolvedFilter =
+    semesterFilter !== ""
+      ? meta?.semesters.some((s) => String(s.id) === semesterFilter)
+        ? semesterFilter
+        : ""
+      : !filterTouched && !savedChoice.saved && meta?.current_semester
+        ? String(meta.current_semester.id)
+        : "";
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [downloading, setDownloading] = useState(false);
@@ -87,6 +144,13 @@ export function StudentBrowser() {
     setSelectedIds(new Set());
     setSelecting(false);
     setStep(next);
+  };
+
+  const changeSemesterFilter = (value: string | null) => {
+    const next = value ?? "";
+    setFilterTouched(true);
+    setSemesterFilter(next);
+    writeSemesterFilter(next);
   };
 
   const { data, isLoading } = useQuery({
@@ -143,6 +207,7 @@ export function StudentBrowser() {
         subject = {
           id: doc.subject,
           name: doc.subject_name,
+          semester: doc.semester,
           semester_name: doc.semester_name,
           categories: [],
         };
@@ -174,10 +239,15 @@ export function StudentBrowser() {
   }, [documents]);
 
   const filteredSubjects = useMemo(() => {
+    let list = subjects;
+    if (resolvedFilter) {
+      const semesterId = Number(resolvedFilter);
+      list = list.filter((s) => s.semester === semesterId);
+    }
     const q = subjectSearch.trim().toLowerCase();
-    if (!q) return subjects;
-    return subjects.filter((s) => s.name.toLowerCase().includes(q));
-  }, [subjects, subjectSearch]);
+    if (q) list = list.filter((s) => s.name.toLowerCase().includes(q));
+    return list;
+  }, [subjects, subjectSearch, resolvedFilter]);
 
   // Resolve the current level's nodes against the live tree every render.
   const currentNodes = useMemo(() => {
@@ -325,15 +395,40 @@ export function StudentBrowser() {
   if (step.level === "subjects") {
     return (
       <div className="space-y-6">
-        <div className="relative w-full min-w-0 max-w-md">
-          <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={subjectSearch}
-            onChange={(e) => setSubjectSearch(e.target.value)}
-            placeholder="Search subjects…"
-            className="bg-muted/50 pl-9"
-          />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative min-w-0 max-w-md flex-1">
+            <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={subjectSearch}
+              onChange={(e) => setSubjectSearch(e.target.value)}
+              placeholder="Search subjects…"
+              className="bg-muted/50 pl-9"
+            />
+          </div>
+          <Select value={resolvedFilter} onValueChange={changeSemesterFilter}>
+            <SelectTrigger className="w-full sm:w-44">
+              <SelectValue placeholder="All semesters" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">All semesters</SelectItem>
+              {(meta?.semesters ?? []).map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
+
+        {resolvedFilter && (
+          <p className="text-xs text-muted-foreground">
+            Showing <span className="font-medium text-foreground">{filteredSubjects.length}</span> subject{filteredSubjects.length === 1 ? "" : "s"} for semester{" "}
+            <span className="font-medium text-foreground">
+              {meta?.semesters.find((s) => String(s.id) === resolvedFilter)?.name}
+            </span>
+            .
+          </p>
+        )}
 
         {data && data.total > data.results.length && (
           <p className="text-xs text-muted-foreground">
@@ -352,7 +447,11 @@ export function StudentBrowser() {
           <EmptyState
             icon={Search}
             title="No subjects match"
-            description="Try a different search term."
+            description={
+              resolvedFilter
+                ? "No subjects have documents in this semester yet — try another semester or All semesters."
+                : "Try a different search term."
+            }
           />
         ) : (
           <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
