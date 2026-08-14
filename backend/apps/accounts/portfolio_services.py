@@ -36,6 +36,11 @@ from .models import Portfolio, User
 # Portfolio resumes follow the same size target as student resumes (500KB).
 PORTFOLIO_RESUME_TARGET_BYTES = 500 * 1024
 
+# Resume text is trimmed hard before every AI call - a resume rarely needs
+# more than ~9k chars, and smaller inputs make each generation noticeably
+# faster (the 30B model spends tokens reading the brief).
+_BRIEF_CHARS = 9000
+
 _PORTFOLIO_REVIEW_PROMPT = """\
 You are a career advisor reviewing the resume of a college Super Admin / placement head.
 Their resume text is provided. Return ONLY a single valid JSON object - no markdown, no code fences, no prose before or after.
@@ -255,7 +260,7 @@ def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
         ])
         return _portfolio_payload(portfolio)
 
-    brief = text.strip()[:_MAX_TEXT_CHARS]
+    brief = text.strip()[:_BRIEF_CHARS]
     try:
         raw = ai_json(
             _PORTFOLIO_REVIEW_PROMPT, brief, max_tokens=1500,
@@ -558,7 +563,7 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
         ])
         return _portfolio_payload(portfolio)
 
-    brief = text.strip()[:_MAX_TEXT_CHARS]
+    brief = text.strip()[:_BRIEF_CHARS]
     try:
         raw = ai_json(
             _REBUILD_PROMPT, brief, max_tokens=2000,
@@ -599,7 +604,7 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
                     + "\n\nIMPROVEMENT NOTES FROM YOUR ORIGINAL RESUME:\n"
                     + brief
                 )[:_MAX_TEXT_CHARS],
-                max_tokens=8000, usage_callback=usage, task="RESUME_ANALYSIS",
+                max_tokens=5000, usage_callback=usage, task="RESUME_ANALYSIS",
             )
             if filled and filled.strip():
                 rebuilt_tex = _strip_latex_fences(filled)[:20000]
@@ -613,7 +618,7 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
     rebuilt_score = None
     try:
         raw_review = ai_json(
-            _PORTFOLIO_REVIEW_PROMPT, rebuilt_text[:_MAX_TEXT_CHARS],
+            _PORTFOLIO_REVIEW_PROMPT, rebuilt_text[:_BRIEF_CHARS],
             max_tokens=1500, usage_callback=usage, task="RESUME_ANALYSIS",
         )
         rebuilt_review = normalize_resume_report(raw_review)

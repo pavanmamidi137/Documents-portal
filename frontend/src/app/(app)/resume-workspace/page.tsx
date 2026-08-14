@@ -18,6 +18,7 @@ import {
   Star,
   ThumbsDown,
   ThumbsUp,
+  Timer,
   Trash2,
   TriangleAlert,
   Upload,
@@ -50,6 +51,22 @@ function slugName(p: ResumeWorkspace): string {
 function scoreToStars(score: number | null): number {
   if (score == null) return 0;
   return Math.min(5, Math.max(0, Math.round(score / 10) / 2));
+}
+
+/** "0:00"-style elapsed time that grows past an hour. */
+function formatElapsed(totalSeconds: number) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+/** Small live timer chip shown while a background AI job is running. */
+function ElapsedChip({ elapsed }: { elapsed: number }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border bg-muted/60 px-2.5 py-1 font-mono text-xs tabular-nums">
+      <Timer className="size-3.5 text-primary" /> {formatElapsed(elapsed)}
+    </span>
+  );
 }
 
 function scoreRing(score: number) {
@@ -158,6 +175,8 @@ export default function ResumeWorkspacePage() {
   // in flight and should be polled.
   const [reviewRunning, setReviewRunning] = useState(false);
   const [rebuildRunning, setRebuildRunning] = useState(false);
+  // Live elapsed-time counter for whichever background job is in flight.
+  const [elapsed, setElapsed] = useState(0);
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -179,6 +198,17 @@ export default function ResumeWorkspacePage() {
   const busy =
     (reviewRunning && workspace?.ai_status === "PENDING") ||
     (rebuildRunning && workspace?.rebuilt_ai_status === "PENDING");
+
+  // Tick the elapsed timer (from 0:00) while any manual AI job is running.
+  const jobRunning = reviewRunning || rebuildRunning;
+  useEffect(() => {
+    if (!jobRunning) return;
+    const startedAt = Date.now();
+    const ticker = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(ticker);
+  }, [jobRunning]);
   useEffect(() => {
     if (!busy) return;
     const timer = setInterval(() => {
@@ -225,7 +255,7 @@ export default function ResumeWorkspacePage() {
       form.append("file", file);
       const updated = await http.post<ResumeWorkspace>("/resume-workspace/upload-resume/", form);
       queryClient.setQueryData(["resume-workspace"], updated);
-      toast.success("Resume uploaded — AI review started in the background.");
+      toast.success("Resume uploaded.");
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -236,6 +266,7 @@ export default function ResumeWorkspacePage() {
   const runAnalysis = async () => {
     setAnalyzing(true);
     setReviewRunning(true);
+    setElapsed(0);
     try {
       const updated = await http.post<ResumeWorkspace>("/resume-workspace/analyze/", {});
       queryClient.setQueryData(["resume-workspace"], updated);
@@ -252,6 +283,7 @@ export default function ResumeWorkspacePage() {
   const runRebuild = async () => {
     setRebuilding(true);
     setRebuildRunning(true);
+    setElapsed(0);
     try {
       const updated = await http.post<ResumeWorkspace>("/resume-workspace/rebuild/", {});
       queryClient.setQueryData(["resume-workspace"], updated);
@@ -310,7 +342,7 @@ export default function ResumeWorkspacePage() {
           </CardTitle>
           <CardDescription>
             Upload your own resume (PDF, DOC or DOCX). Only you can see it — it never appears in faculty
-            or student lists. The AI reviews it automatically.
+            or student lists. The AI review only runs when you click &quot;Run AI review&quot;.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -352,7 +384,9 @@ export default function ResumeWorkspacePage() {
                       ? "Analyzed"
                       : workspace.ai_status === "FAILED"
                         ? "Analysis failed"
-                        : "Analyzing…"}
+                        : reviewRunning
+                          ? "Analyzing…"
+                          : "Not reviewed"}
                   </Badge>
                   <Button variant="outline" size="sm" onClick={() => window.open(workspace.cloudinary_url, "_blank")}>
                     Preview
@@ -407,9 +441,10 @@ export default function ResumeWorkspacePage() {
           {!workspace?.public_id ? (
             <p className="text-sm text-muted-foreground">Upload your resume to get an AI review.</p>
           ) : workspace.ai_status === "PENDING" && reviewRunning ? (
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin text-primary" />
               The AI is reviewing your resume — this can take a minute. This page updates automatically.
+              <ElapsedChip elapsed={elapsed} />
             </div>
           ) : workspace.ai_status === "PENDING" ? (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -503,9 +538,10 @@ export default function ResumeWorkspacePage() {
           {!workspace?.public_id ? (
             <p className="text-sm text-muted-foreground">Upload your resume first, then rebuild it with AI.</p>
           ) : workspace.rebuilt_ai_status === "PENDING" && rebuildRunning ? (
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin text-primary" />
               The AI is rebuilding your resume — this can take a minute or two. This page updates automatically.
+              <ElapsedChip elapsed={elapsed} />
             </div>
           ) : !workspace.rebuilt_sections && workspace.rebuilt_ai_status !== "FAILED" ? (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
