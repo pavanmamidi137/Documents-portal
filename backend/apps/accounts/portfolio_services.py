@@ -15,7 +15,6 @@ routing) so the workspace behaves exactly like the student resume analysis.
 import io
 import threading
 
-from django.conf import settings
 from django.utils import text as text_utils
 from django.utils import timezone
 
@@ -147,15 +146,8 @@ def upload_portfolio_resume(portfolio: Portfolio, resume_file, request=None) -> 
         {"roll_number": portfolio.user.roll_number, "file": portfolio.file_name},
         request,
     )
-    # Auto-analyse in the background so the review + portfolio content are
-    # ready when the admin opens the builder. Gated like student resumes.
-    if getattr(settings, "AI_AUTO_ANALYZE_ON_UPLOAD", True):
-        try:
-            threading.Thread(
-                target=_auto_analyze_in_thread, args=(portfolio.id,), daemon=True
-            ).start()
-        except Exception:
-            pass  # never fail an upload because the background thread failed
+    # No auto-analysis: the admin starts the review and rebuild manually
+    # with the buttons - nothing should run until they click.
     return portfolio
 
 
@@ -169,7 +161,18 @@ def _auto_analyze_in_thread(portfolio_id: int) -> None:
             return
         analyze_portfolio(portfolio, portfolio.user)
     except Exception:
-        pass  # background analysis must never crash anything
+        # Mark the attempt failed so the frontend stops polling and shows the
+        # error instead of spinning forever.
+        try:
+            portfolio = Portfolio.objects.filter(pk=portfolio_id).first()
+            if portfolio:
+                portfolio.ai_status = Portfolio.AiStatus.FAILED
+                portfolio.ai_error = (
+                    "The AI review could not be completed. Please try again in a moment."
+                )
+                portfolio.save(update_fields=["ai_status", "ai_error", "updated_at"])
+        except Exception:
+            pass  # never let the background thread crash the app
     finally:
         close_old_connections()
 
@@ -255,7 +258,7 @@ def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
     brief = text.strip()[:_MAX_TEXT_CHARS]
     try:
         raw = ai_json(
-            _PORTFOLIO_REVIEW_PROMPT, brief, max_tokens=4000,
+            _PORTFOLIO_REVIEW_PROMPT, brief, max_tokens=1500,
             usage_callback=usage, task="RESUME_ANALYSIS",
         )
     except AiError:
@@ -558,7 +561,7 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
     brief = text.strip()[:_MAX_TEXT_CHARS]
     try:
         raw = ai_json(
-            _REBUILD_PROMPT, brief, max_tokens=4000,
+            _REBUILD_PROMPT, brief, max_tokens=2000,
             usage_callback=usage, task="RESUME_ANALYSIS",
         )
     except AiError:
@@ -611,7 +614,7 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
     try:
         raw_review = ai_json(
             _PORTFOLIO_REVIEW_PROMPT, rebuilt_text[:_MAX_TEXT_CHARS],
-            max_tokens=3500, usage_callback=usage, task="RESUME_ANALYSIS",
+            max_tokens=1500, usage_callback=usage, task="RESUME_ANALYSIS",
         )
         rebuilt_review = normalize_resume_report(raw_review)
     except AiError:

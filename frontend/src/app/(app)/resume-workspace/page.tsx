@@ -153,6 +153,11 @@ export default function ResumeWorkspacePage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<string | null>(null);
   const [showTex, setShowTex] = useState(false);
+  // Nothing runs automatically - these flip on only when the admin clicks the
+  // Run AI review / Rebuild buttons, so we know a background job is really
+  // in flight and should be polled.
+  const [reviewRunning, setReviewRunning] = useState(false);
+  const [rebuildRunning, setRebuildRunning] = useState(false);
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -169,15 +174,22 @@ export default function ResumeWorkspacePage() {
     enabled: isAdmin,
   });
 
-  // While a background analysis or rebuild is running, keep polling until it settles.
-  const pending =
-    Boolean(workspace?.public_id) &&
-    (workspace?.ai_status === "PENDING" || workspace?.rebuilt_ai_status === "PENDING");
+  // A background job only runs after a manual button click, so we poll while
+  // that job is in flight (status PENDING) and stop as soon as it settles.
+  const busy =
+    (reviewRunning && workspace?.ai_status === "PENDING") ||
+    (rebuildRunning && workspace?.rebuilt_ai_status === "PENDING");
   useEffect(() => {
-    if (!pending) return;
-    const timer = setInterval(() => queryClient.invalidateQueries({ queryKey: ["resume-workspace"] }), 2500);
+    if (!busy) return;
+    const timer = setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: ["resume-workspace"] }).then(() => {
+        const latest = queryClient.getQueryData<ResumeWorkspace>(["resume-workspace"]);
+        if (reviewRunning && latest?.ai_status !== "PENDING") setReviewRunning(false);
+        if (rebuildRunning && latest?.rebuilt_ai_status !== "PENDING") setRebuildRunning(false);
+      });
+    }, 2500);
     return () => clearInterval(timer);
-  }, [pending, queryClient]);
+  }, [busy, reviewRunning, rebuildRunning, queryClient]);
 
   // Download URLs for the rebuilt formats (plain text downloads only).
   const rebuiltBlobs = useMemo(() => {
@@ -223,11 +235,14 @@ export default function ResumeWorkspacePage() {
 
   const runAnalysis = async () => {
     setAnalyzing(true);
+    setReviewRunning(true);
     try {
       const updated = await http.post<ResumeWorkspace>("/resume-workspace/analyze/", {});
       queryClient.setQueryData(["resume-workspace"], updated);
-      if (updated.ai_status === "PENDING") toast.success("Analysis started.");
+      if (updated.ai_status === "PENDING")
+        toast.success("AI review started — this page updates automatically when it finishes.");
     } catch (error) {
+      setReviewRunning(false);
       toast.error(getErrorMessage(error));
     } finally {
       setAnalyzing(false);
@@ -236,6 +251,7 @@ export default function ResumeWorkspacePage() {
 
   const runRebuild = async () => {
     setRebuilding(true);
+    setRebuildRunning(true);
     try {
       const updated = await http.post<ResumeWorkspace>("/resume-workspace/rebuild/", {});
       queryClient.setQueryData(["resume-workspace"], updated);
@@ -245,6 +261,7 @@ export default function ResumeWorkspacePage() {
           : "Rebuild started — it takes a minute or two, this page updates automatically."
       );
     } catch (error) {
+      setRebuildRunning(false);
       toast.error(getErrorMessage(error));
     } finally {
       setRebuilding(false);
@@ -350,8 +367,8 @@ export default function ResumeWorkspacePage() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Button onClick={runAnalysis} disabled={analyzing || pending}>
-                  {analyzing || pending ? <Loader2 className="size-4 animate-spin" /> : <BrainCircuit className="size-4" />}
+                <Button onClick={runAnalysis} disabled={analyzing || reviewRunning}>
+                  {analyzing || reviewRunning ? <Loader2 className="size-4 animate-spin" /> : <BrainCircuit className="size-4" />}
                   Run AI review
                 </Button>
                 <Button variant="outline" onClick={runRebuild} disabled={rebuilding || !workspace.public_id}>
@@ -389,10 +406,15 @@ export default function ResumeWorkspacePage() {
         <CardContent>
           {!workspace?.public_id ? (
             <p className="text-sm text-muted-foreground">Upload your resume to get an AI review.</p>
-          ) : workspace.ai_status === "PENDING" ? (
+          ) : workspace.ai_status === "PENDING" && reviewRunning ? (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin text-primary" />
-              The AI is reviewing your resume — this can take a minute…
+              The AI is reviewing your resume — this can take a minute. This page updates automatically.
+            </div>
+          ) : workspace.ai_status === "PENDING" ? (
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <Sparkles className="size-4 text-primary" />
+              Not reviewed yet — click &quot;Run AI review&quot; to start.
             </div>
           ) : workspace.ai_status === "FAILED" ? (
             <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
@@ -480,7 +502,7 @@ export default function ResumeWorkspacePage() {
         <CardContent>
           {!workspace?.public_id ? (
             <p className="text-sm text-muted-foreground">Upload your resume first, then rebuild it with AI.</p>
-          ) : workspace.rebuilt_ai_status === "PENDING" ? (
+          ) : workspace.rebuilt_ai_status === "PENDING" && rebuildRunning ? (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin text-primary" />
               The AI is rebuilding your resume — this can take a minute or two. This page updates automatically.
