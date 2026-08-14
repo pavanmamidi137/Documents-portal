@@ -1,3 +1,5 @@
+import os
+import re
 import urllib.error
 import urllib.request
 
@@ -58,6 +60,24 @@ def _resume_content_type(file_name: str) -> str:
     if name.endswith(".doc"):
         return "application/msword"
     return "application/octet-stream"
+
+
+def _resume_download_name(resume) -> str:
+    """Download filename: ``{roll_number} {full_name}.{ext}`` so faculty can
+    tell whose resume it is at a glance. Falls back to the upload name when
+    the student details are missing.
+    """
+    student = resume.student
+    roll = (student.roll_number or "").strip()
+    name = (student.full_name or "").strip()
+    if not roll and not name:
+        return resume.file_name or "resume.pdf"
+    base = f"{roll} {name}".strip()
+    # Strip characters that are unsafe in file names / Content-Disposition.
+    base = re.sub(r'[\\/:*?"<>|\r\n]+', "", base).strip() or "resume"
+    ext = os.path.splitext(resume.file_name or "")[1] or ".pdf"
+    return f"{base}{ext}"
+
 
 
 # ---------------------------------------------------------------------------
@@ -1011,7 +1031,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
                 if total + len(data) > max_bytes:
                     skipped += 1
                     continue
-                files.append((resume.file_name, data))
+                files.append((_resume_download_name(resume), data))
                 total += len(data)
             except Exception:
                 skipped += 1
@@ -1267,8 +1287,9 @@ class ResumeViewSet(viewsets.ModelViewSet):
         except Exception:
             raise NotFound("Could not load the resume file from storage.")
         disposition = "attachment" if download else "inline"
+        file_name = _resume_download_name(resume) if download else resume.file_name
         response = HttpResponse(
             content, content_type=_resume_content_type(resume.file_name)
         )
-        response["Content-Disposition"] = f'{disposition}; filename="{resume.file_name}"'
+        response["Content-Disposition"] = f'{disposition}; filename="{file_name}"'
         return response

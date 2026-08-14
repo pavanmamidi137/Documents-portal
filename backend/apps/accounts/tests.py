@@ -1761,6 +1761,9 @@ class ResumeTests(TestCase):
             response = client.get(f"/api/resumes/{resume.id}/preview/?download=1")
         self.assertEqual(response.status_code, 200)
         self.assertIn("attachment", response["Content-Disposition"])
+        # The download file name carries the student's roll number + name.
+        self.assertIn("21IT01 Diya.pdf", response["Content-Disposition"])
+        self.assertNotIn("resume.pdf", response["Content-Disposition"])
         signed_url = mock_open.call_args[0][0]
         self.assertTrue("s--" in signed_url or "sig=" in signed_url, signed_url)
 
@@ -2034,7 +2037,8 @@ class ResumeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/zip")
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-            self.assertEqual(sorted(zf.namelist()), ["bhavya.pdf", "diya.pdf"])
+            # Files are named with the student's roll number + name.
+            self.assertEqual(sorted(zf.namelist()), ["21IT01 Diya.pdf", "21IT03 Bhavya.pdf"])
 
     @patch("apps.documents.services.cloudinary.uploader.upload")
     def test_zip_respects_section_filter(self, mock_upload):
@@ -2057,7 +2061,7 @@ class ResumeTests(TestCase):
             )
         self.assertEqual(response.status_code, 200)
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-            self.assertEqual(zf.namelist(), ["diya.pdf"])
+            self.assertEqual(zf.namelist(), ["21IT01 Diya.pdf"])
 
     def test_student_cannot_download_zip(self):
         client = self._client(self.student)

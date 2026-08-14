@@ -216,7 +216,17 @@ export default function FacultyResumesPage() {
     try {
       // Stream through the portal (auth + signed Cloudinary fetch), forcing a
       // browser download - direct Cloudinary URLs 401 on restricted accounts.
-      await http.download(`/resumes/${resume.id}/preview/?download=1`, undefined, resume.file_name);
+      // Name the file with the student's roll number + name so it's obvious
+      // whose resume it is.
+      const base = `${resume.student_roll} ${resume.student_name}`.trim() || "resume";
+      const ext = resume.file_name.includes(".")
+        ? "." + resume.file_name.split(".").pop()
+        : ".pdf";
+      await http.download(
+        `/resumes/${resume.id}/preview/?download=1`,
+        undefined,
+        `${base.replace(/[\\/:*?"<>|]+/g, "")}${ext}`
+      );
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
