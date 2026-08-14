@@ -22,7 +22,7 @@ class UserSerializer(serializers.ModelSerializer):
             "role", "role_label", "faculty_access", "faculty_access_label",
             "branch", "branch_name", "branch_code", "section", "section_name",
             "is_active", "is_staff", "is_super_admin", "is_cr", "is_faculty",
-            "is_student", "portfolio_enabled", "profile_completion", "date_joined",
+            "is_student", "profile_completion", "date_joined",
         ]
         read_only_fields = ["id", "date_joined", "is_staff", "profile_completion"]
 
@@ -228,7 +228,7 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "full_name", "email", "phone", "gender", "passout_year",
-            "branch", "section", "is_active", "portfolio_enabled",
+            "branch", "section", "is_active",
         ]
         read_only_fields = ["id", "role"]
 
@@ -241,12 +241,10 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
         user = self.context["request"].user
         if user.is_cr:
             # CR cannot move students across branches/sections, and cannot
-            # activate/deactivate them or grant portfolio access (both are
-            # reserved for the Super Admin).
+            # activate/deactivate them (both are reserved for the Super Admin).
             attrs.pop("branch", None)
             attrs.pop("section", None)
             attrs.pop("is_active", None)
-            attrs.pop("portfolio_enabled", None)
         return attrs
 
 
@@ -408,90 +406,29 @@ class AiAccessConfigSerializer(serializers.ModelSerializer):
 
 
 class PortfolioSerializer(serializers.ModelSerializer):
-    """The Super Admin's own portfolio - includes the private AI reviews."""
+    """The Super Admin's private resume workspace - includes the AI reviews."""
 
     owner_name = serializers.CharField(source="user.full_name", read_only=True)
-    owner_avatar_url = serializers.CharField(source="user.avatar_url", read_only=True)
-    owner_email = serializers.SerializerMethodField()
-    owner_phone = serializers.SerializerMethodField()
-    public_url = serializers.SerializerMethodField()
-    theme = serializers.SerializerMethodField()
-
-    def get_owner_email(self, obj) -> str:
-        return obj.user.email or ""
-
-    def get_owner_phone(self, obj) -> str:
-        return obj.user.phone or ""
-
-    def get_theme(self, obj) -> dict:
-        from .portfolio_services import get_portfolio_theme
-
-        return get_portfolio_theme(obj)
 
     class Meta:
         model = Portfolio
         fields = [
-            "id", "slug", "is_published", "show_contact", "public_url", "theme",
-            "headline", "about", "skills", "education", "experience", "projects",
-            "custom_sections", "images", "background_image", "resume_source",
+            "id", "resume_source",
             "file_name", "file_size", "cloudinary_url", "public_id", "is_missing",
             "ai_status", "ai_score", "ai_analysis", "ai_error", "ai_analyzed_at",
             "rebuilt_sections", "rebuilt_text", "rebuilt_file_name",
             "rebuilt_docx_url", "rebuilt_tex", "rebuilt_pdf_url", "rebuilt_at",
             "rebuilt_ai_status", "rebuilt_ai_score", "rebuilt_ai_analysis",
             "rebuilt_ai_error", "rebuilt_ai_analyzed_at",
-            "owner_name", "owner_avatar_url", "owner_email", "owner_phone",
-            "created_at", "updated_at",
+            "owner_name", "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "slug", "public_url",
+            "id",
             "file_name", "file_size", "cloudinary_url", "public_id", "is_missing",
             "ai_status", "ai_score", "ai_analysis", "ai_error", "ai_analyzed_at",
             "rebuilt_sections", "rebuilt_text", "rebuilt_file_name",
             "rebuilt_docx_url", "rebuilt_tex", "rebuilt_pdf_url", "rebuilt_at",
             "rebuilt_ai_status", "rebuilt_ai_score", "rebuilt_ai_analysis",
             "rebuilt_ai_error", "rebuilt_ai_analyzed_at",
-            "owner_name", "owner_avatar_url", "owner_email", "owner_phone",
-            "created_at", "updated_at",
+            "owner_name", "created_at", "updated_at",
         ]
-
-    def get_public_url(self, obj) -> str:
-        if not obj.slug:
-            return ""
-        return f"/portfolio/{obj.slug}"
-
-
-class PublicPortfolioSerializer(serializers.ModelSerializer):
-    """The public view of a published portfolio - never exposes AI reviews.
-
-    Only the generated/edited portfolio content and basic identity appear;
-    the resume itself, the pros/cons/improvements and the rebuilt version are
-    private to the Super Admin.
-    """
-
-    owner_name = serializers.CharField(source="user.full_name", read_only=True)
-    owner_avatar_url = serializers.CharField(source="user.avatar_url", read_only=True)
-    owner_email = serializers.SerializerMethodField()
-    owner_phone = serializers.SerializerMethodField()
-    theme = serializers.SerializerMethodField()
-
-    def get_owner_email(self, obj) -> str:
-        return (obj.user.email or "") if obj.show_contact else ""
-
-    def get_owner_phone(self, obj) -> str:
-        return (obj.user.phone or "") if obj.show_contact else ""
-
-    def get_theme(self, obj) -> dict:
-        from .portfolio_services import get_portfolio_theme
-
-        return get_portfolio_theme(obj)
-
-    class Meta:
-        model = Portfolio
-        fields = [
-            "owner_name", "owner_avatar_url", "owner_email", "owner_phone",
-            "headline", "about", "skills", "education", "experience", "projects",
-            "custom_sections", "theme", "images", "background_image",
-            "updated_at",
-        ]
-        read_only_fields = fields

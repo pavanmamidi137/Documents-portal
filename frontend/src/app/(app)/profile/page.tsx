@@ -10,8 +10,8 @@ import {
   BrainCircuit,
   CalendarDays,
   Camera,
+  FileText,
   GraduationCap,
-  IdCard,
   Keyboard,
   KeyRound,
   Loader2,
@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Trash2,
   VenusAndMars,
+  Wand2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -794,35 +795,25 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* Portfolio - the ONLY entry point for the portfolio builder
-          (deliberately not in the sidebar or dashboard). Super Admins always
-          have it; students/CRs only when the admin granted access. */}
-      {(user.is_super_admin || user.portfolio_enabled) && (
+      {/* AI Resume Workspace - Super Admin only (entry point: profile page). */}
+      {user.is_super_admin && (
         <div className="mb-6 rounded-2xl border bg-card p-5 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
               <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <IdCard className="size-5" />
+                <FileText className="size-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-semibold">My Portfolio</p>
-                {user.is_super_admin ? (
-                  <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
-                    Your AI-powered public portfolio, built from your resume. Your resume and its
-                    private AI review are only visible to you — the shared link works for anyone,
-                    logged in or not.
-                  </p>
-                ) : (
-                  <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
-                    Generate a portfolio from your resume with one click. Your resume and the AI
-                    review stay private — you decide what goes on the public link.
-                  </p>
-                )}
+                <p className="text-sm font-semibold">AI Resume Review</p>
+                <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
+                  Upload your resume for a private AI review, then rebuild it into a polished,
+                  ATS-friendly version you can download in any format. Only you can see this.
+                </p>
               </div>
             </div>
-            <Link href="/portfolio/manage">
+            <Link href="/resume-workspace">
               <Button>
-                <IdCard className="size-4" /> {user.is_super_admin ? "Manage portfolio" : "Open portfolio"}
+                <Wand2 className="size-4" /> Open workspace
               </Button>
             </Link>
           </div>

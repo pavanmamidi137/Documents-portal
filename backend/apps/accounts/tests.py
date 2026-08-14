@@ -2571,7 +2571,7 @@ class ResumeTests(TestCase):
 
 
 class PortfolioTests(TestCase):
-    """Super Admin portfolio: private resume AI review + public portfolio page."""
+    """Super Admin private AI resume workspace (upload / review / rebuild)."""
 
     def setUp(self):
         self.admin = User.objects.create_superuser(
@@ -2598,11 +2598,8 @@ class PortfolioTests(TestCase):
 
     def _portfolio(self, **overrides):
         from .models import Portfolio
-        from .portfolio_services import generate_portfolio_slug
 
         portfolio, _ = Portfolio.objects.get_or_create(user=self.admin)
-        portfolio.slug = overrides.get("slug", generate_portfolio_slug(self.admin))
-        portfolio.is_published = overrides.get("is_published", False)
         if "public_id" in overrides:
             portfolio.public_id = overrides["public_id"]
             portfolio.file_name = "resume.pdf"
@@ -2618,49 +2615,41 @@ class PortfolioTests(TestCase):
         "improvements": ["Add numbers to your bullets"],
         "skills": ["Python", "SQL"],
         "ats_keywords": ["Git"],
-        "headline": "Placement Head & Engineer",
-        "about": "I lead the placement cell and build software.",
-        "education": "B.Tech CSE",
-        "experience": "Led the placement cell for two years.",
-        "projects": "Built the college documents portal.",
     }
 
-    def test_get_own_portfolio_creates_and_returns_slug(self):
+    def test_get_own_workspace_created_on_demand(self):
         client = self._client(self.admin)
-        response = client.get("/api/portfolio/")
+        response = client.get("/api/resume-workspace/")
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data["slug"])
-        self.assertFalse(response.data["is_published"])
         self.assertEqual(response.data["owner_name"], "Pavan M")
+        self.assertEqual(response.data["ai_status"], "PENDING")
 
     def test_non_super_admin_forbidden(self):
         client = self._client(self.student)
-        self.assertEqual(client.get("/api/portfolio/").status_code, 403)
+        self.assertEqual(client.get("/api/resume-workspace/").status_code, 403)
         self.assertEqual(
-            client.patch("/api/portfolio/", {"headline": "x"}, format="json").status_code,
+            client.patch(
+                "/api/resume-workspace/", {"resume_source": "x"}, format="json"
+            ).status_code,
             403,
         )
 
-    def test_patch_edits_content_and_publish(self):
+    def test_patch_saves_resume_source(self):
         self._portfolio()
         client = self._client(self.admin)
         response = client.patch(
-            "/api/portfolio/",
-            {
-                "headline": "Placement Head",
-                "about": "Hello world",
-                "skills": ["Python", "Django"],
-                "is_published": True,
-            },
+            "/api/resume-workspace/",
+            {"resume_source": "%\\documentclass{article}\n\\begin{document}\nX\n\\end{document}"},
             format="json",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["headline"], "Placement Head")
-        self.assertEqual(response.data["skills"], ["Python", "Django"])
-        self.assertTrue(response.data["is_published"])
+        self.assertEqual(
+            response.data["resume_source"],
+            "%\\documentclass{article}\n\\begin{document}\nX\n\\end{document}",
+        )
 
     def test_upload_resume_sets_file_and_resets_analysis(self):
-        self._portfolio(public_id="old", is_published=True)
+        self._portfolio(public_id="old")
         with patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload:
             mock_upload.return_value = {
                 "secure_url": "https://res.cloudinary.com/x/resume.pdf",
@@ -2668,7 +2657,7 @@ class PortfolioTests(TestCase):
             }
             client = self._client(self.admin)
             response = client.post(
-                "/api/portfolio/upload-resume/",
+                "/api/resume-workspace/upload-resume/",
                 {"file": self._resume_file()},
                 format="multipart",
             )
@@ -2680,10 +2669,12 @@ class PortfolioTests(TestCase):
     def test_upload_requires_file(self):
         self._portfolio()
         client = self._client(self.admin)
-        response = client.post("/api/portfolio/upload-resume/", {}, format="multipart")
+        response = client.post(
+            "/api/resume-workspace/upload-resume/", {}, format="multipart"
+        )
         self.assertEqual(response.status_code, 400)
 
-    def test_analyze_complete_fills_review_and_content(self):
+    def test_analyze_complete_fills_review(self):
         self._portfolio(public_id="resume-pdf")
         with patch(
             "apps.accounts.portfolio_services._extract_resume_text",
@@ -2692,13 +2683,12 @@ class PortfolioTests(TestCase):
             "apps.accounts.portfolio_services.ai_json", return_value=self._FULL_REPORT
         ):
             client = self._client(self.admin)
-            response = client.post("/api/portfolio/analyze/", {}, format="json")
+            response = client.post("/api/resume-workspace/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["ai_status"], "COMPLETE")
         self.assertEqual(response.data["ai_score"], 82)
-        self.assertEqual(response.data["headline"], "Placement Head & Engineer")
-        self.assertEqual(response.data["skills"], ["Python", "SQL"])
-        self.assertEqual(response.data["about"], "I lead the placement cell and build software.")
+        self.assertEqual(response.data["ai_analysis"]["skills"], ["Python", "SQL"])
+        self.assertNotIn("headline", response.data)
 
     def test_analyze_failed_report_no_credits(self):
         from apps.placements.models import AiUsageLog
@@ -2709,7 +2699,7 @@ class PortfolioTests(TestCase):
             return_value=("Python", ""),
         ), patch("apps.accounts.portfolio_services.ai_json", return_value={}):
             client = self._client(self.admin)
-            response = client.post("/api/portfolio/analyze/", {}, format="json")
+            response = client.post("/api/resume-workspace/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["ai_status"], "FAILED")
         self.assertIn("unreadable report", response.data["ai_error"])
@@ -2724,7 +2714,7 @@ class PortfolioTests(TestCase):
             return_value=("", "could not download the file"),
         ), patch("apps.accounts.portfolio_services.ai_json") as mock_ai:
             client = self._client(self.admin)
-            response = client.post("/api/portfolio/analyze/", {}, format="json")
+            response = client.post("/api/resume-workspace/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["ai_status"], "FAILED")
         mock_ai.assert_not_called()
@@ -2756,7 +2746,7 @@ class PortfolioTests(TestCase):
                 "public_id": "portfolios/admin/rebuilt.docx",
             }
             client = self._client(self.admin)
-            response = client.post("/api/portfolio/rebuild/", {}, format="json")
+            response = client.post("/api/resume-workspace/rebuild/", {}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["rebuilt_ai_status"], "COMPLETE")
         self.assertEqual(response.data["rebuilt_ai_score"], 90)
@@ -2771,279 +2761,23 @@ class PortfolioTests(TestCase):
             return_value=("Python", ""),
         ), patch("apps.accounts.portfolio_services.ai_json", return_value={}):
             client = self._client(self.admin)
-            response = client.post("/api/portfolio/rebuild/", {}, format="json")
+            response = client.post("/api/resume-workspace/rebuild/", {}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["rebuilt_ai_status"], "FAILED")
         self.assertFalse(response.data["rebuilt_docx_url"])
-
-    def test_public_portfolio_visible_without_login(self):
-        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
-        portfolio.headline = "Placement Head"
-        portfolio.about = "About me"
-        portfolio.skills = ["Python"]
-        portfolio.ai_score = 99  # must never leak
-        portfolio.save()
-        anonymous = APIClient()
-        response = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["owner_name"], "Pavan M")
-        self.assertEqual(response.data["headline"], "Placement Head")
-        self.assertNotIn("ai_score", response.data)
-        self.assertNotIn("ai_analysis", response.data)
-        self.assertNotIn("cloudinary_url", response.data)
-
-    def test_public_portfolio_unpublished_404(self):
-        portfolio = self._portfolio(public_id="resume-pdf")
-        anonymous = APIClient()
-        self.assertEqual(
-            anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").status_code, 404
-        )
-        self.assertEqual(
-            anonymous.get("/api/portfolio/public/unknown-slug/").status_code, 404
-        )
-
-    def test_public_contact_hidden_until_enabled(self):
-        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
-        anonymous = APIClient()
-        hidden = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data
-        self.assertEqual(hidden["owner_email"], "")
-        self.assertEqual(hidden["owner_phone"], "")
-        # Owner toggles it on.
-        client = self._client(self.admin)
-        response = client.patch(
-            "/api/portfolio/", {"show_contact": True}, format="json"
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data["show_contact"])
-        shown = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data
-        self.assertEqual(shown["owner_email"], "pavan@test.com")
 
     def test_delete_resume_clears_file_and_analysis(self):
         self._portfolio(public_id="resume-pdf")
         with patch("apps.documents.services.cloudinary.api.delete_resources"):
             client = self._client(self.admin)
-            response = client.delete("/api/portfolio/resume/")
+            response = client.delete("/api/resume-workspace/resume/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["public_id"], "")
         self.assertEqual(response.data["ai_status"], "PENDING")
 
-    def test_regenerate_slug(self):
-        self._portfolio()
-        client = self._client(self.admin)
-        first = client.get("/api/portfolio/").data["slug"]
-        response = client.post("/api/portfolio/regenerate-slug/", {}, format="json")
-        self.assertEqual(response.status_code, 200)
-        self.assertNotEqual(response.data["slug"], first)
-
-    def test_custom_sections_saved_and_shown_publicly(self):
-        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
-        client = self._client(self.admin)
-        response = client.patch(
-            "/api/portfolio/",
-            {
-                "custom_sections": [
-                    {"title": "Awards", "content": "Best placement cell 2025."},
-                    {"title": "  ", "content": "Untitled section content."},
-                    {"title": "Empty", "content": ""},
-                ]
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200)
-        sections = response.data["custom_sections"]
-        self.assertEqual(len(sections), 3)  # only fully-blank entries dropped
-        self.assertEqual(sections[0]["title"], "Awards")
-        self.assertEqual(sections[1]["title"], "")  # title-only whitespace normalized
-        self.assertEqual(sections[2]["content"], "")  # content-only whitespace normalized
-        # Visible on the public page.
-        anonymous = APIClient()
-        public = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data
-        self.assertEqual(public["custom_sections"][0]["title"], "Awards")
-
-    def test_custom_sections_invalid_input_rejected(self):
-        self._portfolio()
-        client = self._client(self.admin)
-        response = client.patch(
-            "/api/portfolio/",
-            {"custom_sections": "not-a-list"},
-            format="json",
-        )
-        self.assertEqual(response.status_code, 400)
-
-    def test_admin_toggles_student_portfolio_enabled(self):
-        client = self._client(self.admin)
-        response = client.patch(
-            f"/api/students/{self.student.id}/",
-            {"portfolio_enabled": True},
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data["portfolio_enabled"])
-        self.student.refresh_from_db()
-        self.assertTrue(self.student.portfolio_enabled)
-
-    def test_cr_cannot_grant_portfolio(self):
-        cr = User.objects.create_user(
-            roll_number="21CSE02", password="x", full_name="CR", role=User.Role.CR
-        )
-        client = self._client(cr)
-        response = client.patch(
-            f"/api/students/{self.student.id}/",
-            {"portfolio_enabled": True},
-            format="json",
-        )
-        self.student.refresh_from_db()
-        self.assertFalse(self.student.portfolio_enabled)
-        self.assertEqual(response.status_code, 200)
-
     def test_student_without_permission_forbidden(self):
         client = self._client(self.student)
-        self.assertEqual(client.get("/api/portfolio/").status_code, 403)
-
-    def test_student_with_permission_generates_from_resume(self):
-        from .models import Resume
-
-        self.student.portfolio_enabled = True
-        self.student.save()
-        Resume.objects.create(
-            student=self.student, file_name="resume.pdf", file_size=10,
-            cloudinary_url="https://example.com/r.pdf", public_id="resumes/it/a/r.pdf",
-        )
-        with patch(
-            "apps.accounts.portfolio_services._extract_resume_text",
-            return_value=("Python project. SQL. Team lead.", ""),
-        ), patch(
-            "apps.accounts.portfolio_services.ai_json", return_value=self._FULL_REPORT
-        ):
-            client = self._client(self.student)
-            response = client.post("/api/portfolio/analyze/", {}, format="json")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["ai_status"], "COMPLETE")
-        self.assertEqual(response.data["file_name"], "resume.pdf")
-        self.assertEqual(response.data["headline"], "Placement Head & Engineer")
-
-    def test_student_without_resume_cannot_generate(self):
-        self.student.portfolio_enabled = True
-        self.student.save()
-        client = self._client(self.student)
-        response = client.post("/api/portfolio/analyze/", {}, format="json")
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("upload one from your resume page", response.data["detail"])
-
-    def test_student_cannot_upload_portfolio_resume(self):
-        self.student.portfolio_enabled = True
-        self.student.save()
-        client = self._client(self.student)
-        response = client.post(
-            "/api/portfolio/upload-resume/",
-            {"file": self._resume_file()},
-            format="multipart",
-        )
-        self.assertEqual(response.status_code, 403)
-
-    def test_student_portfolio_public_when_published(self):
-        self.student.portfolio_enabled = True
-        self.student.save()
-        portfolio, _ = Portfolio.objects.get_or_create(user=self.student)
-        portfolio.slug = "student-portfolio-abc"
-        portfolio.is_published = True
-        portfolio.headline = "Student Dev"
-        portfolio.save()
-        anonymous = APIClient()
-        response = anonymous.get("/api/portfolio/public/student-portfolio-abc/")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["owner_name"], "Student")
-        self.assertEqual(response.data["headline"], "Student Dev")
-
-    def test_theme_saved_and_returned_publicly(self):
-        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
-        # Defaults fill in when nothing is set.
-        anonymous = APIClient()
-        self.assertEqual(
-            anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data["theme"],
-            {"mode": "auto", "accent": "#f56d14"},
-        )
-        client = self._client(self.admin)
-        response = client.patch(
-            "/api/portfolio/",
-            {"theme": {"mode": "dark", "accent": "#9D4ACC"}},
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.data["theme"], {"mode": "dark", "accent": "#9d4acc"}
-        )
-        self.assertEqual(
-            anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data["theme"],
-            {"mode": "dark", "accent": "#9d4acc"},
-        )
-
-    def test_theme_invalid_rejected(self):
-        self._portfolio()
-        client = self._client(self.admin)
-        for bad in ({"mode": "neon", "accent": "#f56d14"}, {"mode": "dark", "accent": "red"}):
-            response = client.patch(
-                "/api/portfolio/", {"theme": bad}, format="json"
-            )
-            self.assertEqual(response.status_code, 400)
-
-    def test_image_upload_and_patch(self):
-        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
-        with patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload:
-            mock_upload.return_value = {
-                "secure_url": "https://res.cloudinary.com/x/photo.jpg",
-                "public_id": "portfolios/admin/images/photo.jpg",
-            }
-            client = self._client(self.admin)
-            upload = client.post(
-                "/api/portfolio/upload-image/",
-                {"file": SimpleUploadedFile("photo.jpg", b"jpg-bytes", content_type="image/jpeg")},
-                format="multipart",
-            )
-        self.assertEqual(upload.status_code, 201)
-        self.assertEqual(upload.data["public_id"], "portfolios/admin/images/photo.jpg")
-
-        response = client.patch(
-            "/api/portfolio/",
-            {
-                "images": [
-                    {
-                        "url": "https://res.cloudinary.com/x/photo.jpg",
-                        "public_id": "portfolios/admin/images/photo.jpg",
-                        "alt": "Profile", "x": 30, "y": 40,
-                        "width": 250, "height": 180, "opacity": 0.8,
-                    }
-                ],
-                "background_image": {
-                    "url": "https://res.cloudinary.com/x/bg.jpg",
-                    "public_id": "bg.jpg", "opacity": 0.3, "darken": 0.5,
-                },
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data["images"]), 1)
-        self.assertEqual(response.data["images"][0]["x"], 30)
-        self.assertEqual(response.data["background_image"]["opacity"], 0.3)
-
-        # Visible on the public page.
-        anonymous = APIClient()
-        public = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data
-        self.assertEqual(len(public["images"]), 1)
-        self.assertEqual(public["background_image"]["url"], "https://res.cloudinary.com/x/bg.jpg")
-
-    def test_image_removed_from_storage_on_unlink(self):
-        portfolio = self._portfolio(public_id="resume-pdf")
-        portfolio.images = [{"url": "https://x/old.jpg", "public_id": "old-img"}]
-        portfolio.save()
-        with patch("apps.documents.services.cloudinary.api.delete_resources") as mock_delete:
-            client = self._client(self.admin)
-            response = client.patch(
-                "/api/portfolio/", {"images": []}, format="json"
-            )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["images"], [])
-        mock_delete.assert_called_once()
+        self.assertEqual(client.get("/api/resume-workspace/").status_code, 403)
 
     def test_rebuild_fills_owner_latex_template(self):
         self._portfolio(public_id="resume-pdf")
@@ -3051,7 +2785,7 @@ class PortfolioTests(TestCase):
         review = {"score": 88, "summary": "Great", "pros": ["x"], "cons": [], "improvements": [], "skills": [], "ats_keywords": []}
         client = self._client(self.admin)
         client.patch(
-            "/api/portfolio/",
+            "/api/resume-workspace/",
             {"resume_source": "%\\documentclass{article}\n\\begin{document}\nCONTENT\n\\end{document}"},
             format="json",
         )
@@ -3068,7 +2802,7 @@ class PortfolioTests(TestCase):
                 "secure_url": "https://res.cloudinary.com/x/f.pdf",
                 "public_id": "portfolios/admin/f.pdf",
             }
-            response = client.post("/api/portfolio/rebuild/", {}, format="json")
+            response = client.post("/api/resume-workspace/rebuild/", {}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["rebuilt_ai_status"], "COMPLETE")
         # The template fill wins - fences stripped, layout preserved.

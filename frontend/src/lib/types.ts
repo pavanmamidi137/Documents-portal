@@ -29,8 +29,6 @@ export interface User {
   is_cr: boolean;
   is_faculty: boolean;
   is_student: boolean;
-  /** Admin granted this student/CR the ability to build a portfolio. */
-  portfolio_enabled: boolean;
   profile_completion: number;
   date_joined: string;
 }
@@ -260,14 +258,6 @@ export interface Resume {
   updated_at: string;
 }
 
-export interface PortfolioAnalysis extends ResumeAiAnalysis {
-  headline?: string;
-  about?: string;
-  education?: string;
-  experience?: string;
-  projects?: string;
-}
-
 export interface RebuiltSections {
   summary: string;
   skills: string[];
@@ -276,32 +266,8 @@ export interface RebuiltSections {
   education: string;
 }
 
-/** A custom, admin-added portfolio section ({title, content}, ordered). */
-export interface PortfolioSection {
-  title: string;
-  content: string;
-}
-
-/** Public portfolio look: mode + accent color for the shareable page. */
-export interface PortfolioTheme {
-  mode: "auto" | "light" | "dark";
-  accent: string;
-}
-
-export interface Portfolio {
+export interface ResumeWorkspace {
   id: number;
-  slug: string;
-  is_published: boolean;
-  show_contact: boolean;
-  theme: PortfolioTheme;
-  public_url: string;
-  headline: string;
-  about: string;
-  skills: string[];
-  education: string;
-  experience: string;
-  projects: string;
-  custom_sections: PortfolioSection[];
   file_name: string;
   file_size: number;
   cloudinary_url: string;
@@ -309,7 +275,7 @@ export interface Portfolio {
   is_missing: boolean;
   ai_status: "PENDING" | "COMPLETE" | "FAILED";
   ai_score: number | null;
-  ai_analysis: PortfolioAnalysis | null;
+  ai_analysis: ResumeAiAnalysis | null;
   ai_error: string;
   ai_analyzed_at: string | null;
   rebuilt_sections: RebuiltSections | null;
@@ -317,7 +283,6 @@ export interface Portfolio {
   rebuilt_file_name: string;
   rebuilt_docx_url: string;
   rebuilt_tex: string;
-  rebuilt_tex_url: string;
   rebuilt_pdf_url: string;
   rebuilt_at: string | null;
   rebuilt_ai_status: "PENDING" | "COMPLETE" | "FAILED";
@@ -326,50 +291,8 @@ export interface Portfolio {
   rebuilt_ai_error: string;
   rebuilt_ai_analyzed_at: string | null;
   owner_name: string;
-  owner_avatar_url: string;
-  owner_email: string;
-  owner_phone: string;
   resume_source: string;
-  images: PortfolioPlacedImage[];
-  background_image: PortfolioBackgroundImage | null;
   created_at: string;
-  updated_at: string;
-}
-
-/** A user-placed floating image on the public portfolio page. */
-export interface PortfolioPlacedImage {
-  url: string;
-  public_id: string;
-  alt: string;
-  x: number; // 0-100 (percent)
-  y: number;
-  width: number;
-  height: number;
-  opacity: number; // 0-1
-}
-
-export interface PortfolioBackgroundImage {
-  url: string;
-  public_id: string;
-  opacity: number;
-  darken: number;
-}
-
-export interface PublicPortfolio {
-  owner_name: string;
-  owner_avatar_url: string;
-  owner_email: string;
-  owner_phone: string;
-  headline: string;
-  about: string;
-  skills: string[];
-  education: string;
-  experience: string;
-  projects: string;
-  custom_sections: PortfolioSection[];
-  theme: PortfolioTheme;
-  images: PortfolioPlacedImage[];
-  background_image: PortfolioBackgroundImage | null;
   updated_at: string;
 }
 

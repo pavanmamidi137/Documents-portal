@@ -1,34 +1,25 @@
-"""AI-powered portfolio service for the Super Admin.
+"""Private AI resume workspace for the Super Admin.
 
-The Super Admin uploads their own resume; the AI (a) reviews it - pros, cons,
-improvements, a score - and (b) builds a public portfolio (headline, about,
-skills, education, experience, projects) from it. The AI can also rewrite the
-resume into a polished "rebuilt" version, delivered as an editable text
-preview plus a downloadable .docx, and then review the rebuilt version too.
+The Super Admin uploads their own resume; the AI reviews it (pros, cons,
+improvements, a score) and can rewrite it into a polished "rebuilt" version -
+delivered as an editable text preview plus downloadable .docx/.pdf/.tex - and
+then review the rebuilt version too.
 
 Everything here is private to the Super Admin: the resume and both reviews
-are never exposed to faculty or students - only the generated portfolio
-content (when ``is_published``) is public.
+are never exposed to faculty or students, and nothing is published publicly.
 
 Reuses the placements resume pipeline (text extraction, OCR, provider task
-routing) so the portfolio behaves exactly like the student resume analysis.
+routing) so the workspace behaves exactly like the student resume analysis.
 """
 
 import io
-import re
-import secrets
 import threading
 
 from django.conf import settings
 from django.utils import text as text_utils
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
 
-from apps.documents.services import (
-    _cloudinary_upload,
-    delete_document_file,
-    upload_document,
-)
+from apps.documents.services import delete_document_file, upload_document
 from apps.placements.ai import AiError, ai_json, ai_plain_text
 from apps.placements.ai_parse import normalize_resume_report
 from apps.placements.models import AiUsageLog
@@ -46,38 +37,8 @@ from .models import Portfolio, User
 # Portfolio resumes follow the same size target as student resumes (500KB).
 PORTFOLIO_RESUME_TARGET_BYTES = 500 * 1024
 
-# Public page look: light/dark mode + an accent color (hex). "auto" follows
-# the visitor's own site theme.
-DEFAULT_PORTFOLIO_THEME = {"mode": "auto", "accent": "#f56d14"}
-_THEME_MODES = ("auto", "light", "dark")
-
-
-def get_portfolio_theme(portfolio: Portfolio) -> dict:
-    """The effective theme with defaults filled in (never raises)."""
-    theme = portfolio.theme if isinstance(portfolio.theme, dict) else {}
-    mode = theme.get("mode") if theme.get("mode") in _THEME_MODES else "auto"
-    accent = str(theme.get("accent") or "").lower()
-    if not re.fullmatch(r"#[0-9a-f]{6}", accent):
-        accent = DEFAULT_PORTFOLIO_THEME["accent"]
-    return {"mode": mode, "accent": accent}
-
-
-def normalize_portfolio_theme(value) -> dict | None:
-    """Validate/clean a theme payload. None => invalid (caller raises a 400)."""
-    if not isinstance(value, dict):
-        return None
-    mode = value.get("mode")
-    if mode not in _THEME_MODES:
-        return None
-    accent = str(value.get("accent") or "").lower()
-    if not re.fullmatch(r"#[0-9a-f]{6}", accent):
-        return None
-    return {"mode": mode, "accent": accent}
-
-# One AI call does both jobs: the private review AND the public portfolio
-# content. Keeps the analysis cheap (the resume text is sent once).
 _PORTFOLIO_REVIEW_PROMPT = """\
-You are a career advisor building a personal portfolio for a college Super Admin / placement head.
+You are a career advisor reviewing the resume of a college Super Admin / placement head.
 Their resume text is provided. Return ONLY a single valid JSON object - no markdown, no code fences, no prose before or after.
 The object must use EXACTLY this schema:
 {
@@ -87,16 +48,11 @@ The object must use EXACTLY this schema:
   "cons": ["3-5 short strings - genuine weaknesses or risks"],
   "improvements": ["5-8 COMPLETE, concrete action items - one short sentence each on exactly what to add, fix or quantify, ordered by impact"],
   "skills": ["every skill/keyword mentioned - languages, tools, frameworks, soft skills"],
-  "ats_keywords": ["important ATS keywords for IT/management roles MISSING from this resume"],
-  "headline": "one short professional headline for their public portfolio (e.g. 'Placement Head & Software Engineer')",
-  "about": "2-3 sentence professional bio written in the first person for their portfolio",
-  "education": "one short paragraph describing their education, or \"\" if none",
-  "experience": "one short paragraph summarising their work/leadership experience, or \"\" if none",
-  "projects": "one short paragraph summarising their notable projects, or \"\" if none"
+  "ats_keywords": ["important ATS keywords for IT/management roles MISSING from this resume"]
 }
-Be specific and honest. Never invent experience, education or projects that are not in the resume -
-use \"\" for sections the resume does not mention. If the resume text is unreadable or empty, still return
-the JSON with score 0 and a note in summary that the text could not be extracted.
+Be specific and honest. Never invent experience, education or projects that are not in the resume.
+If the resume text is unreadable or empty, still return the JSON with score 0 and a note in summary
+that the text could not be extracted.
 """
 
 # When the owner pastes their ORIGINAL resume source code (e.g. LaTeX), the
@@ -128,151 +84,9 @@ If a section is not in the original resume, use \"\" (or [] for skills). Never i
 """
 
 
-def generate_portfolio_slug(user: User) -> str:
-    """A unique public link slug for a portfolio (e.g. ``admin123-4f2a9c``)."""
-    base = text_utils.slugify(user.roll_number or "admin")[:30] or "admin"
-    for _ in range(20):
-        slug = f"{base}-{secrets.token_hex(3)}"
-        if not Portfolio.objects.filter(slug=slug).exists():
-            return slug
-    return f"{base}-{secrets.token_hex(5)}"
-
-
 def portfolio_folder(portfolio: Portfolio) -> str:
     """Cloudinary folder: ``portfolios/{roll}/`` (mirrors the resume layout)."""
     return f"portfolios/{text_utils.slugify(portfolio.user.roll_number) or 'admin'}"
-
-
-def sync_portfolio_resume_ref(portfolio: Portfolio, student: User) -> bool:
-    """Point a student's portfolio at their latest Resume file (no AI involved).
-
-    A student's portfolio is built from the resume they already uploaded for
-    faculty - there is no separate portfolio upload. This copies the file
-    references over so the analysis pipeline (extraction/OCR/review) reads the
-    right file. Returns True when a usable resume exists, False when the
-    student has no resume yet. AI fields are left untouched.
-    """
-    from .models import Resume
-
-    resume = (
-        Resume.objects.filter(student=student)
-        .exclude(is_missing=True)
-        .order_by("-updated_at")
-        .first()
-    )
-    if not resume or not resume.public_id:
-        return False
-    portfolio.file_name = resume.file_name
-    portfolio.file_size = resume.file_size
-    portfolio.cloudinary_url = resume.cloudinary_url
-    portfolio.public_id = resume.public_id
-    portfolio.is_missing = False
-    portfolio.save(update_fields=[
-        "file_name", "file_size", "cloudinary_url", "public_id", "is_missing",
-        "updated_at",
-    ])
-    return True
-
-
-def _as_number(value, default: float, lo: float, hi: float) -> float:
-    """Coerce a number, clamped into [lo, hi], falling back to ``default``."""
-    try:
-        num = float(value)
-    except (TypeError, ValueError):
-        return default
-    return max(lo, min(hi, num))
-
-
-def clean_portfolio_images(value) -> list | None:
-    """Validate/normalize the placed-images list. None => invalid."""
-    if not isinstance(value, list):
-        return None
-    out: list[dict] = []
-    for item in value:
-        if not isinstance(item, dict):
-            return None
-        url = str(item.get("url") or "").strip()
-        if not url or len(url) > 500:
-            return None
-        out.append({
-            "url": url,
-            "public_id": str(item.get("public_id") or "")[:255],
-            "alt": str(item.get("alt") or "")[:150],
-            "x": _as_number(item.get("x"), 50, 0, 100),
-            "y": _as_number(item.get("y"), 50, 0, 100),
-            "width": _as_number(item.get("width"), 200, 40, 900),
-            "height": _as_number(item.get("height"), 200, 40, 900),
-            "opacity": _as_number(item.get("opacity"), 1, 0, 1),
-        })
-        if len(out) >= 12:
-            break
-    return out
-
-
-def clean_background_image(value) -> dict | None:
-    """Validate/normalize the background image. None => invalid. Empty => None."""
-    if value is None or value == {} or value == [] or value == "":
-        return None
-    if not isinstance(value, dict):
-        return None
-    url = str(value.get("url") or "").strip()
-    if not url or len(url) > 500:
-        return None
-    return {
-        "url": url,
-        "public_id": str(value.get("public_id") or "")[:255],
-        "opacity": _as_number(value.get("opacity"), 0.35, 0, 1),
-        "darken": _as_number(value.get("darken"), 0.55, 0, 1),
-    }
-
-
-_IMAGE_TYPES = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-_IMAGE_MAX_BYTES = 8 * 1024 * 1024
-
-
-def _validate_portfolio_image(image_file) -> None:
-    """Lightweight image check (extension + size)."""
-    if not image_file or image_file.size <= 0:
-        raise ValidationError({"file": "An image file is required."})
-    if image_file.size > _IMAGE_MAX_BYTES:
-        raise ValidationError({
-            "file": f"The image is larger than {_IMAGE_MAX_BYTES // (1024 * 1024)}MB."
-        })
-    name = (getattr(image_file, "name", "") or "").lower()
-    _, _, ext_part = name.rpartition(".")
-    ext = f".{ext_part}" if ext_part else ""
-    if ext not in _IMAGE_TYPES:
-        raise ValidationError({"file": "Only JPG, PNG, GIF or WebP images are allowed."})
-
-
-def upload_portfolio_image(portfolio: Portfolio, image_file, request=None) -> dict:
-    """Upload a portfolio image to Cloudinary and return its references."""
-    from apps.core.utils import log_audit
-
-    _validate_portfolio_image(image_file)
-    try:
-        result = _cloudinary_upload(
-            image_file, f"{portfolio_folder(portfolio)}/images", resource_type="image"
-        )
-    except Exception as exc:
-        raise ValidationError({"file": f"Cloudinary upload failed: {exc}"})
-    log_audit(
-        portfolio.user, "PORTFOLIO_IMAGE_UPLOAD", "Portfolio", portfolio.id,
-        {"roll_number": portfolio.user.roll_number, "file": image_file.name},
-        request,
-    )
-    return {
-        "url": result["secure_url"],
-        "public_id": result["public_id"],
-        "file_name": image_file.name,
-    }
-
-
-def delete_portfolio_image(public_id: str) -> bool:
-    """Remove a portfolio image from Cloudinary (best-effort)."""
-    if not public_id:
-        return False
-    return delete_document_file(public_id)
 
 
 def _reset_analysis(portfolio: Portfolio, *, rebuilt: bool = True) -> None:
@@ -286,13 +100,6 @@ def _reset_analysis(portfolio: Portfolio, *, rebuilt: bool = True) -> None:
     portfolio.ai_analysis = None
     portfolio.ai_error = ""
     portfolio.ai_analyzed_at = None
-    # The content was generated from the old file - it no longer applies.
-    portfolio.headline = ""
-    portfolio.about = ""
-    portfolio.skills = []
-    portfolio.education = ""
-    portfolio.experience = ""
-    portfolio.projects = ""
     if rebuilt:
         portfolio.rebuilt_sections = None
         portfolio.rebuilt_text = ""
@@ -367,46 +174,8 @@ def _auto_analyze_in_thread(portfolio_id: int) -> None:
         close_old_connections()
 
 
-def _normalize_portfolio_report(raw) -> dict | None:
-    """Normalize the review+content response into a single dict.
-
-    Reuses the resume-report normalizer for the review fields and adds the
-    portfolio content fields with sensible fallbacks (headline -> user's name,
-    about -> the review summary, missing sections -> ""). Returns None when
-    the response carried no usable review at all.
-    """
-    review = normalize_resume_report(raw)
-    if review is None:
-        return None
-    if not isinstance(raw, dict):
-        raw = {}
-    # Unwrap wrapper keys the same way normalize_resume_report does.
-    for wrapper in ("report", "result", "data", "analysis", "quality"):
-        if isinstance(raw.get(wrapper), dict) and len(raw) == 1:
-            raw = raw[wrapper]
-            break
-    if not isinstance(raw, dict):
-        raw = {}
-
-    def _txt(*names: str) -> str:
-        for name in names:
-            value = raw.get(name)
-            if value is not None and str(value).strip():
-                return str(value).strip()
-        return ""
-
-    return {
-        **review,
-        "headline": _txt("headline", "title", "tagline"),
-        "about": _txt("about", "bio", "profile"),
-        "education": _txt("education", "education_details"),
-        "experience": _txt("experience", "work_experience", "work"),
-        "projects": _txt("projects", "project_experience"),
-    }
-
-
 def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
-    """Run the AI review + portfolio generation and store it on the portfolio.
+    """Run the private AI review and store it on the workspace.
 
     Raises AiError when the AI service itself fails (the caller surfaces a
     502). Credits are only committed when the analysis completes - a failed
@@ -449,7 +218,7 @@ def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
     except AiError:
         raise  # nothing collected, nothing committed - no credits burned
 
-    report = _normalize_portfolio_report(raw)
+    report = normalize_resume_report(raw)
     if report is None:
         portfolio.ai_status = Portfolio.AiStatus.FAILED
         portfolio.ai_score = None
@@ -473,14 +242,6 @@ def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
     portfolio.ai_analysis = report
     portfolio.ai_error = ""
     portfolio.ai_analyzed_at = timezone.now()
-    # Public portfolio content - auto-built from the resume (editable later).
-    user = portfolio.user
-    portfolio.headline = report["headline"] or (user.full_name or "").strip()[:200]
-    portfolio.about = report["about"] or report["summary"]
-    portfolio.skills = report["skills"]
-    portfolio.education = report["education"]
-    portfolio.experience = report["experience"]
-    portfolio.projects = report["projects"]
     commit_usage()
     portfolio.save()
     return _portfolio_payload(portfolio)
@@ -799,7 +560,7 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
         except AiError:
             rebuilt_tex = ""  # fall back to the generated LaTeX below
     if not rebuilt_tex:
-        rebuilt_tex = _sections_to_latex(portfolio.user, portfolio.headline, sections)
+        rebuilt_tex = _sections_to_latex(portfolio.user, "", sections)
 
     # Review the rebuilt version - a second, cheaper call on the new text.
     rebuilt_review = None
@@ -820,7 +581,7 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
     # Build + upload the .docx (best-effort - the text preview always works).
     docx_bytes = None
     try:
-        docx_bytes = _build_resume_docx(portfolio.user, portfolio.headline, sections)
+        docx_bytes = _build_resume_docx(portfolio.user, "", sections)
     except Exception:
         docx_bytes = None
     old_public_id = portfolio.rebuilt_docx_public_id
@@ -851,7 +612,7 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
     # Render + upload the .pdf (best-effort - a clean structured PDF).
     pdf_bytes = None
     try:
-        pdf_bytes = _build_resume_pdf(portfolio.user, portfolio.headline, sections)
+        pdf_bytes = _build_resume_pdf(portfolio.user, "", sections)
     except Exception:
         pdf_bytes = None
     old_pdf_public_id = portfolio.rebuilt_pdf_public_id
