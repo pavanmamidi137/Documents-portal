@@ -15,15 +15,21 @@ routing) so the portfolio behaves exactly like the student resume analysis.
 """
 
 import io
+import re
 import secrets
 import threading
 
 from django.conf import settings
 from django.utils import text as text_utils
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
-from apps.documents.services import delete_document_file, upload_document
-from apps.placements.ai import AiError, ai_json
+from apps.documents.services import (
+    _cloudinary_upload,
+    delete_document_file,
+    upload_document,
+)
+from apps.placements.ai import AiError, ai_json, ai_plain_text
 from apps.placements.ai_parse import normalize_resume_report
 from apps.placements.models import AiUsageLog
 from apps.placements.resume_ai import (
@@ -39,6 +45,34 @@ from .models import Portfolio, User
 
 # Portfolio resumes follow the same size target as student resumes (500KB).
 PORTFOLIO_RESUME_TARGET_BYTES = 500 * 1024
+
+# Public page look: light/dark mode + an accent color (hex). "auto" follows
+# the visitor's own site theme.
+DEFAULT_PORTFOLIO_THEME = {"mode": "auto", "accent": "#f56d14"}
+_THEME_MODES = ("auto", "light", "dark")
+
+
+def get_portfolio_theme(portfolio: Portfolio) -> dict:
+    """The effective theme with defaults filled in (never raises)."""
+    theme = portfolio.theme if isinstance(portfolio.theme, dict) else {}
+    mode = theme.get("mode") if theme.get("mode") in _THEME_MODES else "auto"
+    accent = str(theme.get("accent") or "").lower()
+    if not re.fullmatch(r"#[0-9a-f]{6}", accent):
+        accent = DEFAULT_PORTFOLIO_THEME["accent"]
+    return {"mode": mode, "accent": accent}
+
+
+def normalize_portfolio_theme(value) -> dict | None:
+    """Validate/clean a theme payload. None => invalid (caller raises a 400)."""
+    if not isinstance(value, dict):
+        return None
+    mode = value.get("mode")
+    if mode not in _THEME_MODES:
+        return None
+    accent = str(value.get("accent") or "").lower()
+    if not re.fullmatch(r"#[0-9a-f]{6}", accent):
+        return None
+    return {"mode": mode, "accent": accent}
 
 # One AI call does both jobs: the private review AND the public portfolio
 # content. Keeps the analysis cheap (the resume text is sent once).
@@ -63,6 +97,19 @@ The object must use EXACTLY this schema:
 Be specific and honest. Never invent experience, education or projects that are not in the resume -
 use \"\" for sections the resume does not mention. If the resume text is unreadable or empty, still return
 the JSON with score 0 and a note in summary that the text could not be extracted.
+"""
+
+# When the owner pastes their ORIGINAL resume source code (e.g. LaTeX), the
+# rebuild keeps that exact structure and only strengthens the content.
+_SOURCE_FILL_PROMPT = """\
+You are improving a resume. Below is the user's ORIGINAL resume source code (LaTeX or plain text)
+followed by improvement notes about their content.
+Rewrite ONLY the content - strengthen summaries, bullets, skill lists and wording - while keeping
+EVERY structural element byte-for-byte identical: all LaTeX commands, packages, section headings,
+formatting, spacing and the overall layout must remain untouched. Do NOT add or remove sections,
+and do NOT change any \\section / \\subsection / documentclass / usepackage lines.
+Return ONLY the complete updated source code in a single ```latex code block (or a plain ``` block
+if the source is not LaTeX). Preserve everything else exactly.
 """
 
 # The AI rewrite: structured sections for the polished ("rebuilt") resume.
@@ -127,8 +174,113 @@ def sync_portfolio_resume_ref(portfolio: Portfolio, student: User) -> bool:
     return True
 
 
+def _as_number(value, default: float, lo: float, hi: float) -> float:
+    """Coerce a number, clamped into [lo, hi], falling back to ``default``."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, num))
+
+
+def clean_portfolio_images(value) -> list | None:
+    """Validate/normalize the placed-images list. None => invalid."""
+    if not isinstance(value, list):
+        return None
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            return None
+        url = str(item.get("url") or "").strip()
+        if not url or len(url) > 500:
+            return None
+        out.append({
+            "url": url,
+            "public_id": str(item.get("public_id") or "")[:255],
+            "alt": str(item.get("alt") or "")[:150],
+            "x": _as_number(item.get("x"), 50, 0, 100),
+            "y": _as_number(item.get("y"), 50, 0, 100),
+            "width": _as_number(item.get("width"), 200, 40, 900),
+            "height": _as_number(item.get("height"), 200, 40, 900),
+            "opacity": _as_number(item.get("opacity"), 1, 0, 1),
+        })
+        if len(out) >= 12:
+            break
+    return out
+
+
+def clean_background_image(value) -> dict | None:
+    """Validate/normalize the background image. None => invalid. Empty => None."""
+    if value is None or value == {} or value == [] or value == "":
+        return None
+    if not isinstance(value, dict):
+        return None
+    url = str(value.get("url") or "").strip()
+    if not url or len(url) > 500:
+        return None
+    return {
+        "url": url,
+        "public_id": str(value.get("public_id") or "")[:255],
+        "opacity": _as_number(value.get("opacity"), 0.35, 0, 1),
+        "darken": _as_number(value.get("darken"), 0.55, 0, 1),
+    }
+
+
+_IMAGE_TYPES = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _validate_portfolio_image(image_file) -> None:
+    """Lightweight image check (extension + size)."""
+    if not image_file or image_file.size <= 0:
+        raise ValidationError({"file": "An image file is required."})
+    if image_file.size > _IMAGE_MAX_BYTES:
+        raise ValidationError({
+            "file": f"The image is larger than {_IMAGE_MAX_BYTES // (1024 * 1024)}MB."
+        })
+    name = (getattr(image_file, "name", "") or "").lower()
+    _, _, ext_part = name.rpartition(".")
+    ext = f".{ext_part}" if ext_part else ""
+    if ext not in _IMAGE_TYPES:
+        raise ValidationError({"file": "Only JPG, PNG, GIF or WebP images are allowed."})
+
+
+def upload_portfolio_image(portfolio: Portfolio, image_file, request=None) -> dict:
+    """Upload a portfolio image to Cloudinary and return its references."""
+    from apps.core.utils import log_audit
+
+    _validate_portfolio_image(image_file)
+    try:
+        result = _cloudinary_upload(
+            image_file, f"{portfolio_folder(portfolio)}/images", resource_type="image"
+        )
+    except Exception as exc:
+        raise ValidationError({"file": f"Cloudinary upload failed: {exc}"})
+    log_audit(
+        portfolio.user, "PORTFOLIO_IMAGE_UPLOAD", "Portfolio", portfolio.id,
+        {"roll_number": portfolio.user.roll_number, "file": image_file.name},
+        request,
+    )
+    return {
+        "url": result["secure_url"],
+        "public_id": result["public_id"],
+        "file_name": image_file.name,
+    }
+
+
+def delete_portfolio_image(public_id: str) -> bool:
+    """Remove a portfolio image from Cloudinary (best-effort)."""
+    if not public_id:
+        return False
+    return delete_document_file(public_id)
+
+
 def _reset_analysis(portfolio: Portfolio, *, rebuilt: bool = True) -> None:
-    """Clear every AI/cache field (used when a new file replaces the old one)."""
+    """Clear every AI/cache field (used when a new file replaces the old one).
+
+    ``resume_source`` (the owner's own template) is left untouched - it is
+    their input, not a generated field.
+    """
     portfolio.ai_status = Portfolio.AiStatus.PENDING
     portfolio.ai_score = None
     portfolio.ai_analysis = None
@@ -147,6 +299,9 @@ def _reset_analysis(portfolio: Portfolio, *, rebuilt: bool = True) -> None:
         portfolio.rebuilt_file_name = ""
         portfolio.rebuilt_docx_url = ""
         portfolio.rebuilt_docx_public_id = ""
+        portfolio.rebuilt_tex = ""
+        portfolio.rebuilt_pdf_url = ""
+        portfolio.rebuilt_pdf_public_id = ""
         portfolio.rebuilt_at = None
         portfolio.rebuilt_ai_status = Portfolio.AiStatus.PENDING
         portfolio.rebuilt_ai_score = None
@@ -444,6 +599,122 @@ def _build_resume_docx(user: User, headline: str, sections: dict) -> bytes:
     return buffer.getvalue()
 
 
+_LATEX_ESCAPE = str.maketrans({
+    "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#",
+    "_": r"\_", "{": r"\{", "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}",
+})
+
+
+def _sections_to_latex(user: User, headline: str, sections: dict) -> str:
+    """Generate a clean LaTeX resume from the rebuilt sections."""
+    esc = lambda t: str(t).translate(_LATEX_ESCAPE)
+    name = esc(user.full_name or user.roll_number)
+    contact = " | ".join(part for part in (user.roll_number, user.email or "", user.phone or "") if part)
+    contact = esc(contact)
+    head = esc(headline)
+    lines = [
+        r"% " + name + r" - rebuilt by PlaceMate AI",
+        r"\documentclass[11pt,a4paper]{article}",
+        r"\usepackage[margin=0.7in]{geometry}",
+        r"\usepackage{parskip}",
+        r"\usepackage{enumitem}",
+        r"\usepackage{hyperref}",
+        r"\hypersetup{hidelinks}",
+        r"\begin{document}",
+        r"\begin{center}",
+        r"  {\LARGE\bfseries " + name + r"}\\[2pt]",
+    ]
+    if head:
+        lines.append(r"  {\large\itshape " + head + r"}\\[2pt]")
+    if contact:
+        lines.append(r"  {\small " + contact + r"}")
+    lines.append(r"\end{center}")
+
+    def add_section(title: str, body: str) -> None:
+        if not body.strip():
+            return
+        lines.append(r"\section*{" + esc(title) + r"}")
+        for bullet in body.splitlines():
+            text = bullet.strip().lstrip("-*• ").strip()
+            if text:
+                lines.append(r"\begin{itemize}\item " + esc(text) + r"\end{itemize}")
+
+    lines.append(r"\section*{Professional Summary}")
+    lines.append(esc(sections.get("summary", "")))
+    if sections.get("skills"):
+        lines.append(r"\section*{Skills}")
+        lines.append(esc(", ".join(sections["skills"])))
+    add_section("Experience", sections.get("experience", ""))
+    add_section("Projects", sections.get("projects", ""))
+    add_section("Education", sections.get("education", ""))
+    lines.append(r"\end{document}")
+    return "\n".join(lines)
+
+
+def _strip_latex_fences(text: str) -> str:
+    """Remove ```latex / ``` wrappers the model may add around the source."""
+    import re as _re
+
+    text = _re.sub(r"```(?:latex|tex)?\s*\n?", "", text, flags=_re.IGNORECASE)
+    return text.replace("```", "").strip()
+
+
+def _build_resume_pdf(user: User, headline: str, sections: dict) -> bytes:
+    """Render the rebuilt resume as a clean PDF (reportlab) and return bytes."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        rightMargin=18 * mm, leftMargin=18 * mm,
+        topMargin=16 * mm, bottomMargin=16 * mm,
+        title=f"{user.full_name or user.roll_number} - Resume",
+    )
+    base = getSampleStyleSheet()
+    styles = {
+        "title": ParagraphStyle("Title", parent=base["Title"], alignment=TA_CENTER, fontSize=22, spaceAfter=2),
+        "head": ParagraphStyle("Head", parent=base["Heading2"], textColor=colors.HexColor("#f56d14"), fontSize=12, spaceBefore=10, spaceAfter=4),
+        "body": ParagraphStyle("Body", parent=base["BodyText"], fontSize=10, leading=14),
+    }
+    story = [Paragraph(_xml_escape(user.full_name or user.roll_number), styles["title"])]
+    if headline:
+        story.append(Paragraph(_xml_escape(headline), ParagraphStyle("Tag", parent=styles["body"], alignment=TA_CENTER, italic=True, spaceAfter=6)))
+    contact = " | ".join(p for p in (user.roll_number, user.email or "", user.phone or "") if p)
+    if contact:
+        story.append(Paragraph(_xml_escape(contact), ParagraphStyle("Contact", parent=styles["body"], alignment=TA_CENTER, spaceAfter=8)))
+
+    def add_section(title: str, body: str) -> None:
+        if not body.strip():
+            return
+        story.append(Paragraph(_xml_escape(title), styles["head"]))
+        for line in body.splitlines():
+            text = line.strip().lstrip("-*• ").strip()
+            if text:
+                story.append(Paragraph("&bull;&nbsp;" + _xml_escape(text), styles["body"]))
+
+    story.append(Paragraph("Professional Summary", styles["head"]))
+    story.append(Paragraph(_xml_escape(sections.get("summary", "")), styles["body"]))
+    if sections.get("skills"):
+        story.append(Paragraph("Skills", styles["head"]))
+        story.append(Paragraph(_xml_escape(", ".join(sections["skills"])), styles["body"]))
+    add_section("Experience", sections.get("experience", ""))
+    add_section("Projects", sections.get("projects", ""))
+    add_section("Education", sections.get("education", ""))
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def _xml_escape(text: str) -> str:
+    import html
+
+    return html.escape(str(text), quote=True)
+
+
 def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
     """AI-rewrite the resume into a polished version, then review that version.
 
@@ -508,6 +779,28 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
 
     rebuilt_text = _sections_to_text(sections)
 
+    # LaTeX: when the owner pasted their original source code, fill that EXACT
+    # template (keeps their original layout - only the content is improved);
+    # otherwise generate a clean LaTeX resume from the improved sections.
+    rebuilt_tex = ""
+    if (portfolio.resume_source or "").strip():
+        try:
+            filled = ai_plain_text(
+                _SOURCE_FILL_PROMPT,
+                (
+                    portfolio.resume_source
+                    + "\n\nIMPROVEMENT NOTES FROM YOUR ORIGINAL RESUME:\n"
+                    + brief
+                )[:_MAX_TEXT_CHARS],
+                max_tokens=8000, usage_callback=usage, task="RESUME_ANALYSIS",
+            )
+            if filled and filled.strip():
+                rebuilt_tex = _strip_latex_fences(filled)[:20000]
+        except AiError:
+            rebuilt_tex = ""  # fall back to the generated LaTeX below
+    if not rebuilt_tex:
+        rebuilt_tex = _sections_to_latex(portfolio.user, portfolio.headline, sections)
+
     # Review the rebuilt version - a second, cheaper call on the new text.
     rebuilt_review = None
     rebuilt_score = None
@@ -555,11 +848,42 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
             new_public_id = ""
             new_file_name = ""
 
+    # Render + upload the .pdf (best-effort - a clean structured PDF).
+    pdf_bytes = None
+    try:
+        pdf_bytes = _build_resume_pdf(portfolio.user, portfolio.headline, sections)
+    except Exception:
+        pdf_bytes = None
+    old_pdf_public_id = portfolio.rebuilt_pdf_public_id
+    new_pdf_url = ""
+    new_pdf_public_id = ""
+    if pdf_bytes:
+        try:
+            pdf_uploaded = upload_document(
+                SimpleUploadedFile(
+                    f"{text_utils.slugify(portfolio.user.full_name or portfolio.user.roll_number) or 'resume'}-rebuilt.pdf",
+                    pdf_bytes,
+                    content_type="application/pdf",
+                ),
+                portfolio_folder(portfolio),
+                target_bytes=PORTFOLIO_RESUME_TARGET_BYTES,
+            )
+            new_pdf_url = pdf_uploaded["url"]
+            new_pdf_public_id = pdf_uploaded["public_id"]
+            if old_pdf_public_id and old_pdf_public_id != new_pdf_public_id:
+                delete_document_file(old_pdf_public_id)
+        except Exception:
+            new_pdf_url = ""
+            new_pdf_public_id = ""
+
     portfolio.rebuilt_sections = sections
     portfolio.rebuilt_text = rebuilt_text
     portfolio.rebuilt_file_name = new_file_name
     portfolio.rebuilt_docx_url = new_url
     portfolio.rebuilt_docx_public_id = new_public_id
+    portfolio.rebuilt_tex = rebuilt_tex
+    portfolio.rebuilt_pdf_url = new_pdf_url
+    portfolio.rebuilt_pdf_public_id = new_pdf_public_id
     portfolio.rebuilt_at = timezone.now()
     portfolio.rebuilt_ai_status = (
         Portfolio.AiStatus.COMPLETE if rebuilt_review else Portfolio.AiStatus.PENDING
@@ -588,6 +912,8 @@ def delete_portfolio_resume(portfolio: Portfolio, actor: User, request=None) -> 
         delete_document_file(portfolio.public_id)
     if portfolio.rebuilt_docx_public_id:
         delete_document_file(portfolio.rebuilt_docx_public_id)
+    if portfolio.rebuilt_pdf_public_id:
+        delete_document_file(portfolio.rebuilt_pdf_public_id)
     portfolio.file_name = ""
     portfolio.file_size = 0
     portfolio.cloudinary_url = ""

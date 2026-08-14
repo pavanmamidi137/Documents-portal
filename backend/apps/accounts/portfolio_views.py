@@ -28,10 +28,15 @@ from apps.core.utils import log_audit
 from .models import Portfolio
 from .portfolio_services import (
     analyze_portfolio,
+    clean_background_image,
+    clean_portfolio_images,
+    delete_portfolio_image,
     delete_portfolio_resume,
     generate_portfolio_slug,
+    normalize_portfolio_theme,
     rebuild_resume,
     sync_portfolio_resume_ref,
+    upload_portfolio_image,
     upload_portfolio_resume,
 )
 from .serializers import PortfolioSerializer, PublicPortfolioSerializer
@@ -96,7 +101,19 @@ class PortfolioView(APIView):
             "custom_sections": _clean_custom_sections,
             "is_published": (lambda v: bool(v)),
             "show_contact": (lambda v: bool(v)),
+            "theme": normalize_portfolio_theme,
+            "images": clean_portfolio_images,
+            "background_image": clean_background_image,
+            "resume_source": (lambda v: str(v).strip()[:20000]),
         }
+        # Snapshot old Cloudinary ids so files the owner removes from the
+        # portfolio get deleted from storage (not just unlinked).
+        old_image_ids = {
+            (item.get("public_id") or "")
+            for item in (portfolio.images or [])
+            if isinstance(item, dict)
+        }
+        old_bg_id = (portfolio.background_image or {}).get("public_id") or ""
         changed: list[str] = []
         for field, clean in editable.items():
             if field not in request.data:
@@ -109,11 +126,44 @@ class PortfolioView(APIView):
         if not changed:
             raise ValidationError({"detail": "Nothing to update."})
         portfolio.save()
+        # Best-effort Cloudinary cleanup for removed images/background.
+        if "images" in request.data:
+            kept = {
+                (item.get("public_id") or "")
+                for item in (portfolio.images or [])
+                if isinstance(item, dict)
+            }
+            for removed in old_image_ids - kept:
+                if removed:
+                    delete_portfolio_image(removed)
+        if "background_image" in request.data:
+            new_bg_id = (portfolio.background_image or {}).get("public_id") or ""
+            if old_bg_id and old_bg_id != new_bg_id:
+                delete_portfolio_image(old_bg_id)
         log_audit(
             request.user, "PORTFOLIO_UPDATE", "Portfolio", portfolio.id,
             {"fields": changed}, request,
         )
         return Response(PortfolioSerializer(portfolio).data)
+
+
+class PortfolioImageUploadView(APIView):
+    """Upload an image for the portfolio (floating images or the background).
+
+    The image is stored on Cloudinary and its references returned; the owner
+    then positions/sizes it via the images / background_image fields.
+    """
+
+    permission_classes = [IsSuperAdminOrPortfolioEnabled]
+
+    def post(self, request):
+        image_file = request.FILES.get("file")
+        if not image_file:
+            raise ValidationError({"file": "An image file is required."})
+        result = upload_portfolio_image(
+            _get_own_portfolio(request.user), image_file, request
+        )
+        return Response(result, status=status.HTTP_201_CREATED)
 
 
 class PortfolioUploadResumeView(APIView):

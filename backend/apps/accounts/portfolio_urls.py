@@ -2,6 +2,7 @@ from django.urls import path
 
 from .portfolio_views import (
     PortfolioAnalyzeView,
+    PortfolioImageUploadView,
     PortfolioRebuildView,
     PortfolioRegenerateSlugView,
     PortfolioResumeDeleteView,
@@ -13,6 +14,7 @@ from .portfolio_views import (
 urlpatterns = [
     path("", PortfolioView.as_view(), name="portfolio"),
     path("upload-resume/", PortfolioUploadResumeView.as_view(), name="portfolio-upload-resume"),
+    path("upload-image/", PortfolioImageUploadView.as_view(), name="portfolio-upload-image"),
     path("analyze/", PortfolioAnalyzeView.as_view(), name="portfolio-analyze"),
     path("rebuild/", PortfolioRebuildView.as_view(), name="portfolio-rebuild"),
     path("regenerate-slug/", PortfolioRegenerateSlugView.as_view(), name="portfolio-regenerate-slug"),

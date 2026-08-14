@@ -8,18 +8,24 @@ import {
   Check,
   Copy,
   Download,
+  FileCode2,
   FileText,
   FileUp,
   Globe,
   GripVertical,
   IdCard,
+  Image as ImageIcon,
   Lightbulb,
   ListChecks,
   Loader2,
+  Monitor,
+  Moon,
+  Palette,
   Plus,
   RefreshCw,
   Sparkles,
   Star,
+  Sun,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -43,11 +49,25 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { SITE_THEMES } from "@/lib/site-theme";
 import { http } from "@/lib/api";
-import type { Portfolio, PortfolioSection, ResumeAiAnalysis } from "@/lib/types";
+import type {
+  Portfolio,
+  PortfolioBackgroundImage,
+  PortfolioPlacedImage,
+  PortfolioSection,
+  PortfolioTheme,
+  ResumeAiAnalysis,
+} from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 
 const ACCEPTED = ".pdf,.doc,.docx";
+
+/** A safe file-name prefix for the rebuilt resume downloads. */
+function slugName(p: Portfolio): string {
+  const base = (p.owner_name || p.slug || "resume").toLowerCase();
+  return base.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "resume";
+}
 
 /** 0-100 AI score -> 0-5 stars. */
 function scoreToStars(score: number | null): number {
@@ -204,14 +224,150 @@ function CustomSectionRow({
   );
 }
 
+function PlacedImageEditor({
+  image,
+  onChange,
+  onRemove,
+}: {
+  image: PortfolioPlacedImage;
+  onChange: (patch: Partial<PortfolioPlacedImage>) => void;
+  onRemove: () => void;
+}) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+
+  const moveTo = (clientX: number, clientY: number) => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const x = Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100));
+    const y = Math.min(100, Math.max(0, ((clientY - rect.top) / rect.height) * 100));
+    onChange({ x: Math.round(x), y: Math.round(y) });
+  };
+
+  return (
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex flex-col gap-4 lg:flex-row">
+        {/* Live canvas preview with drag-to-move */}
+        <div className="flex-1">
+          <div
+            ref={frameRef}
+            className="relative h-48 w-full cursor-move touch-none overflow-hidden rounded-xl border bg-muted/40"
+            onPointerDown={(e) => {
+              dragging.current = true;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              moveTo(e.clientX, e.clientY);
+            }}
+            onPointerMove={(e) => {
+              if (dragging.current) moveTo(e.clientX, e.clientY);
+            }}
+            onPointerUp={() => {
+              dragging.current = false;
+            }}
+            onPointerCancel={() => {
+              dragging.current = false;
+            }}
+          >
+            <img
+              src={image.url}
+              alt={image.alt || "Portfolio image"}
+              className="pointer-events-none absolute select-none rounded-lg object-contain shadow-lg"
+              style={{
+                left: `${image.x}%`,
+                top: `${image.y}%`,
+                width: image.width,
+                height: image.height,
+                opacity: image.opacity,
+                transform: "translate(-50%, -50%)",
+              }}
+              draggable={false}
+            />
+            <span className="pointer-events-none absolute bottom-2 left-2 rounded-md bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground">
+              Drag the image to move · x {image.x}% y {image.y}%
+            </span>
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="w-full space-y-3.5 lg:w-72">
+          <div>
+            <Label htmlFor={`img-alt-${image.public_id}`}>Caption (optional)</Label>
+            <Input
+              id={`img-alt-${image.public_id}`}
+              value={image.alt}
+              onChange={(e) => onChange({ alt: e.target.value })}
+              placeholder="e.g. My photo"
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <Label>Width · {image.width}px</Label>
+            <input
+              type="range"
+              min={40}
+              max={900}
+              value={image.width}
+              onChange={(e) => onChange({ width: Number(e.target.value) })}
+              className="mt-1.5 w-full accent-primary"
+            />
+          </div>
+          <div>
+            <Label>Height · {image.height}px</Label>
+            <input
+              type="range"
+              min={40}
+              max={900}
+              value={image.height}
+              onChange={(e) => onChange({ height: Number(e.target.value) })}
+              className="mt-1.5 w-full accent-primary"
+            />
+          </div>
+          <div>
+            <Label>Transparency · {Math.round(image.opacity * 100)}%</Label>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(image.opacity * 100)}
+              onChange={(e) => onChange({ opacity: Number(e.target.value) / 100 })}
+              className="mt-1.5 w-full accent-primary"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="text-destructive" onClick={onRemove}>
+              <Trash2 className="size-4" /> Remove
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type BuilderTab = "resume" | "portfolio" | "design";
+
+/** Pending unsaved changes for the image designer. */
+interface DesignDraft {
+  images: PortfolioPlacedImage[];
+  background: PortfolioBackgroundImage | null;
+}
+
 export default function PortfolioPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const bgInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [tab, setTab] = useState<BuilderTab>("resume");
+  const [themeDraft, setThemeDraft] = useState<PortfolioTheme | null>(null);
+  const [designDraft, setDesignDraft] = useState<DesignDraft | null>(null);
+  const [sourceDraft, setSourceDraft] = useState<string | null>(null);
   const [draft, setDraft] = useState<{
     headline: string;
     about: string;
@@ -246,6 +402,16 @@ export default function PortfolioPage() {
     () => (portfolio?.custom_sections ?? []).map((s, i) => ({ ...s, id: `sec-${i}` })),
     [portfolio?.custom_sections]
   );
+
+  // Download URLs for the rebuilt formats (plain text downloads only).
+  const rebuiltBlobs = useMemo(() => {
+    const make = (content: string, type: string) =>
+      content ? URL.createObjectURL(new Blob([content], { type })) : null;
+    return {
+      tex: make(portfolio?.rebuilt_tex ?? "", "text/plain"),
+      txt: make(portfolio?.rebuilt_text ?? "", "text/plain"),
+    };
+  }, [portfolio?.rebuilt_tex, portfolio?.rebuilt_text]);
 
   // While a background analysis is running, keep polling until it settles.
   const pending = portfolio?.ai_status === "PENDING" && Boolean(portfolio.public_id);
@@ -336,6 +502,23 @@ export default function PortfolioPage() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       toast.success("Portfolio content saved.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const theme = themeDraft ?? portfolio?.theme ?? { mode: "auto", accent: "#f56d14" };
+
+  const saveTheme = async () => {
+    if (!themeDraft) {
+      toast.success("No changes to save.");
+      return;
+    }
+    try {
+      const updated = await http.patch<Portfolio>("/portfolio/", { theme: themeDraft });
+      queryClient.setQueryData(["portfolio"], updated);
+      setThemeDraft(null);
+      toast.success("Portfolio theme saved.");
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -443,6 +626,115 @@ export default function PortfolioPage() {
     }
   };
 
+  // ----- Resume source (LaTeX) -----
+  const saveSource = async () => {
+    if (sourceDraft == null) {
+      toast.success("No changes to save.");
+      return;
+    }
+    try {
+      const updated = await http.patch<Portfolio>("/portfolio/", { resume_source: sourceDraft });
+      queryClient.setQueryData(["portfolio"], updated);
+      setSourceDraft(null);
+      toast.success("Resume source saved — it will be filled by the AI on the next rebuild.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  // ----- Image designer -----
+  const design = designDraft ?? {
+    images: portfolio?.images ?? [],
+    background: portfolio?.background_image ?? null,
+  };
+
+  const setPlacedImage = (index: number, patch: Partial<PortfolioPlacedImage>) =>
+    setDesignDraft((d) => {
+      const base = d ?? design;
+      return {
+        ...base,
+        images: base.images.map((img, i) => (i === index ? { ...img, ...patch } : img)),
+      };
+    });
+
+  const removePlacedImage = (index: number) =>
+    setDesignDraft((d) => {
+      const base = d ?? design;
+      return { ...base, images: base.images.filter((_, i) => i !== index) };
+    });
+
+  const onPickImage = async (file: File | undefined, kind: "image" | "background") => {
+    if (!file) return;
+    setUploadingImage(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const uploaded = await http.post<{
+        url: string;
+        public_id: string;
+        file_name: string;
+      }>("/portfolio/upload-image/", form);
+      if (kind === "background") {
+        setDesignDraft((d) => ({
+          ...(d ?? design),
+          background: { url: uploaded.url, public_id: uploaded.public_id, opacity: 0.35, darken: 0.55 },
+        }));
+      } else {
+        setDesignDraft((d) => {
+          const base = d ?? design;
+          return {
+            ...base,
+            images: [
+              ...base.images,
+              {
+                url: uploaded.url,
+                public_id: uploaded.public_id,
+                alt: "",
+                x: 50,
+                y: 50,
+                width: 200,
+                height: 200,
+                opacity: 1,
+              },
+            ],
+          };
+        });
+      }
+      toast.success("Image uploaded — drag it into place, then save the design.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const saveDesign = async () => {
+    if (!designDraft) {
+      toast.success("No changes to save.");
+      return;
+    }
+    try {
+      const updated = await http.patch<Portfolio>("/portfolio/", {
+        images: designDraft.images.map((img) => ({
+          url: img.url,
+          public_id: img.public_id,
+          alt: img.alt,
+          x: img.x,
+          y: img.y,
+          width: img.width,
+          height: img.height,
+          opacity: img.opacity,
+        })),
+        background_image: designDraft.background,
+      });
+      queryClient.setQueryData(["portfolio"], updated);
+      setDesignDraft(null);
+      toast.success("Design saved.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -452,8 +744,43 @@ export default function PortfolioPage() {
             ? "Your AI-powered public portfolio — built from your resume. The review is private; the link is public."
             : "Your portfolio, generated from your faculty resume. The review is private; the link is public."
         }
+        actions={
+          portfolio?.slug && portfolio.is_published ? (
+            <Button variant="outline" onClick={() => window.open(`${window.location.origin}${portfolio.public_url}`, "_blank")}>
+              <Globe className="size-4" /> View portfolio
+            </Button>
+          ) : undefined
+        }
       />
 
+      {/* Builder sections: Resume (private) / Portfolio (public) / Design */}
+      <div className="mb-6 flex flex-wrap gap-1 rounded-2xl border bg-muted/40 p-1.5">
+        {(
+          [
+            { key: "resume", label: "Resume", icon: FileText, hint: "private AI review & rebuild" },
+            { key: "portfolio", label: "Portfolio", icon: IdCard, hint: "public content & theme" },
+            { key: "design", label: "Design", icon: ImageIcon, hint: "images & background" },
+          ] as const
+        ).map(({ key, label, icon: Icon, hint }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={cn(
+              "flex flex-1 cursor-pointer flex-col items-center gap-0.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-all sm:flex-row sm:justify-center sm:gap-2",
+              tab === key ? "bg-card text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Icon className="size-4" />
+            <span>{label}</span>
+            <span className="hidden text-[10px] font-normal text-muted-foreground/70 sm:inline">{hint}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* ================= Portfolio (public) tab ================= */}
+      {tab === "portfolio" && (
+        <>
         {/* Publish / share bar */}
         <div className="mb-6 flex flex-col gap-4 rounded-2xl border bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
@@ -493,6 +820,93 @@ export default function PortfolioPage() {
           </div>
         </div>
 
+        {/* Theme - how the public page looks to visitors */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Palette className="size-4.5 text-primary" /> Theme
+            </CardTitle>
+            <CardDescription>
+              How your public portfolio page looks to visitors — pick a light/dark appearance and an accent color.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div>
+              <Label>Appearance</Label>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {(
+                  [
+                    { mode: "auto", label: "Auto", icon: Monitor },
+                    { mode: "light", label: "Light", icon: Sun },
+                    { mode: "dark", label: "Dark", icon: Moon },
+                  ] as const
+                ).map(({ mode, label, icon: Icon }) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setThemeDraft({ ...theme, mode })}
+                    className={cn(
+                      "flex cursor-pointer items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition-all",
+                      theme.mode === mode
+                        ? "border-primary/50 bg-primary/10 text-primary shadow-sm"
+                        : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                    )}
+                  >
+                    <Icon className="size-4" /> {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <Label>Accent color</Label>
+              <div className="mt-2 flex flex-wrap items-center gap-2.5">
+                {SITE_THEMES.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    title={t.label}
+                    aria-label={t.label}
+                    onClick={() => setThemeDraft({ ...theme, accent: t.colors[0].toLowerCase() })}
+                    className={cn(
+                      "size-8 cursor-pointer rounded-full ring-offset-2 ring-offset-background transition-all hover:scale-110",
+                      theme.accent.toLowerCase() === t.colors[0]
+                        ? "ring-2 ring-primary"
+                        : "ring-1 ring-border"
+                    )}
+                    style={{ backgroundColor: t.colors[0] }}
+                  />
+                ))}
+                <label className="flex cursor-pointer items-center gap-2 rounded-full border border-dashed px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground">
+                  <input
+                    type="color"
+                    value={theme.accent}
+                    onChange={(e) => setThemeDraft({ ...theme, accent: e.target.value.toLowerCase() })}
+                    className="size-5 cursor-pointer appearance-none border-0 bg-transparent p-0"
+                    aria-label="Custom accent color"
+                  />
+                  Custom
+                </label>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button onClick={saveTheme} disabled={!themeDraft}>
+                <Check className="size-4" /> Save theme
+              </Button>
+              {themeDraft && (
+                <Button variant="ghost" onClick={() => setThemeDraft(null)}>
+                  Discard
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        </>
+      )}
+
+      {/* ================= Resume (private) tab ================= */}
+      {tab === "resume" && (
+        <>
         {/* Resume upload / management */}
         <Card className="mb-6">
           <CardHeader>
@@ -789,8 +1203,50 @@ export default function PortfolioPage() {
           </CardContent>
         </Card>
 
+        </>
+      )}
+
+      {/* ================= Resume tab (continued) ================= */}
+      {tab === "resume" && isAdmin && (
+        <>
+        {/* Resume source (LaTeX) */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileCode2 className="size-4.5 text-primary" /> Resume source (LaTeX)
+              <Badge variant="outline" className="ml-1 text-[10px]">Optional</Badge>
+            </CardTitle>
+            <CardDescription>
+              Have the LaTeX code of the resume you like? Paste it here — the AI keeps your exact layout and
+              only improves the content when it rebuilds. No code? Leave this empty and the AI generates a
+              clean design for you.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              rows={8}
+              value={sourceDraft ?? portfolio?.resume_source ?? ""}
+              onChange={(e) => setSourceDraft(e.target.value)}
+              placeholder={"%\\documentclass{article}\n\\begin{document}\n% your original LaTeX resume…\n\\end{document}"}
+              className="font-mono text-xs"
+            />
+            <div className="mt-3 flex items-center gap-2">
+              <Button size="sm" onClick={saveSource} disabled={sourceDraft == null}>
+                <Check className="size-4" /> Save source
+              </Button>
+              {sourceDraft != null && (
+                <Button variant="ghost" size="sm" onClick={() => setSourceDraft(null)}>
+                  Discard
+                </Button>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Applied on the next &quot;Rebuild resume with AI&quot; run.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* AI rebuild - a Super Admin premium tool */}
-        {isAdmin && (
           <Card className="mb-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -828,7 +1284,35 @@ export default function PortfolioPage() {
                       rel="noreferrer"
                       className={buttonVariants({ size: "default" })}
                     >
-                      <Download className="size-4" /> Download .docx
+                      <Download className="size-4" /> .docx
+                    </a>
+                  )}
+                  {portfolio.rebuilt_pdf_url && (
+                    <a
+                      href={portfolio.rebuilt_pdf_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={buttonVariants({ size: "default", variant: "outline" })}
+                    >
+                      <Download className="size-4" /> .pdf
+                    </a>
+                  )}
+                  {portfolio.rebuilt_tex && rebuiltBlobs.tex && (
+                    <a
+                      href={rebuiltBlobs.tex}
+                      download={`${slugName(portfolio)}-rebuilt.tex`}
+                      className={buttonVariants({ size: "default", variant: "outline" })}
+                    >
+                      <FileCode2 className="size-4" /> .tex
+                    </a>
+                  )}
+                  {rebuiltBlobs.txt && (
+                    <a
+                      href={rebuiltBlobs.txt}
+                      download={`${slugName(portfolio)}-rebuilt.txt`}
+                      className={buttonVariants({ size: "default", variant: "outline" })}
+                    >
+                      <FileText className="size-4" /> .txt
                     </a>
                   )}
                   <Button
@@ -895,7 +1379,159 @@ export default function PortfolioPage() {
             )}
           </CardContent>
           </Card>
-        )}
+
+        </>
+      )}
+
+      {/* ================= Design tab ================= */}
+      {tab === "design" && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ImageIcon className="size-4.5 text-primary" /> Design studio
+            </CardTitle>
+            <CardDescription>
+              Add images and a background to your public portfolio page. Drag to position, then resize and set
+              transparency — everything is adjustable until it looks right.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Background image */}
+            <div className="rounded-xl border bg-muted/30 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold">Background image</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Fills the whole page behind the content. JPG, PNG, GIF or WebP.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={bgInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      onPickImage(file, "background");
+                      e.target.value = "";
+                    }}
+                  />
+                  <Button variant="outline" size="sm" onClick={() => bgInputRef.current?.click()} disabled={uploadingImage}>
+                    {uploadingImage ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                    {design.background ? "Replace" : "Upload"}
+                  </Button>
+                  {design.background && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive"
+                      onClick={() => setDesignDraft((d) => ({ ...(d ?? design), background: null }))}
+                    >
+                      <Trash2 className="size-4" /> Remove
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {design.background && (
+                <div className="mt-4 space-y-4">
+                  <div
+                    className="h-28 w-full overflow-hidden rounded-xl border bg-cover bg-center"
+                    style={{ backgroundImage: `url(${design.background.url})` }}
+                  />
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <Label>Transparency ({Math.round(design.background.opacity * 100)}%)</Label>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={Math.round(design.background.opacity * 100)}
+                        onChange={(e) => {
+                          const base = designDraft ?? design;
+                          setDesignDraft({ ...base, background: { ...base.background!, opacity: Number(e.target.value) / 100 } });
+                        }}
+                        className="mt-1.5 w-full accent-primary"
+                      />
+                    </div>
+                    <div>
+                      <Label>Darken overlay ({Math.round(design.background.darken * 100)}%)</Label>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={Math.round(design.background.darken * 100)}
+                        onChange={(e) => {
+                          const base = designDraft ?? design;
+                          setDesignDraft({ ...base, background: { ...base.background!, darken: Number(e.target.value) / 100 } });
+                        }}
+                        className="mt-1.5 w-full accent-primary"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Floating images */}
+            <div className="rounded-xl border bg-muted/30 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold">Floating images</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Add photos or logos anywhere on the page — drag the image to move it.
+                  </p>
+                </div>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    onPickImage(file, "image");
+                    e.target.value = "";
+                  }}
+                />
+                <Button variant="outline" size="sm" onClick={() => imageInputRef.current?.click()} disabled={uploadingImage}>
+                  {uploadingImage ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                  Add image
+                </Button>
+              </div>
+
+              {design.images.length === 0 ? (
+                <p className="mt-4 text-sm text-muted-foreground">No images yet — add one to start designing.</p>
+              ) : (
+                <div className="mt-4 space-y-4">
+                  {design.images.map((img, i) => (
+                    <PlacedImageEditor
+                      key={img.public_id || img.url}
+                      image={img}
+                      onChange={(patch) => setPlacedImage(i, patch)}
+                      onRemove={() => removePlacedImage(i)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={saveDesign} disabled={!designDraft}>
+                {designDraft ? <Check className="size-4" /> : <Sparkles className="size-4" />}
+                Save design
+              </Button>
+              {designDraft && (
+                <Button variant="ghost" onClick={() => setDesignDraft(null)}>
+                  Discard
+                </Button>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Position, size and transparency are saved per image and shown exactly like this on the public page.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
         <Separator className="my-6" />
         <p className="pb-4 text-center text-[11px] text-muted-foreground">

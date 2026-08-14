@@ -189,8 +189,8 @@ def upload_document(document_file, folder: str, target_bytes: int | None = None)
     }
 
 
-def _cloudinary_upload(document_file, folder: str) -> dict:
-    """Upload a raw file to Cloudinary, chunked when it is large.
+def _cloudinary_upload(document_file, folder: str, resource_type: str = "raw") -> dict:
+    """Upload a file to Cloudinary, chunked when it is large.
 
     Cloudinary's standard ``upload`` endpoint rejects raw payloads at/over
     10MB ("File size too large. Maximum is 10485760"), so files at or above
@@ -198,7 +198,7 @@ def _cloudinary_upload(document_file, folder: str) -> dict:
     to 100MB+). Smaller files keep the regular single-request upload.
     """
     options = dict(
-        resource_type="raw",
+        resource_type=resource_type,
         folder=folder,
         use_filename=True,
         unique_filename=True,

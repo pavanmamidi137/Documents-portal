@@ -415,6 +415,7 @@ class PortfolioSerializer(serializers.ModelSerializer):
     owner_email = serializers.SerializerMethodField()
     owner_phone = serializers.SerializerMethodField()
     public_url = serializers.SerializerMethodField()
+    theme = serializers.SerializerMethodField()
 
     def get_owner_email(self, obj) -> str:
         return obj.user.email or ""
@@ -422,16 +423,21 @@ class PortfolioSerializer(serializers.ModelSerializer):
     def get_owner_phone(self, obj) -> str:
         return obj.user.phone or ""
 
+    def get_theme(self, obj) -> dict:
+        from .portfolio_services import get_portfolio_theme
+
+        return get_portfolio_theme(obj)
+
     class Meta:
         model = Portfolio
         fields = [
-            "id", "slug", "is_published", "show_contact", "public_url",
+            "id", "slug", "is_published", "show_contact", "public_url", "theme",
             "headline", "about", "skills", "education", "experience", "projects",
-            "custom_sections",
+            "custom_sections", "images", "background_image", "resume_source",
             "file_name", "file_size", "cloudinary_url", "public_id", "is_missing",
             "ai_status", "ai_score", "ai_analysis", "ai_error", "ai_analyzed_at",
             "rebuilt_sections", "rebuilt_text", "rebuilt_file_name",
-            "rebuilt_docx_url", "rebuilt_at",
+            "rebuilt_docx_url", "rebuilt_tex", "rebuilt_pdf_url", "rebuilt_at",
             "rebuilt_ai_status", "rebuilt_ai_score", "rebuilt_ai_analysis",
             "rebuilt_ai_error", "rebuilt_ai_analyzed_at",
             "owner_name", "owner_avatar_url", "owner_email", "owner_phone",
@@ -442,7 +448,7 @@ class PortfolioSerializer(serializers.ModelSerializer):
             "file_name", "file_size", "cloudinary_url", "public_id", "is_missing",
             "ai_status", "ai_score", "ai_analysis", "ai_error", "ai_analyzed_at",
             "rebuilt_sections", "rebuilt_text", "rebuilt_file_name",
-            "rebuilt_docx_url", "rebuilt_at",
+            "rebuilt_docx_url", "rebuilt_tex", "rebuilt_pdf_url", "rebuilt_at",
             "rebuilt_ai_status", "rebuilt_ai_score", "rebuilt_ai_analysis",
             "rebuilt_ai_error", "rebuilt_ai_analyzed_at",
             "owner_name", "owner_avatar_url", "owner_email", "owner_phone",
@@ -467,6 +473,7 @@ class PublicPortfolioSerializer(serializers.ModelSerializer):
     owner_avatar_url = serializers.CharField(source="user.avatar_url", read_only=True)
     owner_email = serializers.SerializerMethodField()
     owner_phone = serializers.SerializerMethodField()
+    theme = serializers.SerializerMethodField()
 
     def get_owner_email(self, obj) -> str:
         return (obj.user.email or "") if obj.show_contact else ""
@@ -474,12 +481,17 @@ class PublicPortfolioSerializer(serializers.ModelSerializer):
     def get_owner_phone(self, obj) -> str:
         return (obj.user.phone or "") if obj.show_contact else ""
 
+    def get_theme(self, obj) -> dict:
+        from .portfolio_services import get_portfolio_theme
+
+        return get_portfolio_theme(obj)
+
     class Meta:
         model = Portfolio
         fields = [
             "owner_name", "owner_avatar_url", "owner_email", "owner_phone",
             "headline", "about", "skills", "education", "experience", "projects",
-            "custom_sections",
+            "custom_sections", "theme", "images", "background_image",
             "updated_at",
         ]
         read_only_fields = fields

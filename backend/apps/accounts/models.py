@@ -325,6 +325,22 @@ class Portfolio(models.Model):
     is_published = models.BooleanField(default=False)
     # Whether email/phone from the admin's profile appear on the public page.
     show_contact = models.BooleanField(default=False)
+    # Public page look: {"mode": "auto" | "light" | "dark", "accent": "#RRGGBB"}.
+    theme = models.JSONField(default=dict, blank=True)
+    # Images the owner places in their portfolio (floating/gallery images):
+    # [{"url", "public_id", "alt", "x", "y", "width", "height", "opacity"}]
+    # where x/y are % positions (center of the image) and width/height are px.
+    images = models.JSONField(default=list, blank=True)
+    # Page background image: {"url", "public_id", "opacity", "darken"} or None.
+    background_image = models.JSONField(null=True, blank=True)
+    # The owner's original resume source code (e.g. LaTeX) - when provided the
+    # AI rebuild keeps this EXACT structure and only improves the content.
+    resume_source = models.TextField(blank=True, default="")
+    # AI-improved LaTeX (from their template when provided, else generated).
+    rebuilt_tex = models.TextField(blank=True, default="")
+    # Rendered PDF of the rebuilt resume (Cloudinary raw file).
+    rebuilt_pdf_url = models.URLField(max_length=500, blank=True, default="")
+    rebuilt_pdf_public_id = models.CharField(max_length=255, blank=True, default="")
 
     # Public portfolio content - auto-generated from the resume by the AI and
     # editable by the admin in the portfolio builder.

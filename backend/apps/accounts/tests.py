@@ -2954,3 +2954,124 @@ class PortfolioTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["owner_name"], "Student")
         self.assertEqual(response.data["headline"], "Student Dev")
+
+    def test_theme_saved_and_returned_publicly(self):
+        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
+        # Defaults fill in when nothing is set.
+        anonymous = APIClient()
+        self.assertEqual(
+            anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data["theme"],
+            {"mode": "auto", "accent": "#f56d14"},
+        )
+        client = self._client(self.admin)
+        response = client.patch(
+            "/api/portfolio/",
+            {"theme": {"mode": "dark", "accent": "#9D4ACC"}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["theme"], {"mode": "dark", "accent": "#9d4acc"}
+        )
+        self.assertEqual(
+            anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data["theme"],
+            {"mode": "dark", "accent": "#9d4acc"},
+        )
+
+    def test_theme_invalid_rejected(self):
+        self._portfolio()
+        client = self._client(self.admin)
+        for bad in ({"mode": "neon", "accent": "#f56d14"}, {"mode": "dark", "accent": "red"}):
+            response = client.patch(
+                "/api/portfolio/", {"theme": bad}, format="json"
+            )
+            self.assertEqual(response.status_code, 400)
+
+    def test_image_upload_and_patch(self):
+        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
+        with patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload:
+            mock_upload.return_value = {
+                "secure_url": "https://res.cloudinary.com/x/photo.jpg",
+                "public_id": "portfolios/admin/images/photo.jpg",
+            }
+            client = self._client(self.admin)
+            upload = client.post(
+                "/api/portfolio/upload-image/",
+                {"file": SimpleUploadedFile("photo.jpg", b"jpg-bytes", content_type="image/jpeg")},
+                format="multipart",
+            )
+        self.assertEqual(upload.status_code, 201)
+        self.assertEqual(upload.data["public_id"], "portfolios/admin/images/photo.jpg")
+
+        response = client.patch(
+            "/api/portfolio/",
+            {
+                "images": [
+                    {
+                        "url": "https://res.cloudinary.com/x/photo.jpg",
+                        "public_id": "portfolios/admin/images/photo.jpg",
+                        "alt": "Profile", "x": 30, "y": 40,
+                        "width": 250, "height": 180, "opacity": 0.8,
+                    }
+                ],
+                "background_image": {
+                    "url": "https://res.cloudinary.com/x/bg.jpg",
+                    "public_id": "bg.jpg", "opacity": 0.3, "darken": 0.5,
+                },
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["images"]), 1)
+        self.assertEqual(response.data["images"][0]["x"], 30)
+        self.assertEqual(response.data["background_image"]["opacity"], 0.3)
+
+        # Visible on the public page.
+        anonymous = APIClient()
+        public = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data
+        self.assertEqual(len(public["images"]), 1)
+        self.assertEqual(public["background_image"]["url"], "https://res.cloudinary.com/x/bg.jpg")
+
+    def test_image_removed_from_storage_on_unlink(self):
+        portfolio = self._portfolio(public_id="resume-pdf")
+        portfolio.images = [{"url": "https://x/old.jpg", "public_id": "old-img"}]
+        portfolio.save()
+        with patch("apps.documents.services.cloudinary.api.delete_resources") as mock_delete:
+            client = self._client(self.admin)
+            response = client.patch(
+                "/api/portfolio/", {"images": []}, format="json"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["images"], [])
+        mock_delete.assert_called_once()
+
+    def test_rebuild_fills_owner_latex_template(self):
+        self._portfolio(public_id="resume-pdf")
+        sections = {"summary": "S", "skills": ["Python"], "experience": "", "projects": "", "education": ""}
+        review = {"score": 88, "summary": "Great", "pros": ["x"], "cons": [], "improvements": [], "skills": [], "ats_keywords": []}
+        client = self._client(self.admin)
+        client.patch(
+            "/api/portfolio/",
+            {"resume_source": "%\\documentclass{article}\n\\begin{document}\nCONTENT\n\\end{document}"},
+            format="json",
+        )
+        with patch(
+            "apps.accounts.portfolio_services._extract_resume_text",
+            return_value=("Python project. SQL.", ""),
+        ), patch(
+            "apps.accounts.portfolio_services.ai_json", side_effect=[sections, review]
+        ), patch(
+            "apps.accounts.portfolio_services.ai_plain_text",
+            return_value="```latex\nFILLED LATEX SOURCE\n```",
+        ), patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload:
+            mock_upload.return_value = {
+                "secure_url": "https://res.cloudinary.com/x/f.pdf",
+                "public_id": "portfolios/admin/f.pdf",
+            }
+            response = client.post("/api/portfolio/rebuild/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["rebuilt_ai_status"], "COMPLETE")
+        # The template fill wins - fences stripped, layout preserved.
+        self.assertEqual(response.data["rebuilt_tex"], "FILLED LATEX SOURCE")
+        self.assertTrue(response.data["rebuilt_pdf_url"])
+        self.assertTrue(response.data["rebuilt_docx_url"])
