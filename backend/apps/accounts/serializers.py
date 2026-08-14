@@ -413,13 +413,15 @@ class PortfolioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Portfolio
         fields = [
-            "id", "resume_source",
+            "id", "resume_source", "rebuild_requirements",
             "file_name", "file_size", "cloudinary_url", "public_id", "is_missing",
             "ai_status", "ai_score", "ai_analysis", "ai_error", "ai_analyzed_at",
             "rebuilt_sections", "rebuilt_text", "rebuilt_file_name",
             "rebuilt_docx_url", "rebuilt_tex", "rebuilt_pdf_url", "rebuilt_at",
             "rebuilt_ai_status", "rebuilt_ai_score", "rebuilt_ai_analysis",
             "rebuilt_ai_error", "rebuilt_ai_analyzed_at",
+            "source_ai_status", "source_ai_score", "source_ai_analysis",
+            "source_ai_error", "source_ai_analyzed_at",
             "owner_name", "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -430,5 +432,7 @@ class PortfolioSerializer(serializers.ModelSerializer):
             "rebuilt_docx_url", "rebuilt_tex", "rebuilt_pdf_url", "rebuilt_at",
             "rebuilt_ai_status", "rebuilt_ai_score", "rebuilt_ai_analysis",
             "rebuilt_ai_error", "rebuilt_ai_analyzed_at",
+            "source_ai_status", "source_ai_score", "source_ai_analysis",
+            "source_ai_error", "source_ai_analyzed_at",
             "owner_name", "created_at", "updated_at",
         ]

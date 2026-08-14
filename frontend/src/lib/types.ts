@@ -290,8 +290,14 @@ export interface ResumeWorkspace {
   rebuilt_ai_analysis: ResumeAiAnalysis | null;
   rebuilt_ai_error: string;
   rebuilt_ai_analyzed_at: string | null;
+  source_ai_status: "PENDING" | "COMPLETE" | "FAILED";
+  source_ai_score: number | null;
+  source_ai_analysis: ResumeAiAnalysis | null;
+  source_ai_error: string;
+  source_ai_analyzed_at: string | null;
   owner_name: string;
   resume_source: string;
+  rebuild_requirements: string;
   created_at: string;
   updated_at: string;
 }

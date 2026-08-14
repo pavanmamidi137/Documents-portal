@@ -405,7 +405,7 @@ def refresh_all_matches(actor=None, limit=None) -> int:
         try:
             match = ai_json(
                 _MATCH_PROMPT.format(resume_brief=_resume_brief(resume)[:4000]),
-                "Score this resume against each drive.", max_tokens=1600,
+                "Score this resume against each drive.", max_tokens=1000,
                 usage_callback=usage,
                 documents=[drives_brief],
                 task="RESUME_ANALYSIS",
@@ -518,14 +518,14 @@ def analyze_resume(resume, actor) -> dict:
             "ai_error": resume.ai_error,
         }
 
-    brief = text.strip()[:_MAX_TEXT_CHARS]
+    brief = text.strip()[:6000]
 
     try:
-        # Generous token budget - the full report (pros/cons/5-8 improvements)
-        # is longer than 2000 tokens and a truncated JSON would surface as an
-        # unreadable report.
+        # Roomy but fast budget - the report (score/summary/pros/cons/5-8
+        # improvements) fits in ~800 tokens; 1500 gives slack without making
+        # the 30B model grind for minutes on output.
         quality = ai_json(
-            _QUALITY_PROMPT, brief, max_tokens=3500, usage_callback=usage,
+            _QUALITY_PROMPT, brief, max_tokens=1500, usage_callback=usage,
             task="RESUME_ANALYSIS",
         )
     except AiError:
@@ -552,7 +552,7 @@ def analyze_resume(resume, actor) -> dict:
             try:
                 match = ai_json(
                     _MATCH_PROMPT.format(resume_brief=brief[:4000]),
-                    "Score this resume against each drive.", max_tokens=2000,
+                    "Score this resume against each drive.", max_tokens=1200,
                     usage_callback=usage,
                     documents=[drives_brief],
                     task="RESUME_ANALYSIS",

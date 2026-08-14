@@ -2810,19 +2810,24 @@ class PortfolioTests(TestCase):
     def test_rebuild_fills_owner_latex_template(self):
         portfolio = self._portfolio(public_id="resume-pdf")
         sections = {"summary": "S", "skills": ["Python"], "experience": "", "projects": "", "education": ""}
+        source_review = {"score": 70, "summary": "OK source", "pros": ["clean"], "cons": ["long"], "improvements": ["trim"], "skills": [], "ats_keywords": []}
         review = {"score": 88, "summary": "Great", "pros": ["x"], "cons": [], "improvements": [], "skills": [], "ats_keywords": []}
         client = self._client(self.admin)
         client.patch(
             "/api/resume-workspace/",
-            {"resume_source": "%\\documentclass{article}\n\\begin{document}\nCONTENT\n\\end{document}"},
+            {
+                "resume_source": "%\\documentclass{article}\n\\begin{document}\nCONTENT\n\\end{document}",
+                "rebuild_requirements": "AWS + Java, 8 LPA",
+            },
             format="json",
         )
         with patch(
             "apps.accounts.portfolio_services._extract_resume_text",
             return_value=("Python project. SQL.", ""),
         ), patch(
-            "apps.accounts.portfolio_services.ai_json", side_effect=[sections, review]
-        ), patch(
+            "apps.accounts.portfolio_services.ai_json",
+            side_effect=[sections, source_review, review],
+        ) as mock_json, patch(
             "apps.accounts.portfolio_services.ai_plain_text",
             return_value="```latex\nFILLED LATEX SOURCE\n```",
         ), patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload, self._inline_threads():
@@ -2838,3 +2843,11 @@ class PortfolioTests(TestCase):
         self.assertEqual(portfolio.rebuilt_tex, "FILLED LATEX SOURCE")
         self.assertTrue(portfolio.rebuilt_pdf_url)
         self.assertTrue(portfolio.rebuilt_docx_url)
+        # The original source code gets its own automatic review + rating.
+        self.assertEqual(portfolio.source_ai_status, "COMPLETE")
+        self.assertEqual(portfolio.source_ai_score, 70)
+        self.assertIsNotNone(portfolio.source_ai_analysis)
+        # The requirements were saved and fed into the AI calls.
+        self.assertEqual(portfolio.rebuild_requirements, "AWS + Java, 8 LPA")
+        user_texts = [c.args[1] for c in mock_json.call_args_list if len(c.args) > 1]
+        self.assertTrue(any("AWS + Java" in t for t in user_texts), "requirements must reach the AI")

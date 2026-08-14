@@ -317,6 +317,18 @@ class Portfolio(models.Model):
     # The owner's original resume source code (e.g. LaTeX) - when provided the
     # AI rebuild keeps this EXACT structure and only improves the content.
     resume_source = models.TextField(blank=True, default="")
+    # Optional target requirements / job description the rebuild tailors toward
+    # (e.g. "AWS + Java, 2027 batch, 8+ LPA package"). Empty = just improve.
+    rebuild_requirements = models.TextField(blank=True, default="")
+    # AI review of the ORIGINAL resume source code (the admin's own LaTeX),
+    # run automatically during the rebuild so both versions get a rating.
+    source_ai_status = models.CharField(
+        max_length=10, choices=AiStatus.choices, default=AiStatus.PENDING
+    )
+    source_ai_score = models.PositiveSmallIntegerField(null=True, blank=True)  # 0-100
+    source_ai_analysis = models.JSONField(null=True, blank=True)
+    source_ai_error = models.CharField(max_length=500, blank=True, default="")
+    source_ai_analyzed_at = models.DateTimeField(null=True, blank=True)
     # AI-improved LaTeX (from their template when provided, else generated).
     rebuilt_tex = models.TextField(blank=True, default="")
     # Rendered PDF of the rebuilt resume (Cloudinary raw file).

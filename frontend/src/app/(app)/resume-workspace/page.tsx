@@ -12,6 +12,7 @@ import {
   FileText,
   FileUp,
   Lightbulb,
+  Target,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -169,7 +170,9 @@ export default function ResumeWorkspacePage() {
   const [rebuilding, setRebuilding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<string | null>(null);
+  const [requirementsDraft, setRequirementsDraft] = useState<string | null>(null);
   const [showTex, setShowTex] = useState(false);
+  const [showOriginalTex, setShowOriginalTex] = useState(false);
   // Nothing runs automatically - these flip on only when the admin clicks the
   // Run AI review / Rebuild buttons, so we know a background job is really
   // in flight and should be polled.
@@ -310,6 +313,23 @@ export default function ResumeWorkspacePage() {
       queryClient.setQueryData(["resume-workspace"], updated);
       setSourceDraft(null);
       toast.success("Resume source saved — it will be used on the next rebuild.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const saveRequirements = async () => {
+    if (requirementsDraft == null) {
+      toast.success("No changes to save.");
+      return;
+    }
+    try {
+      const updated = await http.patch<ResumeWorkspace>("/resume-workspace/", {
+        rebuild_requirements: requirementsDraft,
+      });
+      queryClient.setQueryData(["resume-workspace"], updated);
+      setRequirementsDraft(null);
+      toast.success("Requirements saved — the next rebuild will tailor your resume toward them.");
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -522,6 +542,45 @@ export default function ResumeWorkspacePage() {
         </CardContent>
       </Card>
 
+      {/* Target requirements (optional) */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Target className="size-4.5 text-primary" /> Target requirements
+            <Badge variant="outline" className="ml-1 text-[10px]">Optional</Badge>
+          </CardTitle>
+          <CardDescription>
+            Paste the job description, role or package you are targeting — the AI tailors the rebuild
+            toward it and the reviews rate how well you hit it. Leave empty and the AI simply improves
+            the resume (and still tells you how to raise your ATS score and rating).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="max-w-2xl">
+            <Textarea
+              rows={4}
+              value={requirementsDraft ?? workspace?.rebuild_requirements ?? ""}
+              onChange={(e) => setRequirementsDraft(e.target.value)}
+              placeholder={"e.g. AWS + Java developer, 2027 batch, 8+ LPA, strong DSA\nOr paste the full job description here…"}
+              className="w-full resize-none text-sm"
+            />
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <Button size="sm" onClick={saveRequirements} disabled={requirementsDraft == null}>
+              <Check className="size-4" /> Save requirements
+            </Button>
+            {requirementsDraft != null && (
+              <Button variant="ghost" size="sm" onClick={() => setRequirementsDraft(null)}>
+                Discard
+              </Button>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Used on the next &quot;Rebuild resume with AI&quot; run.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* AI rebuild */}
       <Card className="mb-6">
         <CardHeader>
@@ -584,13 +643,22 @@ export default function ResumeWorkspacePage() {
                     <Download className="size-4" /> .pdf
                   </a>
                 )}
+                {workspace.resume_source && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowOriginalTex((v) => !v)}
+                    aria-expanded={showOriginalTex}
+                  >
+                    <FileCode2 className="size-4" /> {showOriginalTex ? "Hide" : "View"} original .tex
+                  </Button>
+                )}
                 {workspace.rebuilt_tex && (
                   <Button
                     variant="outline"
                     onClick={() => setShowTex((v) => !v)}
                     aria-expanded={showTex}
                   >
-                    <FileCode2 className="size-4" /> {showTex ? "Hide" : "View"} .tex
+                    <FileCode2 className="size-4" /> {showTex ? "Hide" : "View"} rebuilt .tex
                   </Button>
                 )}
                 {workspace.rebuilt_tex && rebuiltBlobs.tex && (
@@ -626,10 +694,21 @@ export default function ResumeWorkspacePage() {
                 </Button>
               </div>
 
+              {showOriginalTex && workspace.resume_source && (
+                <div className="max-w-3xl">
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Your original source (.tex) — submitted code
+                  </p>
+                  <pre className="h-72 w-full overflow-auto rounded-xl border bg-muted/40 p-4 font-mono text-xs leading-relaxed">
+                    {workspace.resume_source}
+                  </pre>
+                </div>
+              )}
+
               {showTex && workspace.rebuilt_tex && (
                 <div className="max-w-3xl">
                   <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Rebuilt source (.tex) — your layout kept, content improved
+                    AI-rebuilt source (.tex) — your layout kept, content improved
                   </p>
                   <pre className="h-72 w-full overflow-auto rounded-xl border bg-muted/40 p-4 font-mono text-xs leading-relaxed">
                     {workspace.rebuilt_tex}
@@ -668,13 +747,38 @@ export default function ResumeWorkspacePage() {
                 </div>
               )}
 
+              {workspace.source_ai_status === "COMPLETE" && workspace.source_ai_analysis && (
+                <div className="rounded-xl border bg-card p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <ScoreChip score={workspace.source_ai_score} />
+                    <div>
+                      <p className="text-sm font-semibold">Review of your original code</p>
+                      <StarRating score={workspace.source_ai_score} />
+                      {workspace.source_ai_analyzed_at && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Reviewed {formatDate(workspace.source_ai_analyzed_at)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <AnalysisBlock analysis={workspace.source_ai_analysis} />
+                  </div>
+                </div>
+              )}
+
               {workspace.rebuilt_ai_status === "COMPLETE" && workspace.rebuilt_ai_analysis && (
                 <div className="rounded-xl border bg-card p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <ScoreChip score={workspace.rebuilt_ai_score} />
                     <div>
-                      <p className="text-sm font-semibold">Review of the rebuilt version</p>
+                      <p className="text-sm font-semibold">Review of the AI-rebuilt version</p>
                       <StarRating score={workspace.rebuilt_ai_score} />
+                      {workspace.rebuilt_ai_analyzed_at && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Reviewed {formatDate(workspace.rebuilt_ai_analyzed_at)}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="mt-4">

@@ -37,9 +37,9 @@ from .models import Portfolio, User
 PORTFOLIO_RESUME_TARGET_BYTES = 500 * 1024
 
 # Resume text is trimmed hard before every AI call - a resume rarely needs
-# more than ~9k chars, and smaller inputs make each generation noticeably
+# more than ~6k chars, and smaller inputs make each generation noticeably
 # faster (the 30B model spends tokens reading the brief).
-_BRIEF_CHARS = 9000
+_BRIEF_CHARS = 6000
 
 _PORTFOLIO_REVIEW_PROMPT = """\
 You are a career advisor reviewing the resume of a college Super Admin / placement head.
@@ -57,6 +57,26 @@ The object must use EXACTLY this schema:
 Be specific and honest. Never invent experience, education or projects that are not in the resume.
 If the resume text is unreadable or empty, still return the JSON with score 0 and a note in summary
 that the text could not be extracted.
+"""
+
+# Auto-review of the owner's ORIGINAL resume source code (their LaTeX). Runs
+# during the rebuild so both versions (original code + AI code) get a rating.
+_SOURCE_CODE_REVIEW_PROMPT = """\
+You are reviewing the LaTeX (or plain-text) SOURCE CODE of a resume - the code itself, not the rendered page.
+The source code is provided. Evaluate it for: clean structure, ATS-friendly layout, correct LaTeX markup,
+and strong content. Return ONLY a single valid JSON object - no markdown, no code fences, no prose before or after.
+The object must use EXACTLY this schema:
+{
+  "score": 0-100 integer (quality of the SOURCE CODE: clean LaTeX, correct structure, ATS-friendly layout, strong content),
+  "summary": "two or three sentences on the source code's overall quality",
+  "pros": ["3-5 short strings - what the source code does WELL"],
+  "cons": ["3-5 short strings - genuine weaknesses in the code or layout"],
+  "improvements": ["5-7 COMPLETE, concrete action items - exactly what to change in the CODE to raise the ATS score and rating, one short sentence each"],
+  "skills": ["every skill/keyword mentioned in the code"],
+  "ats_keywords": ["important ATS keywords for IT/management roles MISSING from this resume"]
+}
+Be specific and honest. Never invent experience, education or projects that are not in the source code.
+If the code is unreadable or empty, still return the JSON with score 0 and a note in summary.
 """
 
 # When the owner pastes their ORIGINAL resume source code (e.g. LaTeX), the
@@ -104,6 +124,11 @@ def _reset_analysis(portfolio: Portfolio, *, rebuilt: bool = True) -> None:
     portfolio.ai_analysis = None
     portfolio.ai_error = ""
     portfolio.ai_analyzed_at = None
+    portfolio.source_ai_status = Portfolio.AiStatus.PENDING
+    portfolio.source_ai_score = None
+    portfolio.source_ai_analysis = None
+    portfolio.source_ai_error = ""
+    portfolio.source_ai_analyzed_at = None
     if rebuilt:
         portfolio.rebuilt_sections = None
         portfolio.rebuilt_text = ""
@@ -263,7 +288,7 @@ def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
     brief = text.strip()[:_BRIEF_CHARS]
     try:
         raw = ai_json(
-            _PORTFOLIO_REVIEW_PROMPT, brief, max_tokens=1500,
+            _PORTFOLIO_REVIEW_PROMPT, brief, max_tokens=800,
             usage_callback=usage, task="RESUME_ANALYSIS",
         )
     except AiError:
@@ -564,9 +589,19 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
         return _portfolio_payload(portfolio)
 
     brief = text.strip()[:_BRIEF_CHARS]
+    # Optional target requirements (job description / package / role) - when
+    # provided the AI tailors the resume toward them and the reviews rate how
+    # well the resume hits them.
+    requirements = (portfolio.rebuild_requirements or "").strip()
+    req_note = ""
+    if requirements:
+        req_note = (
+            "\n\nTARGET REQUIREMENTS the resume must satisfy:\n"
+            + requirements[:_BRIEF_CHARS]
+        )
     try:
         raw = ai_json(
-            _REBUILD_PROMPT, brief, max_tokens=2000,
+            _REBUILD_PROMPT, brief + req_note, max_tokens=1200,
             usage_callback=usage, task="RESUME_ANALYSIS",
         )
     except AiError:
@@ -591,6 +626,25 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
 
     rebuilt_text = _sections_to_text(sections)
 
+    # Auto-review the ORIGINAL source code (the admin's own LaTeX) so the
+    # original version also carries a rating - run whenever a source exists.
+    source_review = None
+    source_score = None
+    if (portfolio.resume_source or "").strip():
+        try:
+            raw_source = ai_json(
+                _SOURCE_CODE_REVIEW_PROMPT,
+                (portfolio.resume_source + req_note)[:_MAX_TEXT_CHARS],
+                max_tokens=800, usage_callback=usage, task="RESUME_ANALYSIS",
+            )
+            source_review = normalize_resume_report(raw_source)
+        except AiError:
+            # The rebuild itself succeeds - a source-review failure just leaves
+            # the original code's review PENDING/empty.
+            source_review = None
+        if source_review:
+            source_score = source_review["score"]
+
     # LaTeX: when the owner pasted their original source code, fill that EXACT
     # template (keeps their original layout - only the content is improved);
     # otherwise generate a clean LaTeX resume from the improved sections.
@@ -603,8 +657,9 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
                     portfolio.resume_source
                     + "\n\nIMPROVEMENT NOTES FROM YOUR ORIGINAL RESUME:\n"
                     + brief
+                    + req_note
                 )[:_MAX_TEXT_CHARS],
-                max_tokens=5000, usage_callback=usage, task="RESUME_ANALYSIS",
+                max_tokens=4000, usage_callback=usage, task="RESUME_ANALYSIS",
             )
             if filled and filled.strip():
                 rebuilt_tex = _strip_latex_fences(filled)[:20000]
@@ -618,8 +673,8 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
     rebuilt_score = None
     try:
         raw_review = ai_json(
-            _PORTFOLIO_REVIEW_PROMPT, rebuilt_text[:_BRIEF_CHARS],
-            max_tokens=1500, usage_callback=usage, task="RESUME_ANALYSIS",
+            _PORTFOLIO_REVIEW_PROMPT, rebuilt_text[:_BRIEF_CHARS] + req_note,
+            max_tokens=800, usage_callback=usage, task="RESUME_ANALYSIS",
         )
         rebuilt_review = normalize_resume_report(raw_review)
     except AiError:
@@ -706,6 +761,18 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
         "The review of the rebuilt resume could not be generated - the rebuild itself succeeded."
     )
     portfolio.rebuilt_ai_analyzed_at = timezone.now()
+    # The original source code's review (run automatically during the rebuild).
+    portfolio.source_ai_status = (
+        Portfolio.AiStatus.COMPLETE
+        if source_review
+        else Portfolio.AiStatus.PENDING
+    )
+    portfolio.source_ai_score = source_score
+    portfolio.source_ai_analysis = source_review
+    portfolio.source_ai_error = "" if source_review else (
+        "The review of your original source code could not be generated - the rebuild itself succeeded."
+    )
+    portfolio.source_ai_analyzed_at = timezone.now()
     commit_usage()
     portfolio.save()
     log_audit(
@@ -748,4 +815,8 @@ def _portfolio_payload(portfolio: Portfolio) -> dict:
         "rebuilt_ai_score": portfolio.rebuilt_ai_score,
         "rebuilt_ai_analysis": portfolio.rebuilt_ai_analysis,
         "rebuilt_ai_error": portfolio.rebuilt_ai_error,
+        "source_ai_status": portfolio.source_ai_status,
+        "source_ai_score": portfolio.source_ai_score,
+        "source_ai_analysis": portfolio.source_ai_analysis,
+        "source_ai_error": portfolio.source_ai_error,
     }

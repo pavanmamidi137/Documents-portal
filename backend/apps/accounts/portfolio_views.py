@@ -49,6 +49,7 @@ class PortfolioView(APIView):
         portfolio = _get_own_portfolio(request.user)
         editable = {
             "resume_source": (lambda v: str(v).strip()[:20000]),
+            "rebuild_requirements": (lambda v: str(v).strip()[:10000]),
         }
         changed: list[str] = []
         for field, clean in editable.items():
