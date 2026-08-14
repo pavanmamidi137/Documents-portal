@@ -174,6 +174,49 @@ def _auto_analyze_in_thread(portfolio_id: int) -> None:
         close_old_connections()
 
 
+def _rebuild_in_thread(portfolio_id: int) -> None:
+    """Run the AI rebuild off the request thread.
+
+    The rebuild makes several sequential LLM calls (rewrite, LaTeX fill, again
+    review) which can take minutes - well past typical proxy/worker request
+    timeouts. Running it in the background and flipping the status to PENDING
+    means the POST returns instantly and the frontend polls until it settles.
+    """
+    from django.db import close_old_connections
+
+    close_old_connections()
+    try:
+        portfolio = Portfolio.objects.select_related("user").filter(pk=portfolio_id).first()
+        if not portfolio or portfolio.is_missing or not portfolio.public_id:
+            return
+        portfolio.rebuilt_ai_status = Portfolio.AiStatus.PENDING
+        portfolio.rebuilt_ai_error = ""
+        portfolio.rebuilt_ai_score = None
+        portfolio.rebuilt_ai_analysis = None
+        portfolio.save(update_fields=[
+            "rebuilt_ai_status", "rebuilt_ai_error", "rebuilt_ai_score",
+            "rebuilt_ai_analysis", "updated_at",
+        ])
+        rebuild_resume(portfolio, portfolio.user)
+    except Exception:
+        # Mark the attempt failed so the frontend stops polling and shows the
+        # error instead of spinning forever.
+        try:
+            portfolio = Portfolio.objects.filter(pk=portfolio_id).first()
+            if portfolio:
+                portfolio.rebuilt_ai_status = Portfolio.AiStatus.FAILED
+                portfolio.rebuilt_ai_error = (
+                    "The rebuild could not be completed. Please try again in a moment."
+                )
+                portfolio.save(update_fields=[
+                    "rebuilt_ai_status", "rebuilt_ai_error", "updated_at",
+                ])
+        except Exception:
+            pass  # never let the background thread crash the app
+    finally:
+        close_old_connections()
+
+
 def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
     """Run the private AI review and store it on the workspace.
 

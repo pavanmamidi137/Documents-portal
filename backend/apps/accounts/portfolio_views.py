@@ -12,6 +12,8 @@ POST   /api/resume-workspace/rebuild/        -> AI rewrite + .docx/.pdf/.tex + a
 DELETE /api/resume-workspace/resume/         -> remove my resume + rebuilt files
 """
 
+import threading
+
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
@@ -23,9 +25,9 @@ from apps.core.utils import log_audit
 
 from .models import Portfolio
 from .portfolio_services import (
-    analyze_portfolio,
+    _auto_analyze_in_thread,
+    _rebuild_in_thread,
     delete_portfolio_resume,
-    rebuild_resume,
     upload_portfolio_resume,
 )
 from .serializers import PortfolioSerializer
@@ -83,40 +85,61 @@ class PortfolioUploadResumeView(APIView):
 
 
 class PortfolioAnalyzeView(APIView):
-    """Run the private AI review of the uploaded resume."""
+    """Start the private AI review of the uploaded resume (runs in background).
+
+    The review is a single LLM call that can take a minute or two - long
+    enough to trip proxy/worker request timeouts. It runs off the request
+    thread with ai_status=PENDING; the frontend polls until it settles.
+    """
 
     permission_classes = [IsSuperAdmin]
     throttle_classes = [AiRateThrottle]
 
     def post(self, request):
-        from apps.placements.ai import AiError
-
         portfolio = _get_own_portfolio(request.user)
         if not portfolio.public_id or portfolio.is_missing:
             raise ValidationError({"detail": "Upload your resume first."})
+        portfolio.ai_status = Portfolio.AiStatus.PENDING
+        portfolio.ai_error = ""
+        portfolio.save(update_fields=["ai_status", "ai_error", "updated_at"])
         try:
-            analyze_portfolio(portfolio, request.user)
-        except AiError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            threading.Thread(
+                target=_auto_analyze_in_thread, args=(portfolio.id,), daemon=True
+            ).start()
+        except Exception:
+            pass  # never fail the request because the thread failed to start
         return Response(PortfolioSerializer(portfolio).data)
 
 
 class PortfolioRebuildView(APIView):
-    """The AI rebuild (.docx/.pdf/.tex) - a Super Admin premium tool."""
+    """Start the AI rebuild (.docx/.pdf/.tex) - runs in the background.
+
+    The rebuild makes several sequential LLM calls and can take minutes, so it
+    runs off the request thread with rebuilt_ai_status=PENDING and the
+    frontend polls until it settles.
+    """
 
     permission_classes = [IsSuperAdmin]
     throttle_classes = [AiRateThrottle]
 
     def post(self, request):
-        from apps.placements.ai import AiError
-
         portfolio = _get_own_portfolio(request.user)
         if not portfolio.public_id or portfolio.is_missing:
             raise ValidationError({"detail": "Upload your resume first."})
+        portfolio.rebuilt_ai_status = Portfolio.AiStatus.PENDING
+        portfolio.rebuilt_ai_error = ""
+        portfolio.rebuilt_ai_score = None
+        portfolio.rebuilt_ai_analysis = None
+        portfolio.save(update_fields=[
+            "rebuilt_ai_status", "rebuilt_ai_error", "rebuilt_ai_score",
+            "rebuilt_ai_analysis", "updated_at",
+        ])
         try:
-            rebuild_resume(portfolio, request.user)
-        except AiError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            threading.Thread(
+                target=_rebuild_in_thread, args=(portfolio.id,), daemon=True
+            ).start()
+        except Exception:
+            pass  # never fail the request because the thread failed to start
         return Response(PortfolioSerializer(portfolio).data)
 
 

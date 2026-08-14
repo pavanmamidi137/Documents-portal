@@ -7,6 +7,7 @@ import {
   Check,
   Copy,
   Download,
+  Eye,
   FileCode2,
   FileText,
   FileUp,
@@ -151,6 +152,7 @@ export default function ResumeWorkspacePage() {
   const [rebuilding, setRebuilding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<string | null>(null);
+  const [showTex, setShowTex] = useState(false);
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -167,8 +169,10 @@ export default function ResumeWorkspacePage() {
     enabled: isAdmin,
   });
 
-  // While a background analysis is running, keep polling until it settles.
-  const pending = workspace?.ai_status === "PENDING" && Boolean(workspace.public_id);
+  // While a background analysis or rebuild is running, keep polling until it settles.
+  const pending =
+    Boolean(workspace?.public_id) &&
+    (workspace?.ai_status === "PENDING" || workspace?.rebuilt_ai_status === "PENDING");
   useEffect(() => {
     if (!pending) return;
     const timer = setInterval(() => queryClient.invalidateQueries({ queryKey: ["resume-workspace"] }), 2500);
@@ -238,7 +242,7 @@ export default function ResumeWorkspacePage() {
       toast.success(
         updated.rebuilt_ai_status === "COMPLETE"
           ? "Rebuilt resume is ready — download it below."
-          : "Rebuild finished."
+          : "Rebuild started — it takes a minute or two, this page updates automatically."
       );
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -436,13 +440,15 @@ export default function ResumeWorkspacePage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Textarea
-            rows={8}
-            value={sourceDraft ?? workspace?.resume_source ?? ""}
-            onChange={(e) => setSourceDraft(e.target.value)}
-            placeholder={"%\\documentclass{article}\n\\begin{document}\n% your original LaTeX resume…\n\\end{document}"}
-            className="font-mono text-xs"
-          />
+          <div className="max-w-2xl">
+            <Textarea
+              rows={12}
+              value={sourceDraft ?? workspace?.resume_source ?? ""}
+              onChange={(e) => setSourceDraft(e.target.value)}
+              placeholder={"%\\documentclass{article}\n\\begin{document}\n% your original LaTeX resume…\n\\end{document}"}
+              className="h-64 w-full resize-none font-mono text-xs"
+            />
+          </div>
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" onClick={saveSource} disabled={sourceDraft == null}>
               <Check className="size-4" /> Save source
@@ -474,6 +480,11 @@ export default function ResumeWorkspacePage() {
         <CardContent>
           {!workspace?.public_id ? (
             <p className="text-sm text-muted-foreground">Upload your resume first, then rebuild it with AI.</p>
+          ) : workspace.rebuilt_ai_status === "PENDING" ? (
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin text-primary" />
+              The AI is rebuilding your resume — this can take a minute or two. This page updates automatically.
+            </div>
           ) : !workspace.rebuilt_sections && workspace.rebuilt_ai_status !== "FAILED" ? (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Sparkles className="size-4 text-primary" />
@@ -490,12 +501,17 @@ export default function ResumeWorkspacePage() {
           ) : (
             <div className="space-y-5">
               <div className="flex flex-wrap items-center gap-2">
+                {workspace.rebuilt_pdf_url && (
+                  <Button variant="default" size="default" onClick={() => window.open(workspace.rebuilt_pdf_url, "_blank")}>
+                    <Eye className="size-4" /> Preview
+                  </Button>
+                )}
                 {workspace.rebuilt_docx_url && (
                   <a
                     href={workspace.rebuilt_docx_url}
                     target="_blank"
                     rel="noreferrer"
-                    className={buttonVariants({ size: "default" })}
+                    className={buttonVariants({ size: "default", variant: "outline" })}
                   >
                     <Download className="size-4" /> .docx
                   </a>
@@ -509,6 +525,15 @@ export default function ResumeWorkspacePage() {
                   >
                     <Download className="size-4" /> .pdf
                   </a>
+                )}
+                {workspace.rebuilt_tex && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowTex((v) => !v)}
+                    aria-expanded={showTex}
+                  >
+                    <FileCode2 className="size-4" /> {showTex ? "Hide" : "View"} .tex
+                  </Button>
                 )}
                 {workspace.rebuilt_tex && rebuiltBlobs.tex && (
                   <a
@@ -542,6 +567,17 @@ export default function ResumeWorkspacePage() {
                   <Copy className="size-4" /> Copy text
                 </Button>
               </div>
+
+              {showTex && workspace.rebuilt_tex && (
+                <div className="max-w-3xl">
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Rebuilt source (.tex) — your layout kept, content improved
+                  </p>
+                  <pre className="h-72 w-full overflow-auto rounded-xl border bg-muted/40 p-4 font-mono text-xs leading-relaxed">
+                    {workspace.rebuilt_tex}
+                  </pre>
+                </div>
+              )}
 
               {workspace.rebuilt_sections && (
                 <div className="space-y-4 rounded-xl border bg-muted/30 p-4">

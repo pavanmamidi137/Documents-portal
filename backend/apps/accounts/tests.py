@@ -2607,6 +2607,26 @@ class PortfolioTests(TestCase):
         portfolio.save()
         return portfolio
 
+    def _inline_threads(self):
+        """Run background threads synchronously so view tests see the result.
+
+        The analyze/rebuild views start the AI work in a background thread and
+        return immediately with a PENDING status; patching Thread to run
+        inline keeps the old synchronous assertions working.
+        """
+        from unittest.mock import patch
+
+        class InlineThread:
+            def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+                self._target = target
+                self._args = args
+                self._kwargs = kwargs or {}
+
+            def start(self):
+                self._target(*self._args, **self._kwargs)
+
+        return patch("apps.accounts.portfolio_views.threading.Thread", InlineThread)
+
     _FULL_REPORT = {
         "score": 82,
         "summary": "Solid resume with strong projects.",
@@ -2675,48 +2695,53 @@ class PortfolioTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_analyze_complete_fills_review(self):
-        self._portfolio(public_id="resume-pdf")
+        portfolio = self._portfolio(public_id="resume-pdf")
         with patch(
             "apps.accounts.portfolio_services._extract_resume_text",
             return_value=("Python project. SQL. Team lead.", ""),
         ), patch(
             "apps.accounts.portfolio_services.ai_json", return_value=self._FULL_REPORT
-        ):
+        ), self._inline_threads():
             client = self._client(self.admin)
             response = client.post("/api/resume-workspace/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["ai_status"], "COMPLETE")
-        self.assertEqual(response.data["ai_score"], 82)
-        self.assertEqual(response.data["ai_analysis"]["skills"], ["Python", "SQL"])
-        self.assertNotIn("headline", response.data)
+        # Async: the POST returns immediately with PENDING; the work settles
+        # in the background (inline here) and lands on the record.
+        self.assertEqual(response.data["ai_status"], "PENDING")
+        portfolio.refresh_from_db()
+        self.assertEqual(portfolio.ai_status, "COMPLETE")
+        self.assertEqual(portfolio.ai_score, 82)
+        self.assertEqual(portfolio.ai_analysis["skills"], ["Python", "SQL"])
 
     def test_analyze_failed_report_no_credits(self):
         from apps.placements.models import AiUsageLog
 
-        self._portfolio(public_id="resume-pdf")
+        portfolio = self._portfolio(public_id="resume-pdf")
         with patch(
             "apps.accounts.portfolio_services._extract_resume_text",
             return_value=("Python", ""),
-        ), patch("apps.accounts.portfolio_services.ai_json", return_value={}):
+        ), patch("apps.accounts.portfolio_services.ai_json", return_value={}), self._inline_threads():
             client = self._client(self.admin)
             response = client.post("/api/resume-workspace/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["ai_status"], "FAILED")
-        self.assertIn("unreadable report", response.data["ai_error"])
+        portfolio.refresh_from_db()
+        self.assertEqual(portfolio.ai_status, "FAILED")
+        self.assertIn("unreadable report", portfolio.ai_error)
         self.assertEqual(AiUsageLog.objects.count(), 0)
 
     def test_analyze_unreadable_file_fails_fast_without_ai_call(self):
         from apps.placements.models import AiUsageLog
 
-        self._portfolio(public_id="resume-pdf")
+        portfolio = self._portfolio(public_id="resume-pdf")
         with patch(
             "apps.accounts.portfolio_services._extract_resume_text",
             return_value=("", "could not download the file"),
-        ), patch("apps.accounts.portfolio_services.ai_json") as mock_ai:
+        ), patch("apps.accounts.portfolio_services.ai_json") as mock_ai, self._inline_threads():
             client = self._client(self.admin)
             response = client.post("/api/resume-workspace/analyze/", {}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["ai_status"], "FAILED")
+        portfolio.refresh_from_db()
+        self.assertEqual(portfolio.ai_status, "FAILED")
         mock_ai.assert_not_called()
         self.assertEqual(AiUsageLog.objects.count(), 0)
 
@@ -2734,13 +2759,13 @@ class PortfolioTests(TestCase):
             "improvements": ["Trim to one page"],
             "skills": ["Python"], "ats_keywords": [],
         }
-        self._portfolio(public_id="resume-pdf")
+        portfolio = self._portfolio(public_id="resume-pdf")
         with patch(
             "apps.accounts.portfolio_services._extract_resume_text",
             return_value=("Python project. SQL. Team lead.", ""),
         ), patch(
             "apps.accounts.portfolio_services.ai_json", side_effect=[rebuild, review]
-        ), patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload:
+        ), patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload, self._inline_threads():
             mock_upload.return_value = {
                 "secure_url": "https://res.cloudinary.com/x/rebuilt.docx",
                 "public_id": "portfolios/admin/rebuilt.docx",
@@ -2748,23 +2773,26 @@ class PortfolioTests(TestCase):
             client = self._client(self.admin)
             response = client.post("/api/resume-workspace/rebuild/", {}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["rebuilt_ai_status"], "COMPLETE")
-        self.assertEqual(response.data["rebuilt_ai_score"], 90)
-        self.assertEqual(response.data["rebuilt_sections"]["skills"], ["Python", "SQL", "Git"])
-        self.assertTrue(response.data["rebuilt_text"])
-        self.assertTrue(response.data["rebuilt_docx_url"])
+        self.assertEqual(response.data["rebuilt_ai_status"], "PENDING")
+        portfolio.refresh_from_db()
+        self.assertEqual(portfolio.rebuilt_ai_status, "COMPLETE")
+        self.assertEqual(portfolio.rebuilt_ai_score, 90)
+        self.assertEqual(portfolio.rebuilt_sections["skills"], ["Python", "SQL", "Git"])
+        self.assertTrue(portfolio.rebuilt_text)
+        self.assertTrue(portfolio.rebuilt_docx_url)
 
     def test_rebuild_failed_report_no_docx(self):
-        self._portfolio(public_id="resume-pdf")
+        portfolio = self._portfolio(public_id="resume-pdf")
         with patch(
             "apps.accounts.portfolio_services._extract_resume_text",
             return_value=("Python", ""),
-        ), patch("apps.accounts.portfolio_services.ai_json", return_value={}):
+        ), patch("apps.accounts.portfolio_services.ai_json", return_value={}), self._inline_threads():
             client = self._client(self.admin)
             response = client.post("/api/resume-workspace/rebuild/", {}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["rebuilt_ai_status"], "FAILED")
-        self.assertFalse(response.data["rebuilt_docx_url"])
+        portfolio.refresh_from_db()
+        self.assertEqual(portfolio.rebuilt_ai_status, "FAILED")
+        self.assertFalse(portfolio.rebuilt_docx_url)
 
     def test_delete_resume_clears_file_and_analysis(self):
         self._portfolio(public_id="resume-pdf")
@@ -2780,7 +2808,7 @@ class PortfolioTests(TestCase):
         self.assertEqual(client.get("/api/resume-workspace/").status_code, 403)
 
     def test_rebuild_fills_owner_latex_template(self):
-        self._portfolio(public_id="resume-pdf")
+        portfolio = self._portfolio(public_id="resume-pdf")
         sections = {"summary": "S", "skills": ["Python"], "experience": "", "projects": "", "education": ""}
         review = {"score": 88, "summary": "Great", "pros": ["x"], "cons": [], "improvements": [], "skills": [], "ats_keywords": []}
         client = self._client(self.admin)
@@ -2797,15 +2825,16 @@ class PortfolioTests(TestCase):
         ), patch(
             "apps.accounts.portfolio_services.ai_plain_text",
             return_value="```latex\nFILLED LATEX SOURCE\n```",
-        ), patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload:
+        ), patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload, self._inline_threads():
             mock_upload.return_value = {
                 "secure_url": "https://res.cloudinary.com/x/f.pdf",
                 "public_id": "portfolios/admin/f.pdf",
             }
             response = client.post("/api/resume-workspace/rebuild/", {}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["rebuilt_ai_status"], "COMPLETE")
+        portfolio.refresh_from_db()
+        self.assertEqual(portfolio.rebuilt_ai_status, "COMPLETE")
         # The template fill wins - fences stripped, layout preserved.
-        self.assertEqual(response.data["rebuilt_tex"], "FILLED LATEX SOURCE")
-        self.assertTrue(response.data["rebuilt_pdf_url"])
-        self.assertTrue(response.data["rebuilt_docx_url"])
+        self.assertEqual(portfolio.rebuilt_tex, "FILLED LATEX SOURCE")
+        self.assertTrue(portfolio.rebuilt_pdf_url)
+        self.assertTrue(portfolio.rebuilt_docx_url)
