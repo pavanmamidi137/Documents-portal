@@ -84,6 +84,9 @@ class User(AbstractBaseUser, PermissionsMixin):
         max_length=10, choices=FacultyAccess.choices,
         default=FacultyAccess.BOTH, blank=True,
     )
+    # Admin grants a student/CR the ability to generate their own portfolio
+    # (built from their resume). Off by default - the Super Admin decides.
+    portfolio_enabled = models.BooleanField(default=False, db_index=True)
     passout_year = models.PositiveSmallIntegerField(
         null=True, blank=True, db_index=True,
         help_text="Batch pass-out year (e.g. 2025) - shown next to every student.",

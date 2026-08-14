@@ -8,6 +8,7 @@ import {
   BrainCircuit,
   Download,
   FileSpreadsheet,
+  IdCard,
   KeyRound,
   ListChecks,
   Loader2,
@@ -276,6 +277,12 @@ export function StudentsPage({ meta, isCr = false }: Props) {
               case "demote":
                 await http.post(`/students/${s.id}/demote/`);
                 break;
+              case "portfolio_grant":
+                await http.patch(`/students/${s.id}/`, { portfolio_enabled: true });
+                break;
+              case "portfolio_revoke":
+                await http.patch(`/students/${s.id}/`, { portfolio_enabled: false });
+                break;
             }
             ok += 1;
           } catch {
@@ -375,6 +382,29 @@ export function StudentsPage({ meta, isCr = false }: Props) {
           {s.role === "CR" ? "CR" : "Student"}
         </Badge>
       ),
+    },
+    {
+      key: "portfolio",
+      header: "Portfolio",
+      cell: (s) =>
+        isAdmin ? (
+          <Switch
+            checked={s.portfolio_enabled}
+            onCheckedChange={(v) =>
+              runAction(
+                () => http.patch(`/students/${s.id}/`, { portfolio_enabled: v }),
+                v
+                  ? `Portfolio access granted to ${s.full_name}.`
+                  : `Portfolio access removed from ${s.full_name}.`
+              )
+            }
+            title="Allow this student to generate their own portfolio"
+          />
+        ) : (
+          <Badge variant={s.portfolio_enabled ? "default" : "outline"} className={s.portfolio_enabled ? "bg-primary/15 text-primary" : ""}>
+            {s.portfolio_enabled ? "Enabled" : "—"}
+          </Badge>
+        ),
     },
     {
       key: "active",
@@ -633,7 +663,12 @@ export function StudentsPage({ meta, isCr = false }: Props) {
               setPendingBulk(action);
             } else {
               setBulkTargets(selected);
-              if (action.type === "activate" || action.type === "deactivate") {
+              if (
+                action.type === "activate" ||
+                action.type === "deactivate" ||
+                action.type === "portfolio_grant" ||
+                action.type === "portfolio_revoke"
+              ) {
                 // Reversible actions run immediately, no confirmation needed.
                 void executeBulk(selected, action).then(clear);
               } else {
@@ -728,6 +763,13 @@ export function StudentsPage({ meta, isCr = false }: Props) {
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => requestBulk({ type: "demote", doneLabel: "demoted to student" })}>
                           <ArrowDownCircle className="size-4 text-orange-500" /> Demote to Student
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => requestBulk({ type: "portfolio_grant", doneLabel: "granted portfolio access" })}>
+                          <IdCard className="size-4 text-primary" /> Grant portfolio access
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => requestBulk({ type: "portfolio_revoke", doneLabel: "lost portfolio access" })}>
+                          <IdCard className="size-4 text-orange-500" /> Revoke portfolio access
                         </DropdownMenuItem>
                       </>
                     )}
@@ -1066,7 +1108,15 @@ function AiAccessDialog({
 }
 
 type BulkAction = {
-  type: "delete" | "reset_password" | "activate" | "deactivate" | "promote" | "demote";
+  type:
+    | "delete"
+    | "reset_password"
+    | "activate"
+    | "deactivate"
+    | "promote"
+    | "demote"
+    | "portfolio_grant"
+    | "portfolio_revoke";
   doneLabel: string;
 };
 
@@ -1077,6 +1127,8 @@ const FAILURE_LABELS: Record<BulkAction["type"], string> = {
   deactivate: "deactivate",
   promote: "promote",
   demote: "demote",
+  portfolio_grant: "grant portfolio access to",
+  portfolio_revoke: "revoke portfolio access from",
 };
 
 function bulkConfirmTitle(action: BulkAction | null, count: number): string {
@@ -1089,6 +1141,10 @@ function bulkConfirmTitle(action: BulkAction | null, count: number): string {
       return `Promote ${count} student${count === 1 ? "" : "s"} to CR?`;
     case "demote":
       return `Demote ${count} student${count === 1 ? "" : "s"}?`;
+    case "portfolio_grant":
+      return `Grant portfolio access to ${count} student${count === 1 ? "" : "s"}?`;
+    case "portfolio_revoke":
+      return `Revoke portfolio access from ${count} student${count === 1 ? "" : "s"}?`;
     default:
       return "Continue?";
   }
@@ -1104,6 +1160,10 @@ function bulkConfirmDescription(action: BulkAction | null): string {
       return "Selected students become CRs and can manage their assigned section. They need a branch and section assigned.";
     case "demote":
       return "Selected CRs become regular students again.";
+    case "portfolio_grant":
+      return "Selected students can generate their own AI portfolio from their resume and publish a public link.";
+    case "portfolio_revoke":
+      return "Selected students lose access to the portfolio builder and any published links become unavailable.";
     default:
       return "";
   }

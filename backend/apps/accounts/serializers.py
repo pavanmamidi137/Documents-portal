@@ -22,7 +22,7 @@ class UserSerializer(serializers.ModelSerializer):
             "role", "role_label", "faculty_access", "faculty_access_label",
             "branch", "branch_name", "branch_code", "section", "section_name",
             "is_active", "is_staff", "is_super_admin", "is_cr", "is_faculty",
-            "is_student", "profile_completion", "date_joined",
+            "is_student", "portfolio_enabled", "profile_completion", "date_joined",
         ]
         read_only_fields = ["id", "date_joined", "is_staff", "profile_completion"]
 
@@ -228,7 +228,7 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "full_name", "email", "phone", "gender", "passout_year",
-            "branch", "section", "is_active",
+            "branch", "section", "is_active", "portfolio_enabled",
         ]
         read_only_fields = ["id", "role"]
 
@@ -241,10 +241,12 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
         user = self.context["request"].user
         if user.is_cr:
             # CR cannot move students across branches/sections, and cannot
-            # activate/deactivate them (reserved for the Super Admin).
+            # activate/deactivate them or grant portfolio access (both are
+            # reserved for the Super Admin).
             attrs.pop("branch", None)
             attrs.pop("section", None)
             attrs.pop("is_active", None)
+            attrs.pop("portfolio_enabled", None)
         return attrs
 
 

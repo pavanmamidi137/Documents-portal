@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from apps.college.models import Branch, Section
 
-from .models import Resume, User
+from .models import Portfolio, Resume, User
 from . import services
 
 
@@ -2869,3 +2869,88 @@ class PortfolioTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_admin_toggles_student_portfolio_enabled(self):
+        client = self._client(self.admin)
+        response = client.patch(
+            f"/api/students/{self.student.id}/",
+            {"portfolio_enabled": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["portfolio_enabled"])
+        self.student.refresh_from_db()
+        self.assertTrue(self.student.portfolio_enabled)
+
+    def test_cr_cannot_grant_portfolio(self):
+        cr = User.objects.create_user(
+            roll_number="21CSE02", password="x", full_name="CR", role=User.Role.CR
+        )
+        client = self._client(cr)
+        response = client.patch(
+            f"/api/students/{self.student.id}/",
+            {"portfolio_enabled": True},
+            format="json",
+        )
+        self.student.refresh_from_db()
+        self.assertFalse(self.student.portfolio_enabled)
+        self.assertEqual(response.status_code, 200)
+
+    def test_student_without_permission_forbidden(self):
+        client = self._client(self.student)
+        self.assertEqual(client.get("/api/portfolio/").status_code, 403)
+
+    def test_student_with_permission_generates_from_resume(self):
+        from .models import Resume
+
+        self.student.portfolio_enabled = True
+        self.student.save()
+        Resume.objects.create(
+            student=self.student, file_name="resume.pdf", file_size=10,
+            cloudinary_url="https://example.com/r.pdf", public_id="resumes/it/a/r.pdf",
+        )
+        with patch(
+            "apps.accounts.portfolio_services._extract_resume_text",
+            return_value=("Python project. SQL. Team lead.", ""),
+        ), patch(
+            "apps.accounts.portfolio_services.ai_json", return_value=self._FULL_REPORT
+        ):
+            client = self._client(self.student)
+            response = client.post("/api/portfolio/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["ai_status"], "COMPLETE")
+        self.assertEqual(response.data["file_name"], "resume.pdf")
+        self.assertEqual(response.data["headline"], "Placement Head & Engineer")
+
+    def test_student_without_resume_cannot_generate(self):
+        self.student.portfolio_enabled = True
+        self.student.save()
+        client = self._client(self.student)
+        response = client.post("/api/portfolio/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("upload one from your resume page", response.data["detail"])
+
+    def test_student_cannot_upload_portfolio_resume(self):
+        self.student.portfolio_enabled = True
+        self.student.save()
+        client = self._client(self.student)
+        response = client.post(
+            "/api/portfolio/upload-resume/",
+            {"file": self._resume_file()},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_student_portfolio_public_when_published(self):
+        self.student.portfolio_enabled = True
+        self.student.save()
+        portfolio, _ = Portfolio.objects.get_or_create(user=self.student)
+        portfolio.slug = "student-portfolio-abc"
+        portfolio.is_published = True
+        portfolio.headline = "Student Dev"
+        portfolio.save()
+        anonymous = APIClient()
+        response = anonymous.get("/api/portfolio/public/student-portfolio-abc/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["owner_name"], "Student")
+        self.assertEqual(response.data["headline"], "Student Dev")

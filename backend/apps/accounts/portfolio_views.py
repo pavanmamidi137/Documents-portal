@@ -15,9 +15,9 @@ DELETE /api/portfolio/resume/          -> remove my resume + rebuilt .docx
 GET    /api/portfolio/public/<slug>/   -> public portfolio (no auth)
 """
 
-from rest_framework import status
+from rest_framework import permissions, status
 from rest_framework.exceptions import NotFound, ValidationError
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -31,9 +31,22 @@ from .portfolio_services import (
     delete_portfolio_resume,
     generate_portfolio_slug,
     rebuild_resume,
+    sync_portfolio_resume_ref,
     upload_portfolio_resume,
 )
 from .serializers import PortfolioSerializer, PublicPortfolioSerializer
+
+
+class IsSuperAdminOrPortfolioEnabled(permissions.BasePermission):
+    """Super Admin, or a student/CR the admin granted portfolio access to."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        return user.is_super_admin or (
+            user.is_student_or_cr and bool(user.portfolio_enabled)
+        )
 
 
 def _get_own_portfolio(user) -> Portfolio:
@@ -42,11 +55,15 @@ def _get_own_portfolio(user) -> Portfolio:
     if not portfolio.slug:
         portfolio.slug = generate_portfolio_slug(user)
         portfolio.save(update_fields=["slug", "updated_at"])
+    # For students/CRs the resume lives on their Resume record - mirror the
+    # latest file refs so the builder shows it (analysis is untouched).
+    if not user.is_super_admin:
+        sync_portfolio_resume_ref(portfolio, user)
     return portfolio
 
 
 class PortfolioView(APIView):
-    permission_classes = [IsSuperAdmin]
+    permission_classes = [IsSuperAdminOrPortfolioEnabled]
 
     def get(self, request):
         return Response(PortfolioSerializer(_get_own_portfolio(request.user)).data)
@@ -100,6 +117,8 @@ class PortfolioView(APIView):
 
 
 class PortfolioUploadResumeView(APIView):
+    """Super Admin only - students build from the resume they already uploaded."""
+
     permission_classes = [IsSuperAdmin]
 
     def post(self, request):
@@ -113,13 +132,24 @@ class PortfolioUploadResumeView(APIView):
 
 
 class PortfolioAnalyzeView(APIView):
-    permission_classes = [IsSuperAdmin]
+    """Run the AI review + portfolio generation.
+
+    Super Admin: analyses the resume they uploaded to the portfolio. Student:
+    syncs their latest faculty resume and generates the portfolio from it.
+    """
+
+    permission_classes = [IsSuperAdminOrPortfolioEnabled]
     throttle_classes = [AiRateThrottle]
 
     def post(self, request):
         from apps.placements.ai import AiError
 
         portfolio = _get_own_portfolio(request.user)
+        if not request.user.is_super_admin:
+            if not sync_portfolio_resume_ref(portfolio, request.user):
+                raise ValidationError({
+                    "detail": "You don't have a resume yet - upload one from your resume page first."
+                })
         if not portfolio.public_id or portfolio.is_missing:
             raise ValidationError({"detail": "Upload your resume first."})
         try:
@@ -130,6 +160,8 @@ class PortfolioAnalyzeView(APIView):
 
 
 class PortfolioRebuildView(APIView):
+    """Super Admin only - the AI rebuild + .docx is a Super Admin premium tool."""
+
     permission_classes = [IsSuperAdmin]
     throttle_classes = [AiRateThrottle]
 
@@ -158,7 +190,7 @@ class PortfolioResumeDeleteView(APIView):
 
 
 class PortfolioRegenerateSlugView(APIView):
-    permission_classes = [IsSuperAdmin]
+    permission_classes = [IsSuperAdminOrPortfolioEnabled]
 
     def post(self, request):
         portfolio = _get_own_portfolio(request.user)

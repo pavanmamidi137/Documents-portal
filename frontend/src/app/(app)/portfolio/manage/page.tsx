@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Reorder, useDragControls } from "framer-motion";
 import {
   BrainCircuit,
   Check,
@@ -10,6 +11,7 @@ import {
   FileText,
   FileUp,
   Globe,
+  GripVertical,
   IdCard,
   Lightbulb,
   ListChecks,
@@ -27,8 +29,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { RoleGuard } from "@/components/role-guard";
 import { PageHeader } from "@/components/layout/page-header";
+import { useAuth } from "@/lib/auth";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { EmptyState } from "@/components/empty-state";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -143,6 +147,63 @@ function ScoreChip({ score }: { score: number | null }) {
   );
 }
 
+/** A custom section with a client-side id for stable reorder keys. */
+type SectionDraft = PortfolioSection & { id: string };
+
+function CustomSectionRow({
+  section,
+  onEdit,
+  onRemove,
+}: {
+  section: SectionDraft;
+  onEdit: (id: string, field: "title" | "content", value: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item
+      value={section}
+      dragListener={false}
+      dragControls={controls}
+      className="rounded-xl border bg-muted/30 p-4"
+    >
+      <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onPointerDown={(e) => controls.start(e)}
+          className="mt-3 cursor-grab touch-none rounded-md p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground active:cursor-grabbing"
+          aria-label={`Drag to reorder ${section.title || "this section"}`}
+          title="Drag to reorder"
+        >
+          <GripVertical className="size-4" />
+        </button>
+        <div className="min-w-0 flex-1 space-y-3">
+          <Input
+            value={section.title}
+            onChange={(e) => onEdit(section.id, "title", e.target.value)}
+            placeholder="Section title (e.g. Awards, Certifications)"
+          />
+          <Textarea
+            rows={3}
+            value={section.content}
+            onChange={(e) => onEdit(section.id, "content", e.target.value)}
+            placeholder="Content for this section…"
+          />
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-destructive"
+          onClick={() => onRemove(section.id)}
+          aria-label={`Remove ${section.title || "this section"}`}
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      </div>
+    </Reorder.Item>
+  );
+}
+
 export default function PortfolioPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -158,13 +219,33 @@ export default function PortfolioPage() {
     education: string;
     experience: string;
     projects: string;
-    customSections: PortfolioSection[];
+    customSections: SectionDraft[];
   } | null>(null);
+
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const isAdmin = user?.is_super_admin ?? false;
+  const canManage = Boolean(user && (user.is_super_admin || user.portfolio_enabled));
+
+  // The builder is for the Super Admin or students the admin granted access.
+  // The entry point is the profile page (never in the sidebar), so anyone
+  // landing here directly without access is sent back to the dashboard.
+  useEffect(() => {
+    if (!authLoading && user && !canManage) router.replace("/dashboard");
+  }, [authLoading, user, canManage, router]);
 
   const { data: portfolio, isLoading } = useQuery({
     queryKey: ["portfolio"],
     queryFn: () => http.get<Portfolio>("/portfolio/"),
+    enabled: canManage,
   });
+
+  // Stable client-side ids for the reorderable custom sections. Ids are
+  // stripped when saving - the backend only stores {title, content}.
+  const serverSections = useMemo(
+    () => (portfolio?.custom_sections ?? []).map((s, i) => ({ ...s, id: `sec-${i}` })),
+    [portfolio?.custom_sections]
+  );
 
   // While a background analysis is running, keep polling until it settles.
   const pending = portfolio?.ai_status === "PENDING" && Boolean(portfolio.public_id);
@@ -174,6 +255,14 @@ export default function PortfolioPage() {
     return () => clearInterval(timer);
   }, [pending, queryClient]);
 
+  if (authLoading || !user) {
+    return (
+      <div className="flex h-[60vh] items-center justify-center">
+        <Loader2 className="size-7 animate-spin text-primary" />
+      </div>
+    );
+  }
+  if (!canManage) return null;
   if (isLoading) {
     return (
       <div className="flex h-[60vh] items-center justify-center">
@@ -189,32 +278,40 @@ export default function PortfolioPage() {
     education: portfolio?.education ?? "",
     experience: portfolio?.experience ?? "",
     projects: portfolio?.projects ?? "",
-    customSections: portfolio?.custom_sections ?? [],
+    customSections: serverSections,
   };
 
   const setField = (key: keyof typeof current, value: string) =>
     setDraft((d) => ({ ...(d ?? current), [key]: value }));
 
-  const setCustomSection = (index: number, field: "title" | "content", value: string) =>
+  const setCustomSection = (id: string, field: "title" | "content", value: string) =>
     setDraft((d) => {
       const base = d ?? current;
-      const sections = (base.customSections ?? []).map((s, i) =>
-        i === index ? { ...s, [field]: value } : s
-      );
-      return { ...base, customSections: sections };
+      return {
+        ...base,
+        customSections: base.customSections.map((s) =>
+          s.id === id ? { ...s, [field]: value } : s
+        ),
+      };
     });
 
-  const addCustomSection = () =>
+  const addCustomSection = () => {
+    // Generated here (event handler) so the id is stable for the updater.
+    const id = `new-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setDraft((d) => {
       const base = d ?? current;
-      return { ...base, customSections: [...(base.customSections ?? []), { title: "", content: "" }] };
+      return { ...base, customSections: [...base.customSections, { id, title: "", content: "" }] };
+    });
+  };
+
+  const removeCustomSection = (id: string) =>
+    setDraft((d) => {
+      const base = d ?? current;
+      return { ...base, customSections: base.customSections.filter((s) => s.id !== id) };
     });
 
-  const removeCustomSection = (index: number) =>
-    setDraft((d) => {
-      const base = d ?? current;
-      return { ...base, customSections: (base.customSections ?? []).filter((_, i) => i !== index) };
-    });
+  const reorderCustomSections = (next: SectionDraft[]) =>
+    setDraft((d) => ({ ...(d ?? current), customSections: next }));
 
   const saveContent = async () => {
     if (!draft) {
@@ -347,12 +444,15 @@ export default function PortfolioPage() {
   };
 
   return (
-    <RoleGuard roles={["SUPER_ADMIN"]}>
-      <div>
-        <PageHeader
-          title="Portfolio Builder"
-          description="Your AI-powered public portfolio — built from your resume. The review is private; the link is public."
-        />
+    <div>
+      <PageHeader
+        title="Portfolio Builder"
+        description={
+          isAdmin
+            ? "Your AI-powered public portfolio — built from your resume. The review is private; the link is public."
+            : "Your portfolio, generated from your faculty resume. The review is private; the link is public."
+        }
+      />
 
         {/* Publish / share bar */}
         <div className="mb-6 flex flex-col gap-4 rounded-2xl border bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
@@ -406,17 +506,32 @@ export default function PortfolioPage() {
           </CardHeader>
           <CardContent>
             {!portfolio?.public_id ? (
-              <EmptyState
-                icon={FileUp}
-                title="No resume uploaded yet"
-                description="Upload your resume and the AI will review it and build your portfolio automatically."
-                action={
-                  <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-                    {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                    Upload resume
-                  </Button>
-                }
-              />
+              isAdmin ? (
+                <EmptyState
+                  icon={FileUp}
+                  title="No resume uploaded yet"
+                  description="Upload your resume and the AI will review it and build your portfolio automatically."
+                  action={
+                    <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                      {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                      Upload resume
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon={FileUp}
+                  title="Upload a resume first"
+                  description="Your portfolio is built from the resume you upload for faculty. Add one from your resume page, then come back and generate."
+                  action={
+                    <Link href="/resume">
+                      <Button>
+                        <FileUp className="size-4" /> Go to my resume
+                      </Button>
+                    </Link>
+                  }
+                />
+              )
             ) : (
               <div className="space-y-4">
                 <div className="flex flex-col gap-3 rounded-xl border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -427,7 +542,7 @@ export default function PortfolioPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{portfolio.file_name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {formatBytes(portfolio.file_size)} · uploaded file
+                        {formatBytes(portfolio.file_size)} · {isAdmin ? "uploaded file" : "from your faculty resume"}
                       </p>
                     </div>
                   </div>
@@ -450,38 +565,50 @@ export default function PortfolioPage() {
                     <Button variant="outline" size="sm" onClick={() => window.open(portfolio.cloudinary_url, "_blank")}>
                       Preview
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-                      {uploading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-                      Replace
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDelete(true)}>
-                      <Trash2 className="size-4" /> Remove
-                    </Button>
+                    {isAdmin && (
+                      <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                        {uploading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                        Replace
+                      </Button>
+                    )}
+                    {isAdmin && (
+                      <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDelete(true)}>
+                        <Trash2 className="size-4" /> Remove
+                      </Button>
+                    )}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button onClick={runAnalysis} disabled={analyzing || pending}>
                     {analyzing || pending ? <Loader2 className="size-4 animate-spin" /> : <BrainCircuit className="size-4" />}
-                    Run AI review
+                    {isAdmin
+                      ? "Run AI review"
+                      : portfolio.ai_status === "COMPLETE"
+                        ? "Regenerate portfolio"
+                        : "Generate my portfolio"}
                   </Button>
-                  <Button variant="outline" onClick={runRebuild} disabled={rebuilding || !portfolio.public_id}>
-                    {rebuilding ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
-                    Rebuild resume with AI
-                  </Button>
+                  {isAdmin && (
+                    <Button variant="outline" onClick={runRebuild} disabled={rebuilding || !portfolio.public_id}>
+                      {rebuilding ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
+                      Rebuild resume with AI
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={ACCEPTED}
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                onPickFile(file);
-                e.target.value = "";
-              }}
-            />
+            {isAdmin && (
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED}
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  onPickFile(file);
+                  e.target.value = "";
+                }}
+              />
+            )}
           </CardContent>
         </Card>
 
@@ -498,7 +625,11 @@ export default function PortfolioPage() {
           </CardHeader>
           <CardContent>
             {!portfolio?.public_id ? (
-              <p className="text-sm text-muted-foreground">Upload your resume to get an AI review.</p>
+              <p className="text-sm text-muted-foreground">
+                {isAdmin
+                  ? "Upload your resume to get an AI review."
+                  : "Generate your portfolio to get an AI review of your resume."}
+              </p>
             ) : portfolio.ai_status === "PENDING" ? (
               <div className="flex items-center gap-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin text-primary" />
@@ -620,36 +751,23 @@ export default function PortfolioPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {(current.customSections ?? []).map((section, index) => (
-                <div key={index} className="rounded-xl border bg-muted/30 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="min-w-0 flex-1 space-y-3">
-                      <Input
-                        value={section.title}
-                        onChange={(e) => setCustomSection(index, "title", e.target.value)}
-                        placeholder="Section title (e.g. Awards, Certifications)"
-                      />
-                      <Textarea
-                        rows={3}
-                        value={section.content}
-                        onChange={(e) => setCustomSection(index, "content", e.target.value)}
-                        placeholder="Content for this section…"
-                      />
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      onClick={() => removeCustomSection(index)}
-                      aria-label={`Remove section ${index + 1}`}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-              <div className="flex flex-wrap items-center gap-2">
+            <div>
+              <Reorder.Group
+                axis="y"
+                values={current.customSections}
+                onReorder={reorderCustomSections}
+                className="space-y-4"
+              >
+                {current.customSections.map((section) => (
+                  <CustomSectionRow
+                    key={section.id}
+                    section={section}
+                    onEdit={setCustomSection}
+                    onRemove={removeCustomSection}
+                  />
+                ))}
+              </Reorder.Group>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
                 <Button variant="outline" size="sm" onClick={addCustomSection}>
                   <Plus className="size-4" /> Add section
                 </Button>
@@ -664,17 +782,19 @@ export default function PortfolioPage() {
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Empty sections are skipped automatically. Up to 10 custom sections.
+                Drag the ⠿ handle to reorder — sections appear in this order on the public
+                page. Empty sections are skipped automatically; up to 10 allowed.
               </p>
             </div>
           </CardContent>
         </Card>
 
-        {/* AI rebuild */}
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Wand2 className="size-4.5 text-primary" /> AI-rebuilt resume
+        {/* AI rebuild - a Super Admin premium tool */}
+        {isAdmin && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Wand2 className="size-4.5 text-primary" /> AI-rebuilt resume
               <Badge variant="outline" className="ml-1 text-[10px]">Private</Badge>
             </CardTitle>
             <CardDescription>
@@ -774,23 +894,26 @@ export default function PortfolioPage() {
               </div>
             )}
           </CardContent>
-        </Card>
+          </Card>
+        )}
 
         <Separator className="my-6" />
         <p className="pb-4 text-center text-[11px] text-muted-foreground">
-          Your resume, the AI review and the rebuilt version are private to you — visitors on the public link
-          only ever see the portfolio content above.
+          {isAdmin
+            ? "Your resume, the AI review and the rebuilt version are private to you — visitors on the public link only ever see the portfolio content above."
+            : "Your resume and the AI review are private — visitors on the public link only ever see the portfolio content above."}
         </p>
 
-        <ConfirmDialog
-          open={confirmDelete}
-          onOpenChange={setConfirmDelete}
-          title="Remove resume?"
-          description="Your resume and all its AI reviews will be deleted. The public portfolio link stays, but with empty content."
-          confirmLabel="Remove resume"
-          onConfirm={deleteResume}
-        />
+        {isAdmin && (
+          <ConfirmDialog
+            open={confirmDelete}
+            onOpenChange={setConfirmDelete}
+            title="Remove resume?"
+            description="Your resume and all its AI reviews will be deleted. The public portfolio link stays, but with empty content."
+            confirmLabel="Remove resume"
+            onConfirm={deleteResume}
+          />
+        )}
       </div>
-    </RoleGuard>
   );
 }

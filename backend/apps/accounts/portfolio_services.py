@@ -96,6 +96,37 @@ def portfolio_folder(portfolio: Portfolio) -> str:
     return f"portfolios/{text_utils.slugify(portfolio.user.roll_number) or 'admin'}"
 
 
+def sync_portfolio_resume_ref(portfolio: Portfolio, student: User) -> bool:
+    """Point a student's portfolio at their latest Resume file (no AI involved).
+
+    A student's portfolio is built from the resume they already uploaded for
+    faculty - there is no separate portfolio upload. This copies the file
+    references over so the analysis pipeline (extraction/OCR/review) reads the
+    right file. Returns True when a usable resume exists, False when the
+    student has no resume yet. AI fields are left untouched.
+    """
+    from .models import Resume
+
+    resume = (
+        Resume.objects.filter(student=student)
+        .exclude(is_missing=True)
+        .order_by("-updated_at")
+        .first()
+    )
+    if not resume or not resume.public_id:
+        return False
+    portfolio.file_name = resume.file_name
+    portfolio.file_size = resume.file_size
+    portfolio.cloudinary_url = resume.cloudinary_url
+    portfolio.public_id = resume.public_id
+    portfolio.is_missing = False
+    portfolio.save(update_fields=[
+        "file_name", "file_size", "cloudinary_url", "public_id", "is_missing",
+        "updated_at",
+    ])
+    return True
+
+
 def _reset_analysis(portfolio: Portfolio, *, rebuilt: bool = True) -> None:
     """Clear every AI/cache field (used when a new file replaces the old one)."""
     portfolio.ai_status = Portfolio.AiStatus.PENDING

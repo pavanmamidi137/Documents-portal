@@ -29,6 +29,8 @@ export interface User {
   is_cr: boolean;
   is_faculty: boolean;
   is_student: boolean;
+  /** Admin granted this student/CR the ability to build a portfolio. */
+  portfolio_enabled: boolean;
   profile_completion: number;
   date_joined: string;
 }
