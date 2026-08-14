@@ -11,6 +11,7 @@ import {
   CalendarDays,
   Camera,
   GraduationCap,
+  IdCard,
   Keyboard,
   KeyRound,
   Loader2,
@@ -790,6 +791,33 @@ export default function ProfilePage() {
       {user.is_super_admin && (
         <div className="mb-6">
           <ThemePickerCard />
+        </div>
+      )}
+
+      {/* Super Admin portfolio - the ONLY entry point for the portfolio
+          builder (deliberately not in the sidebar or dashboard). */}
+      {user.is_super_admin && (
+        <div className="mb-6 rounded-2xl border bg-card p-5 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <IdCard className="size-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">My Portfolio</p>
+                <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
+                  Your AI-powered public portfolio, built from your resume. Your resume and its
+                  private AI review are only visible to you — the shared link works for anyone,
+                  logged in or not.
+                </p>
+              </div>
+            </div>
+            <Link href="/admin/portfolio">
+              <Button>
+                <IdCard className="size-4" /> Manage portfolio
+              </Button>
+            </Link>
+          </div>
         </div>
       )}
 

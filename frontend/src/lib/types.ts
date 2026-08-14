@@ -258,6 +258,84 @@ export interface Resume {
   updated_at: string;
 }
 
+export interface PortfolioAnalysis extends ResumeAiAnalysis {
+  headline?: string;
+  about?: string;
+  education?: string;
+  experience?: string;
+  projects?: string;
+}
+
+export interface RebuiltSections {
+  summary: string;
+  skills: string[];
+  experience: string;
+  projects: string;
+  education: string;
+}
+
+/** A custom, admin-added portfolio section ({title, content}, ordered). */
+export interface PortfolioSection {
+  title: string;
+  content: string;
+}
+
+export interface Portfolio {
+  id: number;
+  slug: string;
+  is_published: boolean;
+  show_contact: boolean;
+  public_url: string;
+  headline: string;
+  about: string;
+  skills: string[];
+  education: string;
+  experience: string;
+  projects: string;
+  custom_sections: PortfolioSection[];
+  file_name: string;
+  file_size: number;
+  cloudinary_url: string;
+  public_id: string;
+  is_missing: boolean;
+  ai_status: "PENDING" | "COMPLETE" | "FAILED";
+  ai_score: number | null;
+  ai_analysis: PortfolioAnalysis | null;
+  ai_error: string;
+  ai_analyzed_at: string | null;
+  rebuilt_sections: RebuiltSections | null;
+  rebuilt_text: string;
+  rebuilt_file_name: string;
+  rebuilt_docx_url: string;
+  rebuilt_at: string | null;
+  rebuilt_ai_status: "PENDING" | "COMPLETE" | "FAILED";
+  rebuilt_ai_score: number | null;
+  rebuilt_ai_analysis: ResumeAiAnalysis | null;
+  rebuilt_ai_error: string;
+  rebuilt_ai_analyzed_at: string | null;
+  owner_name: string;
+  owner_avatar_url: string;
+  owner_email: string;
+  owner_phone: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PublicPortfolio {
+  owner_name: string;
+  owner_avatar_url: string;
+  owner_email: string;
+  owner_phone: string;
+  headline: string;
+  about: string;
+  skills: string[];
+  education: string;
+  experience: string;
+  projects: string;
+  custom_sections: PortfolioSection[];
+  updated_at: string;
+}
+
 export interface AiAccessConfig {
   id: number;
   student: number;

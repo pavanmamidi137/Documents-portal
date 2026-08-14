@@ -2568,3 +2568,304 @@ class ResumeTests(TestCase):
         self.assertIn("quota exceeded", response.data["detail"])
         resume.refresh_from_db()
         self.assertEqual(resume.ai_status, Resume.AiStatus.PENDING)  # unchanged on failure
+
+
+class PortfolioTests(TestCase):
+    """Super Admin portfolio: private resume AI review + public portfolio page."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Pavan M", email="pavan@test.com"
+        )
+        self.student = User.objects.create_user(
+            roll_number="21CSE01", password="x", full_name="Student"
+        )
+
+    def _client(self, user) -> APIClient:
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": user.roll_number, "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        return client
+
+    def _resume_file(self, name="resume.pdf"):
+        return SimpleUploadedFile(
+            name, b"%PDF-1.4 fake resume content", content_type="application/pdf"
+        )
+
+    def _portfolio(self, **overrides):
+        from .models import Portfolio
+        from .portfolio_services import generate_portfolio_slug
+
+        portfolio, _ = Portfolio.objects.get_or_create(user=self.admin)
+        portfolio.slug = overrides.get("slug", generate_portfolio_slug(self.admin))
+        portfolio.is_published = overrides.get("is_published", False)
+        if "public_id" in overrides:
+            portfolio.public_id = overrides["public_id"]
+            portfolio.file_name = "resume.pdf"
+            portfolio.cloudinary_url = "https://example.com/resume.pdf"
+        portfolio.save()
+        return portfolio
+
+    _FULL_REPORT = {
+        "score": 82,
+        "summary": "Solid resume with strong projects.",
+        "pros": ["Clear structure", "Strong project descriptions"],
+        "cons": ["No quantified metrics"],
+        "improvements": ["Add numbers to your bullets"],
+        "skills": ["Python", "SQL"],
+        "ats_keywords": ["Git"],
+        "headline": "Placement Head & Engineer",
+        "about": "I lead the placement cell and build software.",
+        "education": "B.Tech CSE",
+        "experience": "Led the placement cell for two years.",
+        "projects": "Built the college documents portal.",
+    }
+
+    def test_get_own_portfolio_creates_and_returns_slug(self):
+        client = self._client(self.admin)
+        response = client.get("/api/portfolio/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["slug"])
+        self.assertFalse(response.data["is_published"])
+        self.assertEqual(response.data["owner_name"], "Pavan M")
+
+    def test_non_super_admin_forbidden(self):
+        client = self._client(self.student)
+        self.assertEqual(client.get("/api/portfolio/").status_code, 403)
+        self.assertEqual(
+            client.patch("/api/portfolio/", {"headline": "x"}, format="json").status_code,
+            403,
+        )
+
+    def test_patch_edits_content_and_publish(self):
+        self._portfolio()
+        client = self._client(self.admin)
+        response = client.patch(
+            "/api/portfolio/",
+            {
+                "headline": "Placement Head",
+                "about": "Hello world",
+                "skills": ["Python", "Django"],
+                "is_published": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["headline"], "Placement Head")
+        self.assertEqual(response.data["skills"], ["Python", "Django"])
+        self.assertTrue(response.data["is_published"])
+
+    def test_upload_resume_sets_file_and_resets_analysis(self):
+        self._portfolio(public_id="old", is_published=True)
+        with patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload:
+            mock_upload.return_value = {
+                "secure_url": "https://res.cloudinary.com/x/resume.pdf",
+                "public_id": "portfolios/admin/new.pdf",
+            }
+            client = self._client(self.admin)
+            response = client.post(
+                "/api/portfolio/upload-resume/",
+                {"file": self._resume_file()},
+                format="multipart",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["file_name"], "resume.pdf")
+        self.assertEqual(response.data["public_id"], "portfolios/admin/new.pdf")
+        self.assertEqual(response.data["ai_status"], "PENDING")
+
+    def test_upload_requires_file(self):
+        self._portfolio()
+        client = self._client(self.admin)
+        response = client.post("/api/portfolio/upload-resume/", {}, format="multipart")
+        self.assertEqual(response.status_code, 400)
+
+    def test_analyze_complete_fills_review_and_content(self):
+        self._portfolio(public_id="resume-pdf")
+        with patch(
+            "apps.accounts.portfolio_services._extract_resume_text",
+            return_value=("Python project. SQL. Team lead.", ""),
+        ), patch(
+            "apps.accounts.portfolio_services.ai_json", return_value=self._FULL_REPORT
+        ):
+            client = self._client(self.admin)
+            response = client.post("/api/portfolio/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["ai_status"], "COMPLETE")
+        self.assertEqual(response.data["ai_score"], 82)
+        self.assertEqual(response.data["headline"], "Placement Head & Engineer")
+        self.assertEqual(response.data["skills"], ["Python", "SQL"])
+        self.assertEqual(response.data["about"], "I lead the placement cell and build software.")
+
+    def test_analyze_failed_report_no_credits(self):
+        from apps.placements.models import AiUsageLog
+
+        self._portfolio(public_id="resume-pdf")
+        with patch(
+            "apps.accounts.portfolio_services._extract_resume_text",
+            return_value=("Python", ""),
+        ), patch("apps.accounts.portfolio_services.ai_json", return_value={}):
+            client = self._client(self.admin)
+            response = client.post("/api/portfolio/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["ai_status"], "FAILED")
+        self.assertIn("unreadable report", response.data["ai_error"])
+        self.assertEqual(AiUsageLog.objects.count(), 0)
+
+    def test_analyze_unreadable_file_fails_fast_without_ai_call(self):
+        from apps.placements.models import AiUsageLog
+
+        self._portfolio(public_id="resume-pdf")
+        with patch(
+            "apps.accounts.portfolio_services._extract_resume_text",
+            return_value=("", "could not download the file"),
+        ), patch("apps.accounts.portfolio_services.ai_json") as mock_ai:
+            client = self._client(self.admin)
+            response = client.post("/api/portfolio/analyze/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["ai_status"], "FAILED")
+        mock_ai.assert_not_called()
+        self.assertEqual(AiUsageLog.objects.count(), 0)
+
+    def test_rebuild_generates_sections_docx_and_again_review(self):
+        rebuild = {
+            "summary": "Rewritten professional summary",
+            "skills": ["Python", "SQL", "Git"],
+            "experience": "- Led the placement cell\n- Built internal tools",
+            "projects": "- Documents portal",
+            "education": "B.Tech CSE",
+        }
+        review = {
+            "score": 90, "summary": "Great rebuild",
+            "pros": ["Strong summary"], "cons": ["Longer than ideal"],
+            "improvements": ["Trim to one page"],
+            "skills": ["Python"], "ats_keywords": [],
+        }
+        self._portfolio(public_id="resume-pdf")
+        with patch(
+            "apps.accounts.portfolio_services._extract_resume_text",
+            return_value=("Python project. SQL. Team lead.", ""),
+        ), patch(
+            "apps.accounts.portfolio_services.ai_json", side_effect=[rebuild, review]
+        ), patch("apps.documents.services.cloudinary.uploader.upload") as mock_upload:
+            mock_upload.return_value = {
+                "secure_url": "https://res.cloudinary.com/x/rebuilt.docx",
+                "public_id": "portfolios/admin/rebuilt.docx",
+            }
+            client = self._client(self.admin)
+            response = client.post("/api/portfolio/rebuild/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["rebuilt_ai_status"], "COMPLETE")
+        self.assertEqual(response.data["rebuilt_ai_score"], 90)
+        self.assertEqual(response.data["rebuilt_sections"]["skills"], ["Python", "SQL", "Git"])
+        self.assertTrue(response.data["rebuilt_text"])
+        self.assertTrue(response.data["rebuilt_docx_url"])
+
+    def test_rebuild_failed_report_no_docx(self):
+        self._portfolio(public_id="resume-pdf")
+        with patch(
+            "apps.accounts.portfolio_services._extract_resume_text",
+            return_value=("Python", ""),
+        ), patch("apps.accounts.portfolio_services.ai_json", return_value={}):
+            client = self._client(self.admin)
+            response = client.post("/api/portfolio/rebuild/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["rebuilt_ai_status"], "FAILED")
+        self.assertFalse(response.data["rebuilt_docx_url"])
+
+    def test_public_portfolio_visible_without_login(self):
+        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
+        portfolio.headline = "Placement Head"
+        portfolio.about = "About me"
+        portfolio.skills = ["Python"]
+        portfolio.ai_score = 99  # must never leak
+        portfolio.save()
+        anonymous = APIClient()
+        response = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["owner_name"], "Pavan M")
+        self.assertEqual(response.data["headline"], "Placement Head")
+        self.assertNotIn("ai_score", response.data)
+        self.assertNotIn("ai_analysis", response.data)
+        self.assertNotIn("cloudinary_url", response.data)
+
+    def test_public_portfolio_unpublished_404(self):
+        portfolio = self._portfolio(public_id="resume-pdf")
+        anonymous = APIClient()
+        self.assertEqual(
+            anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").status_code, 404
+        )
+        self.assertEqual(
+            anonymous.get("/api/portfolio/public/unknown-slug/").status_code, 404
+        )
+
+    def test_public_contact_hidden_until_enabled(self):
+        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
+        anonymous = APIClient()
+        hidden = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data
+        self.assertEqual(hidden["owner_email"], "")
+        self.assertEqual(hidden["owner_phone"], "")
+        # Owner toggles it on.
+        client = self._client(self.admin)
+        response = client.patch(
+            "/api/portfolio/", {"show_contact": True}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["show_contact"])
+        shown = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data
+        self.assertEqual(shown["owner_email"], "pavan@test.com")
+
+    def test_delete_resume_clears_file_and_analysis(self):
+        self._portfolio(public_id="resume-pdf")
+        with patch("apps.documents.services.cloudinary.api.delete_resources"):
+            client = self._client(self.admin)
+            response = client.delete("/api/portfolio/resume/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["public_id"], "")
+        self.assertEqual(response.data["ai_status"], "PENDING")
+
+    def test_regenerate_slug(self):
+        self._portfolio()
+        client = self._client(self.admin)
+        first = client.get("/api/portfolio/").data["slug"]
+        response = client.post("/api/portfolio/regenerate-slug/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.data["slug"], first)
+
+    def test_custom_sections_saved_and_shown_publicly(self):
+        portfolio = self._portfolio(public_id="resume-pdf", is_published=True)
+        client = self._client(self.admin)
+        response = client.patch(
+            "/api/portfolio/",
+            {
+                "custom_sections": [
+                    {"title": "Awards", "content": "Best placement cell 2025."},
+                    {"title": "  ", "content": "Untitled section content."},
+                    {"title": "Empty", "content": ""},
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        sections = response.data["custom_sections"]
+        self.assertEqual(len(sections), 3)  # only fully-blank entries dropped
+        self.assertEqual(sections[0]["title"], "Awards")
+        self.assertEqual(sections[1]["title"], "")  # title-only whitespace normalized
+        self.assertEqual(sections[2]["content"], "")  # content-only whitespace normalized
+        # Visible on the public page.
+        anonymous = APIClient()
+        public = anonymous.get(f"/api/portfolio/public/{portfolio.slug}/").data
+        self.assertEqual(public["custom_sections"][0]["title"], "Awards")
+
+    def test_custom_sections_invalid_input_rejected(self):
+        self._portfolio()
+        client = self._client(self.admin)
+        response = client.patch(
+            "/api/portfolio/",
+            {"custom_sections": "not-a-list"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)

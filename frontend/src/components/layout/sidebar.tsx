@@ -74,17 +74,26 @@ const STUDENT_ONLY: NavItem[] = [{ href: "/resume", label: "My Resume", icon: Fi
 
 const FACULTY_ONLY: NavItem[] = [{ href: "/faculty/resumes", label: "Resumes", icon: FileUser }];
 
-const ADMIN_ONLY: NavItem[] = [
+// The long admin list is split into labelled groups so the sidebar reads as
+// sections instead of a wall of links: people & college structure, content,
+// then AI & system tools.
+const ADMIN_USERS: NavItem[] = [
   { href: "/admin/admins", label: "Admins", icon: ShieldCheck },
-  { href: "/admin/ai", label: "AI Management", icon: BrainCircuit },
-  { href: "/admin/ai-usage", label: "AI Usage", icon: Coins },
   { href: "/admin/faculty", label: "Faculty", icon: GraduationCap },
   { href: "/admin/students", label: "Students", icon: Users },
   { href: "/admin/branches", label: "Branches", icon: Building2 },
   { href: "/admin/sections", label: "Sections", icon: Layers },
   { href: "/admin/semesters", label: "Semesters", icon: Settings2 },
+];
+
+const ADMIN_CONTENT: NavItem[] = [
   { href: "/admin/subjects", label: "Subjects", icon: BookOpenText },
   { href: "/admin/categories", label: "Categories", icon: Tags },
+];
+
+const ADMIN_AI_SYSTEM: NavItem[] = [
+  { href: "/admin/ai", label: "AI Management", icon: BrainCircuit },
+  { href: "/admin/ai-usage", label: "AI Usage", icon: Coins },
   { href: "/admin/audit-logs", label: "Audit Logs", icon: ScrollText },
 ];
 
@@ -145,7 +154,9 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
   if (user?.is_super_admin) {
     groups = [
       { items: [...COMMON] },
-      { label: "Administration", items: ADMIN_ONLY },
+      { label: "Administration", items: ADMIN_USERS },
+      { label: "Content", items: ADMIN_CONTENT },
+      { label: "AI & System", items: ADMIN_AI_SYSTEM },
       { label: "Faculty", items: FACULTY_ONLY },
     ];
   } else if (user?.is_cr) {
