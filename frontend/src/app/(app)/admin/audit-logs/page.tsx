@@ -52,6 +52,16 @@ export default function AuditLogsPage() {
     placeholderData: keepPreviousData,
   });
 
+  // Total entries ignoring the search filter — the "Clear All" dialog needs
+  // the real total (clear-all wipes every entry, not just the ones matching
+  // the active search).
+  const { data: totalData } = useQuery({
+    queryKey: ["audit-logs-total"],
+    queryFn: () => http.get<Paginated<AuditLog>>("/audit-logs/", { page: 1, page_size: 1 }),
+    staleTime: 60_000,
+  });
+  const totalCount = totalData?.count ?? data?.count ?? 0;
+
   const rows = data?.results ?? [];
   const allSelected = rows.length > 0 && rows.every((log) => selected.has(log.id));
 
@@ -102,7 +112,7 @@ export default function AuditLogsPage() {
           });
       toast.success(
         clearing === "all"
-          ? `Cleared all audit logs (${res.deleted} entries removed).`
+          ? `Cleared all ${res.deleted.toLocaleString()} audit log entr${res.deleted === 1 ? "y" : "ies"} — 1 entry kept (the record of this action).`
           : `Cleared ${res.deleted} selected log entr${res.deleted === 1 ? "y" : "ies"}.`
       );
       invalidate();
@@ -189,7 +199,7 @@ export default function AuditLogsPage() {
     <RoleGuard roles={["SUPER_ADMIN"]}>
       <PageHeader
         title="Audit Logs"
-        description="A trail of every important action taken on the portal."
+        description="A trail of every important action taken on the portal. Entries are kept until an admin clears them — clearing the log always keeps one entry: the record of the clearing itself."
         actions={
           <>
             <Button
@@ -244,8 +254,8 @@ export default function AuditLogsPage() {
         title={clearing === "all" ? "Clear all audit logs?" : `Clear ${selected.size} selected log${selected.size === 1 ? "" : "s"}?`}
         description={
           clearing === "all"
-            ? "This permanently deletes every audit log entry. Only this clearing action itself will remain. This cannot be undone."
-            : "The selected entries will be permanently deleted. This cannot be undone."
+            ? `This permanently deletes all ${totalCount.toLocaleString()} audit log entr${totalCount === 1 ? "y" : "ies"} — not just the ones matching your search. Only the record of this clearing action (1 entry) will remain. This cannot be undone.`
+            : `The selected ${selected.size} entr${selected.size === 1 ? "y" : "ies"} will be permanently deleted. This cannot be undone.`
         }
         confirmLabel="Clear"
         destructive
