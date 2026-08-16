@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Menu, Moon, Palette, PanelLeft, Search, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -35,6 +35,13 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
   const { theme: siteTheme, themes, setTheme: setSiteTheme } = useSiteTheme();
   const router = useRouter();
   const [query, setQuery] = useState("");
+  // Theme is only known after mount (avoids a server/client hydration mismatch
+  // when toggling the Sun/Moon icon).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
   const isAdmin = user?.is_super_admin ?? false;
 
   const submitSearch = (e: React.FormEvent) => {
@@ -110,7 +117,7 @@ export function Topbar({ onMenuClick, sidebarMode, onSidebarModeChange }: Topbar
           aria-label="Toggle light/dark mode"
           className="text-muted-foreground"
         >
-          {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+          {mounted && (theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />)}
         </Button>
 
         {isAdmin && (

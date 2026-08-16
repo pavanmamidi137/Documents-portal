@@ -22,6 +22,10 @@ import {
   Search,
   Share2,
   ShieldCheck,
+  Smartphone,
+  Sparkles,
+  X,
+  Star,
   Sun,
   UploadCloud,
   UserRoundCheck,
@@ -29,14 +33,60 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { UndrawIllustration } from "@/components/undraw-illustration";
+import type { IllustrationName } from "@/components/illustrations";
 import { useAuth } from "@/lib/auth";
 import { useIsMobile } from "@/lib/use-is-mobile";
-import { initials } from "@/lib/utils";
+import { cn, initials } from "@/lib/utils";
 
 const fadeUp = {
   initial: { opacity: 0, y: 20 },
   animate: { opacity: 1, y: 0 },
 };
+
+/**
+ * The hero illustration changes with the time of day — a different artwork and
+ * greeting for morning, afternoon, evening and night.
+ */
+type TimeSlot = "morning" | "afternoon" | "evening" | "night";
+
+const TIME_CONFIG: Record<
+  TimeSlot,
+  { illustration: IllustrationName; greeting: string; emoji: string; alt: string }
+> = {
+  morning: {
+    illustration: "morning-plans_5vln",
+    greeting: "Good morning",
+    emoji: "☀️",
+    alt: "A warm morning start with PlaceMate",
+  },
+  afternoon: {
+    illustration: "sunny-walk_iadv",
+    greeting: "Good afternoon",
+    emoji: "🌞",
+    alt: "A bright afternoon with PlaceMate",
+  },
+  evening: {
+    illustration: "to-the-moon_w1wa",
+    greeting: "Good evening",
+    emoji: "🌇",
+    alt: "A calm evening with PlaceMate",
+  },
+  night: {
+    illustration: "counting-stars_1fur",
+    greeting: "Good night",
+    emoji: "🌙",
+    alt: "A starry night with PlaceMate",
+  },
+};
+
+function getTimeSlot(date: Date): TimeSlot {
+  const h = date.getHours();
+  if (h >= 5 && h < 12) return "morning";
+  if (h >= 12 && h < 17) return "afternoon";
+  if (h >= 17 && h < 21) return "evening";
+  return "night";
+}
 
 const FEATURES = [
   {
@@ -135,11 +185,59 @@ const STEPS = [
   },
 ];
 
-function InstallAppButton() {
+/** Small floating stat chip used over the hero illustration. */
+function FloatChip({
+  icon,
+  label,
+  sub,
+  className,
+  delay = 0,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  sub?: string;
+  className?: string;
+  delay?: number;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12, scale: 0.9 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.5, delay }}
+      className={cn("absolute z-10", className)}
+    >
+      <motion.div
+        animate={{ y: [0, -7, 0] }}
+        transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut", delay }}
+        className="flex items-center gap-2.5 rounded-xl border border-primary/15 bg-card/95 px-3.5 py-2.5 shadow-lg shadow-primary/10 backdrop-blur-md"
+      >
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-sm shadow-primary/25">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm leading-tight font-bold">{label}</p>
+          {sub && <p className="text-[11px] leading-tight text-muted-foreground">{sub}</p>}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function InstallAppButton({
+  size = "lg",
+  variant = "outline",
+  className,
+}: {
+  size?: "default" | "lg";
+  variant?: "default" | "outline";
+  className?: string;
+}) {
   const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
+  const [showSteps, setShowSteps] = useState(false);
 
   // Listen for the browser's "installable PWA" event so the button can trigger
-  // a native app install (Android / Windows / supported browsers).
+  // a native app install (Android / Windows / supported browsers). iOS Safari
+  // never fires this event, so the button falls back to manual steps.
   useEffect(() => {
     const handler = (e: Event) => {
       e.preventDefault();
@@ -149,25 +247,183 @@ function InstallAppButton() {
     return () => window.removeEventListener("beforeinstallprompt", handler);
   }, []);
 
-  if (!installPrompt) {
-    return null;
+  if (installPrompt) {
+    return (
+      <Button
+        size={size}
+        variant={variant}
+        className={className}
+        onClick={() => {
+          const promptEvent = installPrompt as unknown as {
+            prompt: () => Promise<void>;
+            userChoice: Promise<{ outcome: string }>;
+          };
+          void promptEvent.prompt();
+          setInstallPrompt(null);
+        }}
+      >
+        <Download className="size-4" /> Install as App
+      </Button>
+    );
   }
 
   return (
-    <Button
-      size="lg"
-      variant="outline"
-      onClick={() => {
-        const promptEvent = installPrompt as unknown as {
-          prompt: () => Promise<void>;
-          userChoice: Promise<{ outcome: string }>;
-        };
-        void promptEvent.prompt();
-        setInstallPrompt(null);
-      }}
+    <div className={cn("relative", className)}>
+      <Button size={size} variant={variant} onClick={() => setShowSteps((v) => !v)}>
+        <Download className="size-4" /> Add to Home Screen
+      </Button>
+      {showSteps && (
+        <div className="absolute left-0 z-30 mt-3 w-72 rounded-2xl border bg-card p-4 text-left shadow-xl">
+          <p className="text-sm font-semibold">Add PlaceMate to your home screen</p>
+          <ul className="mt-3 space-y-2.5 text-xs text-muted-foreground">
+            <li className="flex items-start gap-2">
+              <Smartphone className="mt-0.5 size-3.5 shrink-0 text-primary" />
+              <span>
+                <b className="font-medium text-foreground">Android / Windows:</b> open the browser
+                menu (⋮) and tap <b className="font-medium text-foreground">Install app</b>.
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <Share2 className="mt-0.5 size-3.5 shrink-0 text-primary" />
+              <span>
+                <b className="font-medium text-foreground">iPhone / iPad:</b> tap the Share button
+                then <b className="font-medium text-foreground">Add to Home Screen</b>.
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <Download className="mt-0.5 size-3.5 shrink-0 text-primary" />
+              <span>
+                <b className="font-medium text-foreground">Desktop:</b> click the install icon in
+                the address bar.
+              </span>
+            </li>
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One-time install prompt — floats up on the first visit (unless the visitor
+ * already installed the app or dismissed the banner before), then never again.
+ */
+function InstallBanner() {
+  const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [showSteps, setShowSteps] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  useEffect(() => {
+    // Already running as an installed app, or dismissed before → never show.
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (navigator as unknown as { standalone?: boolean }).standalone === true;
+    if (standalone) return;
+    try {
+      if (localStorage.getItem("pm_install_banner_dismissed")) return;
+    } catch {
+      /* private browsing */
+    }
+    // Wait a beat so the banner doesn't interrupt the first paint.
+    const timer = window.setTimeout(() => setVisible(true), 1600);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const dismiss = () => {
+    setVisible(false);
+    try {
+      localStorage.setItem("pm_install_banner_dismissed", "1");
+    } catch {
+      /* private browsing */
+    }
+  };
+
+  if (!visible) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 40 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className="fixed inset-x-3 bottom-3 z-50 sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[22rem]"
     >
-      <Download className="size-4" /> Install as App
-    </Button>
+      <div className="relative rounded-2xl border bg-card p-4 shadow-2xl shadow-black/25">
+        <button
+          onClick={dismiss}
+          className="absolute right-2 top-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Dismiss install banner"
+        >
+          <X className="size-4" />
+        </button>
+
+        <div className="flex items-center gap-3 pr-6">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-md shadow-primary/25">
+            <Handshake className="size-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-bold leading-tight">Install PlaceMate</p>
+            <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+              Opens like a native app — faster, with offline support.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3">
+          {installPrompt ? (
+            <Button
+              size="sm"
+              className="w-full bg-primary text-primary-foreground shadow-md shadow-primary/25 transition-all hover:brightness-110"
+              onClick={() => {
+                const promptEvent = installPrompt as unknown as {
+                  prompt: () => Promise<void>;
+                  userChoice: Promise<{ outcome: string }>;
+                };
+                void promptEvent.prompt();
+                dismiss();
+              }}
+            >
+              <Download className="size-4" /> Install as App
+            </Button>
+          ) : (
+            <div className="space-y-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={() => setShowSteps((v) => !v)}
+              >
+                <Download className="size-4" /> How to add to Home Screen
+              </Button>
+              {showSteps && (
+                <ul className="space-y-1.5 rounded-xl border bg-muted/40 p-3 text-[11px] leading-snug text-muted-foreground">
+                  <li>
+                    <b className="font-medium text-foreground">Android / Windows:</b> browser menu
+                    (⋮) → Install app
+                  </li>
+                  <li>
+                    <b className="font-medium text-foreground">iPhone / iPad:</b> Share → Add to
+                    Home Screen
+                  </li>
+                  <li>
+                    <b className="font-medium text-foreground">Desktop:</b> install icon in the
+                    address bar
+                  </li>
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
   );
 }
 
@@ -175,6 +431,26 @@ function InstallAppButton() {
 function MobileHomePage() {
   const { user } = useAuth();
   const { theme, setTheme } = useTheme();
+  // Theme is only known after mount (avoids a server/client hydration mismatch
+  // when toggling the Sun/Moon icon).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  // Time-of-day greeting for the mobile hero.
+  const [timeSlot, setTimeSlot] = useState<TimeSlot | null>(null);
+  useEffect(() => {
+    const update = () => setTimeSlot(getTimeSlot(new Date()));
+    const raf = requestAnimationFrame(update);
+    const interval = setInterval(update, 60_000);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearInterval(interval);
+    };
+  }, []);
+  const timeConfig = timeSlot ? TIME_CONFIG[timeSlot] : null;
 
   const quickActions = [
     {
@@ -225,7 +501,7 @@ function MobileHomePage() {
               aria-label="Toggle light/dark mode"
               title="Toggle light/dark mode"
             >
-              {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+              {mounted && (theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />)}
             </button>
             {user ? (
               <Link
@@ -311,6 +587,32 @@ function MobileHomePage() {
           <InstallAppButton />
         </motion.div>
 
+        {/* Transparent illustration so the mobile home still feels visual */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.96 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.45, delay: 0.24 }}
+          className="relative mx-auto mt-8 max-w-[15rem]"
+        >
+          <UndrawIllustration
+            name="mobile-app_aftb"
+            alt="PlaceMate on your phone"
+            className="w-full"
+          />
+          {timeConfig && (
+            <div className="absolute inset-x-0 top-0 flex justify-center">
+              <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-card/95 px-3 py-1 text-[11px] font-semibold shadow-md backdrop-blur">
+                <span>{timeConfig.emoji}</span> {timeConfig.greeting}
+              </span>
+            </div>
+          )}
+          <div className="absolute inset-x-0 -bottom-1 flex justify-center">
+            <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-card/95 px-3 py-1 text-[11px] font-semibold shadow-md backdrop-blur">
+              <Sparkles className="size-3 text-primary" /> Always with you
+            </span>
+          </div>
+        </motion.div>
+
         <div className="mt-8 grid grid-cols-2 gap-3">
           {quickActions.map((action, i) => (
             <motion.div
@@ -358,12 +660,39 @@ export default function HomePage() {
   const isMobile = useIsMobile();
   // Phones get a compact, app-style home with instant-access tiles; larger
   // screens keep the full marketing page.
-  return isMobile ? <MobileHomePage /> : <DesktopHomePage />;
+  return (
+    <>
+      {isMobile ? <MobileHomePage /> : <DesktopHomePage />}
+      {/* One-time install prompt — floats up on first visit only. */}
+      <InstallBanner />
+    </>
+  );
 }
 
 function DesktopHomePage() {
   const { user } = useAuth();
   const { theme, setTheme } = useTheme();
+  // Theme is only known after mount (avoids a server/client hydration mismatch
+  // when toggling the Sun/Moon icon).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  // Time-of-day slot for the hero artwork + greeting. Refreshes every minute
+  // so the illustration flips over as the day progresses.
+  const [timeSlot, setTimeSlot] = useState<TimeSlot | null>(null);
+  useEffect(() => {
+    const update = () => setTimeSlot(getTimeSlot(new Date()));
+    const raf = requestAnimationFrame(update);
+    const interval = setInterval(update, 60_000);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearInterval(interval);
+    };
+  }, []);
+  const timeConfig = timeSlot ? TIME_CONFIG[timeSlot] : null;
 
   // Logged-in visitors can browse the public page too - they get a "Profile"
   // button (leading to their dashboard) instead of the Sign in button.
@@ -400,7 +729,7 @@ function DesktopHomePage() {
               aria-label="Toggle light/dark mode"
               title="Toggle light/dark mode"
             >
-              {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+              {mounted && (theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />)}
             </button>
             {user ? (
               <Link
@@ -436,80 +765,154 @@ function DesktopHomePage() {
         <div className="pointer-events-none absolute top-48 -right-40 size-96 rounded-full bg-primary/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 -left-32 size-96 rounded-full bg-primary/5 blur-3xl" />
 
-        <div className="relative mx-auto max-w-6xl px-4 pt-20 pb-16 text-center sm:px-6 sm:pt-28">
-          <motion.div {...fadeUp} transition={{ duration: 0.5 }}>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-              <Handshake className="size-3.5" /> PlaceMate — your campus hub
-            </span>
-          </motion.div>
+        <div className="relative mx-auto max-w-6xl px-4 pt-20 pb-16 sm:px-6 sm:pt-28">
+          <div className="grid items-center gap-12 lg:grid-cols-2">
+            <div className="text-center lg:text-left">
+              <motion.div {...fadeUp} transition={{ duration: 0.5 }}>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                  <Handshake className="size-3.5" /> PlaceMate — your campus hub
+                </span>
+              </motion.div>
 
-          <motion.h1
-            {...fadeUp}
-            transition={{ duration: 0.5, delay: 0.08 }}
-            className="mx-auto mt-6 max-w-3xl text-4xl leading-tight font-extrabold tracking-tight sm:text-6xl"
-          >
-            Every note, resume &amp; placement drive.{" "}
-            <span className="bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-              One place.
-            </span>
-          </motion.h1>
-
-          <motion.p
-            {...fadeUp}
-            transition={{ duration: 0.5, delay: 0.16 }}
-            className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground"
-          >
-            PlaceMate brings together study documents, resumes with AI reviews, and placement drives
-            for your whole college — organized by semester, subject and section, with role-based
-            access for students, CRs, faculty and admins.
-          </motion.p>
-
-          <motion.div
-            {...fadeUp}
-            transition={{ duration: 0.5, delay: 0.24 }}
-            className="mt-9 flex flex-wrap items-center justify-center gap-3"
-          >
-            {user ? (
-              <Button
-                size="lg"
-                render={<Link href="/dashboard" />}
-                className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+              <motion.h1
+                {...fadeUp}
+                transition={{ duration: 0.5, delay: 0.08 }}
+                className="mx-auto mt-6 max-w-3xl text-4xl leading-tight font-extrabold tracking-tight sm:text-5xl xl:text-6xl"
               >
-                <LayoutDashboard className="size-4" /> Go to dashboard
-              </Button>
-            ) : (
-              <Button
-                size="lg"
-                render={<Link href="/login" />}
-                className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
-              >
-                Get started <ArrowRight className="size-4" />
-              </Button>
-            )}
-            <Button size="lg" variant="outline" render={<a href="#features" />}>
-              Explore features
-            </Button>
-            <InstallAppButton />
-          </motion.div>
+                Every note, resume &amp; placement drive.{" "}
+                <span className="bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                  One place.
+                </span>
+              </motion.h1>
 
-          <motion.div
-            {...fadeUp}
-            transition={{ duration: 0.5, delay: 0.32 }}
-            className="mx-auto mt-12 flex max-w-3xl flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-muted-foreground"
-          >
-            <span className="flex items-center gap-1.5">
-              <Check className="size-4 text-emerald-500" /> PDF, PPT, DOCX &amp; TXT
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Check className="size-4 text-emerald-500" /> AI resume reviews
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Check className="size-4 text-emerald-500" /> Placement drives
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Check className="size-4 text-emerald-500" /> Role-based access
-            </span>
-          </motion.div>
+              <motion.p
+                {...fadeUp}
+                transition={{ duration: 0.5, delay: 0.16 }}
+                className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground lg:mx-0"
+              >
+                PlaceMate brings together study documents, resumes with AI reviews, and placement
+                drives for your whole college — organized by semester, subject and section, with
+                role-based access for students, CRs, faculty and admins.
+              </motion.p>
+
+              <motion.div
+                {...fadeUp}
+                transition={{ duration: 0.5, delay: 0.24 }}
+                className="mt-9 flex flex-wrap items-center justify-center gap-3 lg:justify-start"
+              >
+                {user ? (
+                  <Button
+                    size="lg"
+                    render={<Link href="/dashboard" />}
+                    className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+                  >
+                    <LayoutDashboard className="size-4" /> Go to dashboard
+                  </Button>
+                ) : (
+                  <Button
+                    size="lg"
+                    render={<Link href="/login" />}
+                    className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+                  >
+                    Get started <ArrowRight className="size-4" />
+                  </Button>
+                )}
+                <Button size="lg" variant="outline" render={<a href="#features" />}>
+                  Explore features
+                </Button>
+                <InstallAppButton />
+              </motion.div>
+
+              <motion.div
+                {...fadeUp}
+                transition={{ duration: 0.5, delay: 0.32 }}
+                className="mx-auto mt-12 flex max-w-3xl flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-muted-foreground lg:mx-0 lg:justify-start"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Check className="size-4 text-emerald-500" /> PDF, PPT, DOCX &amp; TXT
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <Check className="size-4 text-emerald-500" /> AI resume reviews
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <Check className="size-4 text-emerald-500" /> Placement drives
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <Check className="size-4 text-emerald-500" /> Role-based access
+                </span>
+              </motion.div>
+            </div>
+
+            {/* Hero illustration (desktop only - phones use the compact one) */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.55, delay: 0.15 }}
+              className="relative hidden lg:block"
+            >
+              {/* Decorative backdrop: gradient ring + soft glow */}
+              <div className="pointer-events-none absolute -inset-6 -z-10 rounded-[2.5rem] bg-gradient-to-br from-primary/20 via-primary/8 to-violet-500/10 blur-2xl" />
+              <div className="pointer-events-none absolute -top-5 -right-5 size-28 rounded-full border-2 border-dashed border-primary/30" />
+              <div className="pointer-events-none absolute -top-2 -left-4 size-4 rounded-full bg-primary/40" />
+              <div className="pointer-events-none absolute -bottom-3 -right-2 size-5 rounded-full bg-amber-400/50" />
+
+              {/* Time-of-day greeting pill over the artwork */}
+              {timeConfig && (
+                <div className="pointer-events-none absolute top-1 left-1/2 z-10 -translate-x-1/2">
+                  <motion.span
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, delay: 0.5 }}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-card/95 px-3.5 py-1.5 text-xs font-semibold shadow-lg shadow-primary/10 backdrop-blur"
+                  >
+                    <span>{timeConfig.emoji}</span> {timeConfig.greeting}
+                  </motion.span>
+                </div>
+              )}
+
+              {/* Gently floating artwork - swaps with the time of day */}
+              <motion.div
+                animate={{ y: [0, -10, 0] }}
+                transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+              >
+                <UndrawIllustration
+                  name={timeConfig?.illustration ?? "chatting_29rn"}
+                  alt={timeConfig?.alt ?? "PlaceMate AI assistant"}
+                  className="w-full drop-shadow-xl"
+                />
+              </motion.div>
+
+              {/* Floating stat chips (text over the illustration) */}
+              <FloatChip
+                icon={<FileText className="size-4" />}
+                label="1,000+ docs"
+                sub="Notes · papers · manuals"
+                className="top-2 -left-5"
+                delay={0.3}
+              />
+              <FloatChip
+                icon={<Sparkles className="size-4" />}
+                label="AI resume review"
+                sub="Score &amp; ATS report"
+                className="top-1/4 -right-4"
+                delay={0.45}
+              />
+              <FloatChip
+                icon={<Briefcase className="size-4" />}
+                label="Placement drives"
+                sub="Eligibility &amp; apply"
+                className="bottom-16 -left-3"
+                delay={0.6}
+              />
+              <FloatChip
+                icon={<Star className="size-4" />}
+                label="4.5★ rating"
+                sub="AI quality score"
+                className="bottom-0 right-0"
+                delay={0.75}
+              />
+            </motion.div>
+          </div>
         </div>
       </section>
 
@@ -729,33 +1132,61 @@ function DesktopHomePage() {
       {/* ------------------------------------------------ CTA */}
       <section className="relative overflow-hidden border-t py-20">
         <div className="pointer-events-none absolute -top-24 left-1/2 size-96 -translate-x-1/2 rounded-full bg-primary/20 blur-3xl" />
-        <div className="relative mx-auto max-w-3xl px-4 text-center sm:px-6">
-          <Handshake className="mx-auto size-10 text-primary" />
-          <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
-            Ready to bring your campus together?
-          </h2>
-          <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-            Sign in with your roll number and open your college&apos;s PlaceMate. Your default password
-            is your roll number — change it after your first login.
-          </p>
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            {user ? (
-              <Button
-                size="lg"
-                render={<Link href="/dashboard" />}
-                className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
-              >
-                <LayoutDashboard className="size-4" /> Go to dashboard
-              </Button>
-            ) : (
-              <Button
-                size="lg"
-                render={<Link href="/login" />}
-                className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
-              >
-                Sign in to PlaceMate <ArrowRight className="size-4" />
-              </Button>
-            )}
+        <div className="relative mx-auto grid max-w-6xl items-center gap-12 px-4 sm:px-6 lg:grid-cols-2">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5 }}
+            className="order-2 mx-auto w-full max-w-md lg:order-1"
+          >
+            <div className="relative">
+              <UndrawIllustration
+                name="happy-news_6lg3"
+                alt="Join your campus on PlaceMate"
+                className="w-full"
+              />
+              {/* Text overlay badge on the illustration */}
+              <div className="absolute inset-x-0 -bottom-4 flex justify-center">
+                <div className="inline-flex items-center gap-2 rounded-2xl border border-primary/20 bg-card/95 px-4 py-2.5 shadow-xl shadow-primary/10 backdrop-blur">
+                  <span className="flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/60 text-primary-foreground">
+                    <Handshake className="size-4" />
+                  </span>
+                  <span className="text-sm font-semibold">
+                    Join <span className="text-primary">your campus</span> today
+                  </span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+          <div className="order-1 text-center lg:order-2 lg:text-left">
+            <Handshake className="mx-auto size-10 text-primary lg:mx-0" />
+            <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
+              Ready to bring your campus together?
+            </h2>
+            <p className="mx-auto mt-4 max-w-xl text-muted-foreground lg:mx-0">
+              Sign in with your roll number and open your college&apos;s PlaceMate. Your default
+              password is your roll number — change it after your first login.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+              {user ? (
+                <Button
+                  size="lg"
+                  render={<Link href="/dashboard" />}
+                  className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+                >
+                  <LayoutDashboard className="size-4" /> Go to dashboard
+                </Button>
+              ) : (
+                <Button
+                  size="lg"
+                  render={<Link href="/login" />}
+                  className="bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-110"
+                >
+                  Sign in to PlaceMate <ArrowRight className="size-4" />
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </section>

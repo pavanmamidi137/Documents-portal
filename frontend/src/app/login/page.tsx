@@ -11,6 +11,7 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { UndrawIllustration } from "@/components/undraw-illustration";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/utils";
@@ -58,8 +59,23 @@ export default function LoginPage() {
         initial={{ opacity: 0, y: 24, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
-        className="relative w-full max-w-md"
+        className="relative grid w-full max-w-4xl items-center gap-10 lg:grid-cols-2"
       >
+        {/* Illustration beside the form on desktop (hidden on mobile) */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.96 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.55, delay: 0.12 }}
+          className="hidden lg:block"
+        >
+          <UndrawIllustration
+            name="online-security_1o24"
+            alt="Secure sign in"
+            className="w-full"
+          />
+        </motion.div>
+
+        <div className="w-full max-w-md justify-self-center">
         <div className="rounded-2xl border bg-card/80 p-8 shadow-2xl backdrop-blur-xl">
           <div className="mb-8 flex flex-col items-center text-center">
             <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/60 shadow-lg shadow-primary/30">
@@ -134,6 +150,7 @@ export default function LoginPage() {
             First time? Your default password is your <span className="font-semibold text-foreground">Roll Number</span>{" "}
             (in capitals) — you can change it after logging in.
           </p>
+        </div>
         </div>
       </motion.div>
     </div>

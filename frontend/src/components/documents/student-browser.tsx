@@ -442,6 +442,7 @@ export function StudentBrowser() {
             icon={BookOpen}
             title="No documents yet"
             description="Documents uploaded for your branch & section will appear here."
+            illustration="file-manager_ivlr"
           />
         ) : filteredSubjects.length === 0 ? (
           <EmptyState
@@ -452,6 +453,7 @@ export function StudentBrowser() {
                 ? "No subjects have documents in this semester yet — try another semester or All semesters."
                 : "Try a different search term."
             }
+            illustration="person-search_wuzp"
           />
         ) : (
           <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">

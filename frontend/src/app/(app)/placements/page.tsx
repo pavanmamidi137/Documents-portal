@@ -209,6 +209,7 @@ export default function PlacementsPage() {
                 : "New company drives will appear here as soon as they're posted."
               : "Drives move here after their last date to apply, and are removed 30 days later."
           }
+          illustration={tab === "open" ? "business-pitch_h9yw" : "online-calendar_iz1q"}
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">

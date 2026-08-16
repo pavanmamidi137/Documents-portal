@@ -38,6 +38,7 @@ export default function AuditLogsPage() {
   const debouncedQ = useDebouncedValue(q);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [clearing, setClearing] = useState<"selected" | "all" | null>(null);
+  const [clearingBusy, setClearingBusy] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["audit-logs", page, pageSize, debouncedQ],
@@ -91,7 +92,8 @@ export default function AuditLogsPage() {
   };
 
   const runClear = async () => {
-    if (!clearing) return;
+    if (!clearing || clearingBusy) return;
+    setClearingBusy(true);
     try {
       const res = clearing === "all"
         ? await http.post<{ deleted: number }>("/audit-logs/clear/", { all: true })
@@ -108,6 +110,7 @@ export default function AuditLogsPage() {
       toast.error(getErrorMessage(error));
     } finally {
       setClearing(null);
+      setClearingBusy(false);
     }
   };
 
@@ -246,7 +249,7 @@ export default function AuditLogsPage() {
         }
         confirmLabel="Clear"
         destructive
-        loading={!!clearing}
+        loading={clearingBusy}
         onConfirm={runClear}
       />
     </RoleGuard>

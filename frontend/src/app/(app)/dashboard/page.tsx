@@ -32,6 +32,7 @@ import {
 
 import { StatCard } from "@/components/stat-card";
 import { PageHeader } from "@/components/layout/page-header";
+import { UndrawIllustration } from "@/components/undraw-illustration";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -191,6 +192,11 @@ export default function DashboardPage() {
           >
             <Upload className="size-4" /> Upload Resume
           </Link>
+          <UndrawIllustration
+            name="profile_9xdn"
+            alt=""
+            className="hidden h-24 w-36 shrink-0 md:block"
+          />
         </motion.div>
       )}
 

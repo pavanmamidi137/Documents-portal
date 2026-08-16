@@ -808,6 +808,7 @@ export default function ResumePage() {
                 icon={FileUp}
                 title="No resume uploaded yet"
                 description="Upload your resume (PDF, DOC or DOCX) — faculty in your branch will be able to view it."
+                illustration="grading-papers_7fpu"
               />
               <div className="mt-6 flex flex-col items-center gap-3">
                 <Button onClick={pickFile} disabled={uploading} className="gap-2">

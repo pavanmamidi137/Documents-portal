@@ -44,7 +44,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      {/* suppressHydrationWarning on body too: browser extensions (e.g. the
+          cz-shortcut listener) inject attributes like cz-shortcut-listen onto
+          <body> before React hydrates, which would otherwise log a mismatch. */}
       <body
+        suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
       >
         <Providers>{children}</Providers>
