@@ -27,15 +27,15 @@ class FastPBKDF2PasswordHasher(PBKDF2PasswordHasher):
 
 
 class ImportPBKDF2PasswordHasher(PBKDF2PasswordHasher):
-    """Low-iteration PBKDF2 used ONLY for bulk CSV imports.
+    """Reduced-iteration PBKDF2 used ONLY for bulk CSV imports.
 
-    A bulk-imported account's default password is its roll number, which is
-    not a secret - hashing every row at full PBKDF2 strength would make large
-    imports take minutes on shared hosting. The encoded hash stores its own
-    iteration count, so verification works normally, and Django automatically
-    re-hashes it with the strong default hasher the first time the student
-    logs in.
+    Imported accounts get a cryptographically random initial password (never
+    the roll number), hashed at a moderate iteration count so large imports
+    finish quickly while the random secret stays resistant to offline
+    cracking. The encoded hash stores its own iteration count, so
+    verification works normally, and Django automatically re-hashes it with
+    the strong default hasher the first time the student logs in.
     """
 
     algorithm = "pbkdf2_sha256_import"
-    iterations = 1_000
+    iterations = 10_000

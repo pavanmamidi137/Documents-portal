@@ -262,7 +262,11 @@ def cloudinary_files_status(public_ids):
         return None
 
 
-def signed_raw_url(public_id: str, attachment: bool = False) -> str:
+def signed_raw_url(
+    public_id: str,
+    attachment: bool = False,
+    expires_seconds: int | None = None,
+) -> str:
     """Cloudinary delivery URL for a raw file, signed with the API secret.
 
     Some accounts restrict anonymous delivery ("Signed URLs" security setting
@@ -270,12 +274,22 @@ def signed_raw_url(public_id: str, attachment: bool = False) -> str:
     "deny or ACL failure" - the browser then shows "Failed to load PDF
     document". A signed URL is accepted by Cloudinary in that mode and is
     still harmless when delivery is unrestricted.
+
+    ``expires_seconds`` (optional) adds a TTL to the URL. Cloudinary enforces
+    the expiry for authenticated-type assets; for upload-type files (the
+    default) the parameter is harmless and becomes active the moment the
+    account enables authenticated/private delivery in the console - so a
+    leaked URL never works forever.
     """
     from cloudinary.utils import cloudinary_url
 
     options = {"resource_type": "raw", "sign_url": True}
     if attachment:
         options["flags"] = "attachment"
+    if expires_seconds:
+        import time
+
+        options["expires_at"] = int(time.time()) + int(expires_seconds)
     url, _ = cloudinary_url(public_id, **options)
     return url
 

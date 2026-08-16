@@ -280,11 +280,16 @@ class StudentViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        student = services.create_student(
+        student, initial_password = services.create_student(
             serializer.validated_data, request.user, request=request
         )
         invalidate_portal_caches("list:students", "list:status")
-        return Response(UserSerializer(student).data, status=status.HTTP_201_CREATED)
+        data = UserSerializer(student).data
+        if initial_password:
+            # One-time initial password - shown to the admin so they can hand
+            # it over; never returned again by any later endpoint.
+            data["initial_password"] = initial_password
+        return Response(data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
         student = self._get_student_or_404(kwargs["pk"])
@@ -384,6 +389,45 @@ class StudentViewSet(viewsets.ModelViewSet):
                   {"count": count, "all_matching": all_matching}, request)
         invalidate_portal_caches("list:students", "list:status")
         return Response({"deleted": count})
+
+    @action(detail=False, methods=["post"], permission_classes=[IsSuperAdminOrCR])
+    def bulk_reset_password(self, request):
+        """Reset many students to fresh RANDOM passwords in one request.
+
+        Pass ``{ids: [...]}`` for a selection or ``{all_matching: true}``
+        (with the same query params as the list) for every matching student.
+        Scope matches the other student endpoints: CRs may only reset students
+        inside their own section. Passwords are never derived from roll
+        numbers - each account gets a cryptographically random secret, and the
+        generated credentials are returned ONCE in the response so the admin
+        can hand them out.
+        """
+        all_matching = request.data.get("all_matching") in (True, "true", "1", 1)
+        qs = self.get_queryset().exclude(role=User.Role.SUPER_ADMIN)
+        if all_matching:
+            students = list(qs)
+            max_matches = int(getattr(settings, "BULK_DELETE_MAX_MATCHES", 5000))
+            if len(students) > max_matches:
+                raise ValidationError({
+                    "detail": (
+                        f"This would reset {len(students)} students, more than the "
+                        f"{max_matches}-student safety limit. Narrow your search or "
+                        "filters and try again."
+                    )
+                })
+        else:
+            raw_ids = request.data.get("ids")
+            if not isinstance(raw_ids, list) or not raw_ids:
+                raise ValidationError({"ids": "Provide a list of student ids to reset."})
+            ids = [int(i) for i in raw_ids if str(i).lstrip("-").isdigit()]
+            if not ids:
+                raise ValidationError({"ids": "Provide valid student ids."})
+            students = list(qs.filter(id__in=ids))
+        if not students:
+            return Response({"updated": 0, "credentials": []})
+        credentials = services.bulk_reset_passwords(students, request.user, request)
+        invalidate_portal_caches("list:students", "list:status")
+        return Response({"updated": len(credentials), "credentials": credentials})
 
     @action(detail=False, methods=["get"], permission_classes=[IsSuperAdminOrCR])
     def export_csv(self, request):
@@ -522,7 +566,11 @@ class FacultyViewSet(viewsets.ModelViewSet):
         faculty = serializer.save()
         log_audit(request.user, "CREATE", "Faculty", faculty.id,
                   {"roll_number": faculty.roll_number, "branch": faculty.branch_id}, request)
-        return Response(UserSerializer(faculty).data, status=status.HTTP_201_CREATED)
+        data = UserSerializer(faculty).data
+        initial_password = getattr(serializer, "_initial_password", None)
+        if initial_password:
+            data["initial_password"] = initial_password
+        return Response(data, status=status.HTTP_201_CREATED)
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -616,7 +664,11 @@ class AdminViewSet(viewsets.ModelViewSet):
         admin = serializer.save()
         log_audit(request.user, "CREATE", "Admin", admin.id,
                   {"roll_number": admin.roll_number}, request)
-        return Response(AdminUserSerializer(admin).data, status=status.HTTP_201_CREATED)
+        data = AdminUserSerializer(admin).data
+        initial_password = getattr(serializer, "_initial_password", None)
+        if initial_password:
+            data["initial_password"] = initial_password
+        return Response(data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
         self._require_primary_admin()
@@ -658,6 +710,7 @@ class AdminViewSet(viewsets.ModelViewSet):
         serializer = AdminCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         new_admin = serializer.save()
+        initial_password = getattr(serializer, "_initial_password", None)
         old = request.user
         old.role = User.Role.STUDENT
         old.is_staff = False
@@ -683,10 +736,13 @@ class AdminViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass  # a failed notification must never break the handover
-        return Response({
+        data = {
             "admin": AdminUserSerializer(new_admin).data,
             "transferred_from": old.roll_number,
-        })
+        }
+        if initial_password:
+            data["admin"]["initial_password"] = initial_password
+        return Response(data)
 
     @action(detail=False, methods=["get"])
     def candidates(self, request):

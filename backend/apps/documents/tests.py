@@ -1193,6 +1193,32 @@ class ShareRequestTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_cr_cannot_delete_document_from_another_section(self):
+        """BOLA guard: a CR must never delete another section's document.
+
+        The detail endpoint is queryset-scoped for CRs, so another section's
+        document is simply not found (404) - the row is untouched.
+        """
+        client = self._client(self.cr_b)  # CR B trying to delete A's document
+        response = client.delete(f"/api/documents/{self.source.id}/")
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Document.objects.filter(pk=self.source.id).exists())
+
+    def test_cr_can_delete_document_in_own_section(self):
+        own = Document.objects.create(
+            title="My Notes", description="",
+            file_name="own.pdf", file_size=1024,
+            cloudinary_url="https://res.cloudinary.com/x/raw/upload/v1/own.pdf",
+            public_id="own/pid-9",
+            branch=self.branch, section=self.section_b,
+            semester=self.semester, category=self.category,
+            subject=self.subject, uploaded_by=self.cr_b,
+        )
+        client = self._client(self.cr_b)
+        response = client.delete(f"/api/documents/{own.id}/")
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Document.objects.filter(pk=own.id).exists())
+
     def test_target_cr_accept_creates_copy(self):
         client = self._client(self.cr_a)
         req = client.post(

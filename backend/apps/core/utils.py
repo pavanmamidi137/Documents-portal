@@ -87,10 +87,22 @@ def get_or_set_list_cache(group, user, params, ttl, factory):
 
 
 def get_client_ip(request):
-    """Best-effort client IP extraction (respecting common proxies)."""
-    fwd = request.META.get("HTTP_X_FORWARDED_FOR")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """Client IP for audit logs - resistant to X-Forwarded-For spoofing.
+
+    The X-Forwarded-For header is client-controllable, so it is ONLY used
+    when the app is behind a trusted reverse proxy (TRUST_X_FORWARDED_FOR,
+    auto-enabled on Render). The trusted proxy appends the real client IP as
+    the LAST entry, so the last entry is taken - the earlier (spoofable)
+    entries are ignored. Otherwise the socket's REMOTE_ADDR is used.
+    """
+    from django.conf import settings
+
+    if getattr(settings, "TRUST_X_FORWARDED_FOR", False):
+        fwd = request.META.get("HTTP_X_FORWARDED_FOR")
+        if fwd:
+            parts = [p.strip() for p in fwd.split(",") if p.strip()]
+            if parts:
+                return parts[-1]
     return request.META.get("REMOTE_ADDR")
 
 

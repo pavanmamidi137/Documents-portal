@@ -175,7 +175,7 @@ const STEPS = [
   {
     step: "01",
     title: "Sign in with your roll number",
-    text: "Students and CRs sign in with their Roll Number — the first-time password is the roll number itself.",
+    text: "Students and CRs sign in with their Roll Number and the initial password your admin or CR gives you.",
   },
   {
     step: "02",
@@ -730,8 +730,8 @@ function MobileHomePage() {
 
         {!user && (
           <p className="mt-6 text-center text-xs text-muted-foreground">
-            Students &amp; CRs sign in with their roll number — the first-time password is the roll
-            number itself.
+            Students &amp; CRs sign in with their roll number and the initial password your admin or
+            CR gives you.
           </p>
         )}
       </main>
@@ -1258,8 +1258,8 @@ function DesktopHomePage() {
               Ready to bring your campus together?
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-muted-foreground lg:mx-0">
-              Sign in with your roll number and open your college&apos;s PlaceMate. Your default
-              password is your roll number — change it after your first login.
+              Sign in with your roll number and open your college&apos;s PlaceMate. Use the initial
+              password your admin or CR gives you — change it after your first login.
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
               {user ? (

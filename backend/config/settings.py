@@ -157,6 +157,20 @@ CACHES = {
 }
 
 # ---------------------------------------------------------------------------
+# Proxy trust (audit-log IPs)
+# ---------------------------------------------------------------------------
+# Audit logs record the client IP. A client can forge the X-Forwarded-For
+# header, so it is only trusted when the app sits behind the platform's
+# reverse proxy (Render injects RENDER=true). The proxy APPENDS the real
+# client IP as the LAST X-Forwarded-For entry, so we take the last entry -
+# earlier ones are client-controllable. Set TRUST_X_FORWARDED_FOR=0 to force
+# REMOTE_ADDR even on Render.
+TRUST_X_FORWARDED_FOR = (
+    os.getenv("TRUST_X_FORWARDED_FOR", "1" if os.getenv("RENDER") else "0").lower()
+    in ("1", "true", "yes")
+)
+
+# ---------------------------------------------------------------------------
 # DRF + JWT
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK = {

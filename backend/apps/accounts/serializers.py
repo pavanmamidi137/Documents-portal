@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from . import services
 from .models import AiAccessConfig, Portfolio, Resume, User, derive_passout_year
 
 
@@ -212,8 +213,9 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         roll_number = validated_data.pop("roll_number")
-        # Default password is the student's roll number (in capitals).
-        password = validated_data.pop("password", None) or roll_number
+        # A random initial password is generated when none is provided - the
+        # account NEVER defaults to the publicly-predictable roll number.
+        password = validated_data.pop("password", None) or services.generate_secure_password()
         # Batch/pass-out year defaults from the roll number when not provided.
         passout_year = (
             validated_data.pop("passout_year", None) or derive_passout_year(roll_number)
@@ -249,7 +251,12 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
 
 
 class AdminCreateSerializer(serializers.ModelSerializer):
-    """Super Admin creates another admin account (default password = roll number)."""
+    """Super Admin creates another admin account (random initial password).
+
+    When no password is supplied a cryptographically random one is generated
+    and exposed once via ``serializer._initial_password`` (the view returns it
+    so the admin can hand it over).
+    """
 
     password = serializers.CharField(write_only=True, min_length=6, required=False, allow_blank=True)
 
@@ -281,7 +288,10 @@ class AdminCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         roll_number = validated_data.pop("roll_number")
-        password = validated_data.pop("password", None) or roll_number
+        provided = validated_data.pop("password", None)
+        password = provided or services.generate_secure_password()
+        if not provided:
+            self._initial_password = password
         # Match create_superuser: new admins also get Django admin access.
         return User.objects.create_user(
             roll_number, password, **validated_data,
@@ -290,7 +300,11 @@ class AdminCreateSerializer(serializers.ModelSerializer):
 
 
 class FacultyCreateSerializer(serializers.ModelSerializer):
-    """Admin creates a faculty account (roll number + branch + default password)."""
+    """Admin creates a faculty account (roll number + branch + random password).
+
+    When no password is supplied a cryptographically random one is generated
+    and exposed once via ``serializer._initial_password``.
+    """
 
     password = serializers.CharField(write_only=True, min_length=6, required=False, allow_blank=True)
 
@@ -321,7 +335,10 @@ class FacultyCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         roll_number = validated_data.pop("roll_number")
-        password = validated_data.pop("password", None) or roll_number
+        provided = validated_data.pop("password", None)
+        password = provided or services.generate_secure_password()
+        if not provided:
+            self._initial_password = password
         return User.objects.create_user(roll_number, password, **validated_data)
 
 
@@ -377,6 +394,14 @@ class ResumeSerializer(serializers.ModelSerializer):
         source="reviewed_by.full_name", read_only=True, default=None
     )
     ats_viewed_at = serializers.DateTimeField(read_only=True)
+    # Signed delivery URL - the raw stored Cloudinary URL is never exposed to
+    # the API (a leaked raw URL would let anyone fetch the file without auth).
+    cloudinary_url = serializers.SerializerMethodField()
+
+    def get_cloudinary_url(self, obj) -> str:
+        from apps.documents.services import signed_raw_url
+
+        return signed_raw_url(obj.public_id, expires_seconds=7200)
 
     class Meta:
         model = Resume
@@ -409,6 +434,27 @@ class PortfolioSerializer(serializers.ModelSerializer):
     """The Super Admin's private resume workspace - includes the AI reviews."""
 
     owner_name = serializers.CharField(source="user.full_name", read_only=True)
+    # Every file URL is delivered through a signed Cloudinary URL - the raw
+    # stored URLs (resume, rebuilt .docx / .pdf) are never exposed.
+    cloudinary_url = serializers.SerializerMethodField()
+    rebuilt_docx_url = serializers.SerializerMethodField()
+    rebuilt_pdf_url = serializers.SerializerMethodField()
+
+    def _signed(self, public_id: str) -> str:
+        if not public_id:
+            return ""
+        from apps.documents.services import signed_raw_url
+
+        return signed_raw_url(public_id, expires_seconds=7200)
+
+    def get_cloudinary_url(self, obj) -> str:
+        return self._signed(obj.public_id)
+
+    def get_rebuilt_docx_url(self, obj) -> str:
+        return self._signed(obj.rebuilt_docx_public_id)
+
+    def get_rebuilt_pdf_url(self, obj) -> str:
+        return self._signed(obj.rebuilt_pdf_public_id)
 
     class Meta:
         model = Portfolio

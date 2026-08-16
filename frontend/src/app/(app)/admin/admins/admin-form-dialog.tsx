@@ -62,22 +62,30 @@ export function AdminFormDialog({ open, onOpenChange, mode, onTransferred }: Pro
     };
     try {
       if (mode === "transfer") {
-        const res = await http.post<{ admin: User; transferred_from: string }>(
+        const res = await http.post<{ admin: User & { initial_password?: string }; transferred_from: string }>(
           "/admins/transfer/",
           payload
         );
         const roll = res.admin.roll_number;
+        const password = res.admin.initial_password ?? "";
         toast.success(
-          `Admin access transferred to ${res.admin.full_name}. Hand them these credentials: roll ${roll}, password ${roll}.`,
+          password
+            ? `Admin access transferred to ${res.admin.full_name}. Hand them these credentials: roll ${roll}, password ${password}.`
+            : `Admin access transferred to ${res.admin.full_name}.`,
           { duration: 8000 }
         );
         onOpenChange(false);
         onTransferred?.();
       } else {
-        await http.post("/admins/", payload);
-        toast.success(
-          `Admin account created for ${values.full_name.trim()}. Default password is their roll number (in capitals).`
-        );
+        const res = await http.post<{ initial_password?: string }>("/admins/", payload);
+        if (res.initial_password) {
+          toast.success(
+            `Admin account created for ${values.full_name.trim()}. Initial password: ${res.initial_password} — share it with them.`,
+            { duration: 8000 }
+          );
+        } else {
+          toast.success(`Admin account created for ${values.full_name.trim()}.`);
+        }
         onOpenChange(false);
       }
     } catch (error) {
@@ -100,7 +108,7 @@ export function AdminFormDialog({ open, onOpenChange, mode, onTransferred }: Pro
           <DialogDescription>
             {mode === "transfer"
               ? "Create the new admin's account. Once transferred, your own admin access ends immediately and you will be signed out."
-              : "Create another admin account with full portal access. Default password is the roll number."}
+              : "Create another admin account with full portal access. A secure random initial password is generated and shown once — hand it over."}
           </DialogDescription>
         </DialogHeader>
 

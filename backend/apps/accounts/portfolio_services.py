@@ -29,6 +29,7 @@ from apps.placements.resume_ai import (
     _extract_resume_text,
     _is_pdf_file,
     _ocr_resume_pdf,
+    _prepare_resume_brief,
 )
 
 from .models import Portfolio, User
@@ -285,7 +286,9 @@ def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
         ])
         return _portfolio_payload(portfolio)
 
-    brief = text.strip()[:_BRIEF_CHARS]
+    # PII (emails / phones / URLs) is redacted before the review prompt - the
+    # model only rates the content, it never needs the contact details.
+    brief = _prepare_resume_brief(text, _BRIEF_CHARS)
     try:
         raw = ai_json(
             _PORTFOLIO_REVIEW_PROMPT, brief, max_tokens=800,
@@ -588,7 +591,9 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
         ])
         return _portfolio_payload(portfolio)
 
-    brief = text.strip()[:_BRIEF_CHARS]
+    # PII redacted before any AI call - the rebuild regenerates contact
+    # details from the account profile, so the model never needs the raw ones.
+    brief = _prepare_resume_brief(text, _BRIEF_CHARS)
     # Optional target requirements (job description / package / role) - when
     # provided the AI tailors the resume toward them and the reviews rate how
     # well the resume hits them.
@@ -634,7 +639,9 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
         try:
             raw_source = ai_json(
                 _SOURCE_CODE_REVIEW_PROMPT,
-                (portfolio.resume_source + req_note)[:_MAX_TEXT_CHARS],
+                _prepare_resume_brief(
+                    portfolio.resume_source + req_note, _MAX_TEXT_CHARS
+                ),
                 max_tokens=800, usage_callback=usage, task="RESUME_ANALYSIS",
             )
             source_review = normalize_resume_report(raw_source)

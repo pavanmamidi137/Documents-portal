@@ -5,6 +5,8 @@ out of the view layer and reusable across the API and management commands.
 """
 import csv
 import io
+import secrets
+import string
 
 from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, close_old_connections, transaction
@@ -15,6 +17,48 @@ from apps.core.utils import log_audit
 from .models import Resume, User, derive_passout_year
 
 CSV_REQUIRED_COLUMNS = {"roll number", "student name"}
+
+# Characters used for generated initial passwords. Excludes look-alikes
+# (0/O, 1/l/I) so a password handed over on paper is never misread.
+_INITIAL_PASSWORD_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits + "-_."
+
+
+def generate_secure_password(length: int = 14) -> str:
+    """Cryptographically random initial password (never derived from data).
+
+    Security: accounts must NEVER default to a predictable password (the roll
+    number is public knowledge - spraying it across /login would take over
+    every unclaimed account). Every new account gets a random password that
+    the admin hands over; the student can change it after first login.
+    """
+    alphabet = _INITIAL_PASSWORD_ALPHABET.replace("0", "").replace("O", "").replace("1", "").replace("l", "").replace("I", "")
+    return "".join(secrets.choice(alphabet) for _ in range(max(8, length)))
+
+
+def _sanitize_csv_cell(value: str) -> str:
+    """Neutralize CSV formula injection on ingest (defense in depth).
+
+    Excel/Sheets treat cells starting with ``= + - @`` (or tab/CR) as
+    formulas - a crafted cell like ``=cmd|' /C calc'!A0`` or
+    ``=HYPERLINK(...)`` would execute on an admin's machine when the data is
+    later opened in a spreadsheet. Stored values get a leading ``'`` (the
+    spreadsheet text marker) so they can never execute. A phone like
+    ``+91 7799...`` stays untouched - ``+`` followed by digits is not a
+    formula and prefixing it would corrupt the number.
+    """
+    text = (value or "").strip()
+    if not text:
+        return text
+    first = text[0]
+    if first in ("=", "@", "\t", "\r"):
+        return "'" + text
+    if first in ("+", "-"):
+        # "+91 7799" is a phone (digits/spaces only); "+HYPERLINK(...)" or
+        # "-1+2" is a formula (contains letters or operators).
+        rest = text[1:]
+        if any(ch.isalpha() for ch in rest) or any(ch in "+-*/([=!" for ch in rest):
+            return "'" + text
+    return text
 # Optional header aliases for the batch pass-out year column.
 PASSOUT_ALIASES = {
     "passout year", "passout", "passoutyear", "batch", "year of passout",
@@ -36,15 +80,18 @@ def _normalize_gender(raw: str):
 
 
 @transaction.atomic
-def create_student(data: dict, actor: User, request=None) -> User:
+def create_student(data: dict, actor: User, request=None) -> tuple[User, str | None]:
     """Create a student account with audit logging.
 
-    Roll numbers are stored in UPPERCASE and the default password is the
-    student's own roll number (they can change it after first login).
+    Roll numbers are stored in UPPERCASE. When no password is supplied a
+    cryptographically random one is generated and returned so the admin can
+    hand it over - the account NEVER defaults to the (publicly predictable)
+    roll number. Returns ``(student, initial_password_or_None)``.
     """
     data.setdefault("role", User.Role.STUDENT)
     roll_number = data.pop("roll_number").strip().upper()
-    password = data.pop("password", None) or roll_number
+    provided = data.pop("password", None)
+    password = provided or generate_secure_password()
     # Default pass-out year comes from the roll number when not provided.
     passout_year = data.pop("passout_year", None) or derive_passout_year(roll_number)
     student = User.objects.create_user(
@@ -55,7 +102,7 @@ def create_student(data: dict, actor: User, request=None) -> User:
         {"roll_number": student.roll_number, "branch": student.branch_id, "section": student.section_id},
         request,
     )
-    return student
+    return student, None if provided else password
 
 
 @transaction.atomic
@@ -216,6 +263,24 @@ def reset_password(student: User, new_password: str, actor: User, request=None) 
               {"roll_number": student.roll_number}, request)
 
 
+@transaction.atomic
+def bulk_reset_passwords(students: list[User], actor: User, request=None) -> list[dict]:
+    """Reset many students to fresh random passwords (never the roll number).
+
+    Returns ``[{roll_number, password}, ...]`` - the one-time credentials the
+    admin hands out. Each reset is audit-logged.
+    """
+    credentials: list[dict] = []
+    for student in students:
+        password = generate_secure_password()
+        student.set_password(password)
+        student.save(update_fields=["password"])
+        log_audit(actor, "PASSWORD_RESET", "Student", student.id,
+                  {"roll_number": student.roll_number}, request)
+        credentials.append({"roll_number": student.roll_number, "password": password})
+    return credentials
+
+
 def import_students_csv(file, actor: User, request=None, branch_id=None, section_id=None) -> dict:
     """Import students from an uploaded CSV.
 
@@ -289,11 +354,16 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
         if not roll or not full_name:
             errors.append({"row": seen, "error": "Missing roll number or student name."})
             continue
+        # Every free-text field is neutralized against CSV formula injection
+        # (Excel/Sheets treat leading = + - @ as formulas) before it is stored.
+        full_name = _sanitize_csv_cell(full_name)
         # Emails are normalized to lowercase for consistency with the
         # profile-update path (avoids case-duplicate accounts).
         email = ((row.get(header_map.get("email")) or "").strip().lower()
                  if header_map.get("email") else "")
+        email = _sanitize_csv_cell(email)
         phone = (row.get(header_map.get("phone")) or "").strip() if header_map.get("phone") else ""
+        phone = _sanitize_csv_cell(phone)
         gender = (
             _normalize_gender(row.get(gender_col))
             if gender_col else ""
@@ -394,29 +464,38 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
                 student.passout_year = r["passout_year"]
             update_pairs.append((r, student))
 
+        credentials: list[dict] = []
         if create_rows:
-            # Default password is the roll number (in capitals), hashed with the
-            # lightweight ImportPBKDF2 hasher - Django upgrades it to full
-            # PBKDF2 on the student's first login.
+            # Every new account gets a cryptographically random initial
+            # password (never the publicly-predictable roll number), hashed
+            # with the lightweight ImportPBKDF2 hasher - Django upgrades it to
+            # full PBKDF2 on the student's first login. The generated
+            # passwords are returned in the import result so the admin can
+            # hand them out.
+            passwords = [generate_secure_password() for _ in create_rows]
             created_users = [
                 User(
                     roll_number=r["roll"], full_name=r["full_name"],
                     email=r["email"] or None, phone=r["phone"], gender=r["gender"],
                     role=User.Role.STUDENT, branch=branch, section=section,
                     passout_year=r["passout_year"],
-                    password=make_password(r["roll"], hasher="pbkdf2_sha256_import"),
+                    password=make_password(pw, hasher="pbkdf2_sha256_import"),
                 )
-                for r in create_rows
+                for r, pw in zip(create_rows, passwords)
             ]
             try:
                 User.objects.bulk_create(created_users, batch_size=500)
                 created = len(create_rows)
+                credentials = [
+                    {"roll_number": r["roll"], "password": pw}
+                    for r, pw in zip(create_rows, passwords)
+                ]
             except IntegrityError:
                 # A racing insert (e.g. an email created between the check and
                 # the write) - fall back to one-by-one so only the conflicting
                 # row is reported and skipped.
                 created = 0
-                for r, u in zip(create_rows, created_users):
+                for r, u, pw in zip(create_rows, created_users, passwords):
                     try:
                         User.objects.create(
                             roll_number=u.roll_number, full_name=u.full_name,
@@ -425,6 +504,7 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
                             passout_year=u.passout_year, password=u.password,
                         )
                         created += 1
+                        credentials.append({"roll_number": r["roll"], "password": pw})
                     except IntegrityError:
                         errors.append({
                             "row": r["seen"], "roll_number": r["roll"],
@@ -459,7 +539,14 @@ def import_students_csv(file, actor: User, request=None, branch_id=None, section
 
     log_audit(actor, "CSV_IMPORT", "Student", "",
               {"created": created, "updated": updated, "errors": len(errors)}, request)
-    return {"created": created, "updated": updated, "skipped_errors": errors}
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped_errors": errors,
+        # One-time initial passwords for every NEWLY created account - the
+        # admin hands these out. Never persisted anywhere except this response.
+        "credentials": credentials,
+    }
 
 
 # ---------------------------------------------------------------------------

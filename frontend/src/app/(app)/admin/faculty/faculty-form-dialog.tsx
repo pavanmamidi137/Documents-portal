@@ -95,7 +95,7 @@ export function FacultyFormDialog({ open, onOpenChange, faculty, meta, onSaved }
         });
         toast.success("Faculty member updated.");
       } else {
-        await http.post("/faculty/", {
+        const res = await http.post<{ initial_password?: string }>("/faculty/", {
           roll_number: values.roll_number.trim().toUpperCase(),
           full_name: values.full_name.trim(),
           email: values.email?.trim() || null,
@@ -103,7 +103,14 @@ export function FacultyFormDialog({ open, onOpenChange, faculty, meta, onSaved }
           branch: Number(values.branch),
           faculty_access: values.faculty_access,
         });
-        toast.success("Faculty member added. Default password is their roll number (in capitals).");
+        if (res.initial_password) {
+          toast.success(
+            `Faculty member added. Initial password: ${res.initial_password} — share it with them.`,
+            { duration: 8000 }
+          );
+        } else {
+          toast.success("Faculty member added.");
+        }
       }
       onSaved();
       onOpenChange(false);
@@ -123,7 +130,7 @@ export function FacultyFormDialog({ open, onOpenChange, faculty, meta, onSaved }
           <DialogDescription>
             {faculty
               ? "Update the faculty member's details and portal access."
-              : "Create a faculty account and choose which portal(s) they can use. Default password is the roll number."}
+              : "Create a faculty account and choose which portal(s) they can use. A secure random initial password is generated and shown once — hand it over."}
           </DialogDescription>
         </DialogHeader>
 

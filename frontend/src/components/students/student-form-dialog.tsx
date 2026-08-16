@@ -97,9 +97,10 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
   }, [open, student, reset]);
 
   // When creating a student, guess the pass-out year from the roll number's
-  // leading two digits (21CSE01 -> 2025) and prefill it - the admin can still
-  // override it. Guard for the first render: `watch` is still undefined until
-  // the reset effect populates the form, so trimming it would crash the dialog.
+  // leading two digits (23MH1A05I6 -> 2027) and prefill it - the admin can
+  // still override it. Guard for the first render: `watch` is still undefined
+  // until the reset effect populates the form, so trimming it would crash the
+  // dialog.
   useEffect(() => {
     if (editing || !open) return;
     const m = (roll ?? "").trim().match(/^(\d{2})/);
@@ -129,7 +130,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
         });
         toast.success("Student updated.");
       } else {
-        await http.post("/students/", {
+        const res = await http.post<{ initial_password?: string }>("/students/", {
           roll_number: values.roll_number.trim(),
           full_name: values.full_name.trim(),
           email: values.email || null,
@@ -139,7 +140,13 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
           branch: values.branch ? Number(values.branch) : null,
           section: values.section ? Number(values.section) : null,
         });
-        toast.success("Student added.");
+        if (res.initial_password) {
+          // The random initial password is shown ONCE - share it with the
+          // student; it is never returned by any later endpoint.
+          toast.success(`Student added. Initial password: ${res.initial_password} — share it with the student.`);
+        } else {
+          toast.success("Student added.");
+        }
       }
       onSaved();
       onOpenChange(false);
@@ -166,7 +173,7 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
             <div className="space-y-2">
               <Label>Roll Number</Label>
               <Input
-                placeholder="e.g. 21CSE07"
+                placeholder="e.g. 23MH1A05I6"
                 disabled={editing}
                 {...register("roll_number")}
               />
@@ -268,10 +275,10 @@ export function StudentFormDialog({ open, onOpenChange, student, meta, isCr = fa
 
           {!editing && (
             <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-              <p className="font-medium text-foreground">No password needed</p>
+              <p className="font-medium text-foreground">Random initial password</p>
               <p className="mt-0.5">
-                The student&apos;s default password is their <span className="font-semibold">Roll Number</span>{" "}
-                (in capitals). They can change it after their first login.
+                A secure random password is generated for this student and shown once after adding —{" "}
+                hand it over. They can change it after their first login.
               </p>
             </div>
           )}

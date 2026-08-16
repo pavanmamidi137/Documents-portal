@@ -93,7 +93,7 @@ export default function LoginPage() {
               <Label htmlFor="roll_number">Roll Number</Label>
               <Input
                 id="roll_number"
-                placeholder="e.g. 21CSE01"
+                placeholder="e.g. 23MH1A05I6"
                 autoComplete="username"
                 className="h-11"
                 {...register("roll_number")}
@@ -147,8 +147,8 @@ export default function LoginPage() {
             Students &amp; CRs sign in with their roll number &amp; password.
           </p>
           <p className="mt-2 text-center text-xs text-muted-foreground">
-            First time? Your default password is your <span className="font-semibold text-foreground">Roll Number</span>{" "}
-            (in capitals) — you can change it after logging in.
+            First time? Ask your admin or CR for the initial password they gave you — you can change
+            it after logging in.
           </p>
         </div>
         </div>

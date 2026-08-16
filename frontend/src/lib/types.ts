@@ -349,6 +349,18 @@ export interface ImportResult {
   created: number;
   updated: number;
   skipped_errors: { row: number; roll_number?: string; error: string }[];
+  /** One-time random passwords for every NEWLY created account (hand these out). */
+  credentials?: { roll_number: string; password: string }[];
+}
+
+/** A create response that may include the one-time random initial password. */
+export interface CreatedWithPassword {
+  initial_password?: string;
+}
+
+export interface BulkResetResult {
+  updated: number;
+  credentials: { roll_number: string; password: string }[];
 }
 
 export type NotificationKind =

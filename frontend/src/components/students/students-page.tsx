@@ -6,6 +6,7 @@ import {
   ArrowUpCircle,
   ArrowDownCircle,
   BrainCircuit,
+  Copy,
   Download,
   FileSpreadsheet,
   KeyRound,
@@ -56,7 +57,7 @@ import { CsvImportDialog } from "./csv-import-dialog";
 import { http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
-import type { AiAccessConfig, MetaData, Paginated, User } from "@/lib/types";
+import type { AiAccessConfig, BulkResetResult, MetaData, Paginated, User } from "@/lib/types";
 import { formatDate, getErrorMessage, roleColor } from "@/lib/utils";
 
 interface Props {
@@ -86,6 +87,8 @@ export function StudentsPage({ meta, isCr = false }: Props) {
   const [bulkTargets, setBulkTargets] = useState<User[]>([]);
   const [pendingBulk, setPendingBulk] = useState<BulkAction | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
+  // One-time random passwords returned by a bulk reset - shown in a dialog.
+  const [bulkCredentials, setBulkCredentials] = useState<{ roll_number: string; password: string }[] | null>(null);
   // "Select all across all pages" - deletes every student matching the
   // current search/filters in one request instead of one row at a time.
   const [selectAllMatching, setSelectAllMatching] = useState(false);
@@ -255,15 +258,29 @@ export function StudentsPage({ meta, isCr = false }: Props) {
         } catch {
           failed.push(...targets.map((s) => s.roll_number));
         }
+      } else if (action.type === "reset_password") {
+        // ONE request - every selected student gets a fresh RANDOM password
+        // (never the predictable roll number). The one-time credentials come
+        // back in the response and are shown in a dialog to hand out.
+        try {
+          const res = await http.post<BulkResetResult>("/students/bulk_reset_password/", {
+            ids: targets.map((s) => s.id),
+          });
+          ok = res.updated;
+          if (res.credentials.length > 0) setBulkCredentials(res.credentials);
+          const skipped = targets.length - res.updated;
+          if (skipped > 0) {
+            failed.push(
+              `${skipped} could not be reset (outside your section scope or already removed)`
+            );
+          }
+        } catch {
+          failed.push(...targets.map((s) => s.roll_number));
+        }
       } else {
         for (const s of targets) {
           try {
             switch (action.type) {
-              case "reset_password":
-                await http.post(`/students/${s.id}/reset_password/`, {
-                  new_password: s.roll_number,
-                });
-                break;
               case "activate":
                 await http.post(`/students/${s.id}/activate/`);
                 break;
@@ -711,7 +728,7 @@ export function StudentsPage({ meta, isCr = false }: Props) {
                   />
                   <DropdownMenuContent align="end" className="w-60">
                     <DropdownMenuItem onClick={() => requestBulk({ type: "reset_password", doneLabel: "password reset" })}>
-                      <KeyRound className="size-4" /> Reset password to roll number
+                      <KeyRound className="size-4" /> Reset to random passwords
                     </DropdownMenuItem>
                     {isAdmin && (
                       <>
@@ -810,6 +827,12 @@ export function StudentsPage({ meta, isCr = false }: Props) {
           setPendingBulk(null);
         }}
       />
+
+      {/* One-time random passwords from a bulk reset - shown once to hand out. */}
+      <BulkCredentialsDialog
+        credentials={bulkCredentials}
+        onClose={() => setBulkCredentials(null)}
+      />
     </div>
   );
 }
@@ -868,6 +891,61 @@ function ResetPasswordDialog({
             {loading && <Loader2 className="size-4 animate-spin" />}
             Reset Password
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BulkCredentialsDialog({
+  credentials,
+  onClose,
+}: {
+  credentials: { roll_number: string; password: string }[] | null;
+  onClose: () => void;
+}) {
+  const allText = (credentials ?? []).map((c) => `${c.roll_number},${c.password}`).join("\n");
+  return (
+    <Dialog open={!!credentials} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="size-5 text-primary" /> New passwords
+          </DialogTitle>
+          <DialogDescription>
+            These one-time random passwords are shown only now — copy or save them and share with the
+            students. They can change their password after their first login.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border">
+          {(credentials ?? []).map((c) => (
+            <div
+              key={c.roll_number}
+              className="flex items-center justify-between gap-2 border-b px-3 py-1.5 text-sm last:border-b-0"
+            >
+              <span className="font-mono font-medium">{c.roll_number}</span>
+              <span className="flex items-center gap-2 font-mono text-muted-foreground">
+                {c.password}
+                <button
+                  type="button"
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                  title="Copy password"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(c.password);
+                    toast.success("Password copied.");
+                  }}
+                >
+                  <Copy className="size-3.5" />
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => void navigator.clipboard.writeText(allText)} disabled={!credentials?.length}>
+            <Copy className="size-4" /> Copy all
+          </Button>
+          <Button onClick={onClose}>Done</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1090,7 +1168,7 @@ function bulkConfirmTitle(action: BulkAction | null, count: number): string {
     case "delete":
       return `Delete ${count} student${count === 1 ? "" : "s"}?`;
     case "reset_password":
-      return "Reset passwords to roll numbers?";
+      return `Reset ${count} password${count === 1 ? "" : "s"} to random values?`;
     case "promote":
       return `Promote ${count} student${count === 1 ? "" : "s"} to CR?`;
     case "demote":
@@ -1105,7 +1183,7 @@ function bulkConfirmDescription(action: BulkAction | null): string {
     case "delete":
       return "This permanently removes these student accounts. This cannot be undone.";
     case "reset_password":
-      return "Each student's password is reset to their Roll Number (in capitals). They can change it after logging in.";
+      return "Each student gets a fresh random password — the one-time passwords are shown after, so you can share them. Students can change them after logging in.";
     case "promote":
       return "Selected students become CRs and can manage their assigned section. They need a branch and section assigned.";
     case "demote":

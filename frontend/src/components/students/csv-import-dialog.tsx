@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle2, Download, FileSpreadsheet, Loader2, UploadCloud, XCircle } from "lucide-react";
+import { CheckCircle2, Copy, Download, FileSpreadsheet, KeyRound, Loader2, UploadCloud, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -35,8 +35,8 @@ interface Props {
 
 const SAMPLE_CSV = [
   "Roll Number,Student Name,Phone,Email,Gender,Passout Year",
-  "21CSE01,Aarav Sharma,9876543210,aarav@example.com,Male,2025",
-  "21CSE02,Bhavya Reddy,9876543211,bhavya@example.com,Female,2025",
+  "23MH1A05I6,Aarav Sharma,9876543210,aarav@example.com,Male,2027",
+  "23MH1A05I7,Bhavya Reddy,9876543211,bhavya@example.com,Female,2027",
 ].join("\n");
 
 function downloadSample() {
@@ -123,8 +123,8 @@ export function CsvImportDialog({ open, onOpenChange, onImported, meta, isCr = f
           </DialogTitle>
           <DialogDescription>
             {isCr
-              ? "Your CSV needs these columns: Roll Number, Student Name, Phone, Email, Gender (all optional except roll number & name). Passout Year is optional too — guessed from the roll number when blank. Roll numbers are saved in capitals and the default password is the Roll Number. Every student is added to your assigned section."
-              : "Your CSV needs these columns: Roll Number, Student Name, Phone, Email, Gender (all optional except roll number & name). Passout Year is optional too — guessed from the roll number when blank. Roll numbers are saved in capitals and the default password is the Roll Number. Choose the branch and section below — every row is added there."}
+              ? "Your CSV needs these columns: Roll Number, Student Name, Phone, Email, Gender (all optional except roll number & name). Passout Year is optional too — guessed from the roll number when blank. Every new student gets a secure random password shown after the import. Every student is added to your assigned section."
+              : "Your CSV needs these columns: Roll Number, Student Name, Phone, Email, Gender (all optional except roll number & name). Passout Year is optional too — guessed from the roll number when blank. Every new student gets a secure random password shown after the import. Choose the branch and section below — every row is added there."}
           </DialogDescription>
         </DialogHeader>
 
@@ -162,6 +162,55 @@ export function CsvImportDialog({ open, onOpenChange, onImported, meta, isCr = f
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {result.credentials && result.credentials.length > 0 && (
+              <div className="rounded-xl border bg-amber-500/5 p-3 text-sm">
+                <p className="mb-1.5 flex items-center justify-between gap-2 font-medium text-amber-600 dark:text-amber-400">
+                  <span className="flex items-center gap-1.5">
+                    <KeyRound className="size-4" /> Initial passwords ({result.credentials.length})
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded-md px-1.5 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                    onClick={() => {
+                      const text = (result.credentials ?? [])
+                        .map((c) => `${c.roll_number},${c.password}`)
+                        .join("\n");
+                      void navigator.clipboard.writeText(text);
+                      toast.success("Passwords copied — share them with the students.");
+                    }}
+                  >
+                    Copy all
+                  </button>
+                </p>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  These one-time passwords are shown only now — copy or save them before closing. Students can change them after first login.
+                </p>
+                <div className="max-h-40 overflow-y-auto rounded-lg border bg-background/60">
+                  {result.credentials.map((c) => (
+                    <div
+                      key={c.roll_number}
+                      className="flex items-center justify-between gap-2 border-b px-2.5 py-1 text-xs last:border-b-0"
+                    >
+                      <span className="font-mono font-medium">{c.roll_number}</span>
+                      <span className="flex items-center gap-1.5 font-mono text-muted-foreground">
+                        {c.password}
+                        <button
+                          type="button"
+                          className="text-muted-foreground transition-colors hover:text-foreground"
+                          title="Copy password"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(c.password);
+                            toast.success("Password copied.");
+                          }}
+                        >
+                          <Copy className="size-3" />
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             <Button className="w-full" onClick={reset}>
