@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .views import DashboardView, health
 from .views_audit import AuditLogViewSet
 from .views_contact import ContactRequestViewSet
+from .views_feedback import FeedbackViewSet
 from .views_notifications import NotificationViewSet
 from .views_search import SearchView
 from .views_settings import ResumeDownloadSettingView, SiteThemeView
@@ -12,6 +13,7 @@ router = DefaultRouter()
 router.register("audit-logs", AuditLogViewSet, basename="audit-logs")
 router.register("notifications", NotificationViewSet, basename="notifications")
 router.register("contact-requests", ContactRequestViewSet, basename="contact-requests")
+router.register("feedback", FeedbackViewSet, basename="feedback")
 
 urlpatterns = [
     path("health/", health, name="health"),

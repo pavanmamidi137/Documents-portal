@@ -75,6 +75,7 @@ class Notification(models.Model):
         DRIVE = "DRIVE", "Placement Drive"
         AI_RESUME = "AI_RESUME", "AI Resume Review"
         AI_REPORT = "AI_REPORT", "AI Health Report"
+        FEEDBACK = "FEEDBACK", "Feedback"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -131,3 +132,43 @@ class ContactRequest(models.Model):
 
     def __str__(self) -> str:
         return f"{self.subject} by {self.sender}"
+
+
+class Feedback(models.Model):
+    """Student feedback & feature ideas submitted from the portal.
+
+    Ideas the admin implements are shown publicly on the home page with the
+    submitter's name as credit ("Built from your ideas").
+    """
+
+    class Kind(models.TextChoices):
+        IDEA = "IDEA", "Idea"
+        FEEDBACK = "FEEDBACK", "Feedback"
+
+    class Status(models.TextChoices):
+        NEW = "NEW", "New"
+        APPROVED = "APPROVED", "Approved"
+        IMPLEMENTED = "IMPLEMENTED", "Implemented"
+        DECLINED = "DECLINED", "Declined"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="feedback",
+    )
+    kind = models.CharField(
+        max_length=10, choices=Kind.choices, default=Kind.IDEA, db_index=True
+    )
+    title = models.CharField(max_length=150, blank=True, default="")
+    message = models.TextField()
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.NEW, db_index=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"[{self.kind}] {self.title or self.message[:40]} by {self.user}"

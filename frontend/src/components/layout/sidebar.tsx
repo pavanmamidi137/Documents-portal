@@ -19,6 +19,7 @@ import {
   Handshake,
   Layers,
   LayoutDashboard,
+  Lightbulb,
   LogOut,
   Megaphone,
   PanelLeftClose,
@@ -70,7 +71,10 @@ const canPlacementPortal = (u: { is_super_admin?: boolean; is_faculty?: boolean;
   Boolean(u?.is_super_admin) ||
   Boolean(u?.is_faculty && (u.faculty_access === "PLACEMENT" || u.faculty_access === "BOTH"));
 
-const STUDENT_ONLY: NavItem[] = [{ href: "/resume", label: "My Resume", icon: FileUser }];
+const STUDENT_ONLY: NavItem[] = [
+  { href: "/resume", label: "My Resume", icon: FileUser },
+  { href: "/feedback", label: "Feedback & Ideas", icon: Lightbulb },
+];
 
 const FACULTY_ONLY: NavItem[] = [{ href: "/faculty/resumes", label: "Resumes", icon: FileUser }];
 
@@ -95,6 +99,7 @@ const ADMIN_AI_SYSTEM: NavItem[] = [
   { href: "/admin/ai", label: "AI Management", icon: BrainCircuit },
   { href: "/admin/ai-usage", label: "AI Usage", icon: Coins },
   { href: "/admin/audit-logs", label: "Audit Logs", icon: ScrollText },
+  { href: "/feedback", label: "Feedback & Ideas", icon: Lightbulb },
 ];
 
 const CR_ONLY: NavItem[] = [
@@ -168,6 +173,7 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
     const facultyTools: NavItem[] = [];
     if (canResumePortal(user)) facultyTools.push(...FACULTY_ONLY);
     if (canPlacementPortal(user)) facultyTools.push({ href: "/placements", label: "Placements", icon: Briefcase });
+    facultyTools.push({ href: "/feedback", label: "Feedback & Ideas", icon: Lightbulb });
     groups = [
       { items: [COMMON[0], COMMON[2]] },
       ...(facultyTools.length > 0 ? [{ label: "Faculty", items: facultyTools }] : []),

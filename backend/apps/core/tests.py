@@ -10,7 +10,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from apps.accounts.models import Resume, User
 from apps.announcements.models import Announcement
 from apps.college.models import Branch, Category, Section, Semester, Subject
-from apps.core.models import AuditLog, ContactRequest, Notification, SiteSetting
+from apps.core.models import AuditLog, ContactRequest, Feedback, Notification, SiteSetting
 from apps.core.permissions import IsSuperAdmin, IsSuperAdminOrCR, IsStudent
 from apps.core.utils import csv_safe
 from apps.core.views_settings import get_resume_download_enabled, get_site_theme
@@ -164,6 +164,103 @@ class AuditLogClearTests(TestCase):
         client = self._client(self.cr)
         response = client.post("/api/audit-logs/clear/", {"all": True}, format="json")
         self.assertEqual(response.status_code, 403)
+
+
+class FeedbackTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(roll_number="admin", password="x", full_name="Admin")
+        self.student = User.objects.create_user(
+            roll_number="21IT01", password="x", full_name="Diya", role=User.Role.STUDENT
+        )
+        self.cr = User.objects.create_user(
+            roll_number="cr1", password="x", full_name="CR", role=User.Role.CR
+        )
+
+    def _client(self, user=None):
+        client = APIClient()
+        if user:
+            from rest_framework_simplejwt.tokens import AccessToken
+
+            client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
+        return client
+
+    def test_student_submits_idea_and_admins_are_notified(self):
+        client = self._client(self.student)
+        response = client.post(
+            "/api/feedback/",
+            {"kind": "IDEA", "title": "Dark mode for notes", "message": "Add dark mode to the document viewer."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["user_name"], "Diya")
+        self.assertEqual(response.data["user_roll"], "21IT01")
+        self.assertEqual(response.data["status"], "NEW")
+        self.assertEqual(Feedback.objects.count(), 1)
+        # The admin got a notification about the new idea.
+        admin_notifications = Notification.objects.filter(user=self.admin)
+        self.assertTrue(admin_notifications.exists())
+        self.assertEqual(admin_notifications.first().kind, Notification.Kind.FEEDBACK)
+        # And it was audited.
+        self.assertTrue(AuditLog.objects.filter(action="FEEDBACK").exists())
+
+    def test_submit_requires_message(self):
+        response = self._client(self.student).post(
+            "/api/feedback/", {"kind": "IDEA", "message": ""}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_anonymous_cannot_submit(self):
+        response = self._client().post(
+            "/api/feedback/", {"kind": "IDEA", "message": "hi"}, format="json"
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_student_only_sees_own_submissions(self):
+        Feedback.objects.create(user=self.student, kind="IDEA", title="Mine", message="A")
+        Feedback.objects.create(user=self.cr, kind="FEEDBACK", title="Other", message="B")
+        response = self._client(self.student).get("/api/feedback/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["title"], "Mine")
+
+    def test_admin_lists_all_and_filters(self):
+        Feedback.objects.create(user=self.student, kind="IDEA", title="I1", message="A")
+        Feedback.objects.create(user=self.cr, kind="FEEDBACK", title="F1", message="B")
+        all_resp = self._client(self.admin).get("/api/feedback/")
+        self.assertEqual(all_resp.data["count"], 2)
+        idea_resp = self._client(self.admin).get("/api/feedback/?kind=IDEA")
+        self.assertEqual(idea_resp.data["count"], 1)
+        self.assertEqual(idea_resp.data["results"][0]["kind"], "IDEA")
+
+    def test_admin_updates_status_and_notifies_submitter(self):
+        f = Feedback.objects.create(user=self.student, kind="IDEA", title="PWA banner", message="Add it")
+        response = self._client(self.admin).patch(
+            f"/api/feedback/{f.id}/", {"status": "IMPLEMENTED"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "IMPLEMENTED")
+        self.assertTrue(
+            Notification.objects.filter(user=self.student, kind=Notification.Kind.FEEDBACK).exists()
+        )
+        self.assertTrue(AuditLog.objects.filter(action="FEEDBACK_STATUS").exists())
+
+    def test_non_admin_cannot_manage(self):
+        f = Feedback.objects.create(user=self.student, kind="IDEA", title="X", message="Y")
+        patch_resp = self._client(self.student).patch(
+            f"/api/feedback/{f.id}/", {"status": "IMPLEMENTED"}, format="json"
+        )
+        self.assertEqual(patch_resp.status_code, 403)
+        delete_resp = self._client(self.student).delete(f"/api/feedback/{f.id}/")
+        self.assertEqual(delete_resp.status_code, 403)
+
+    def test_public_implemented_endpoint_shows_names(self):
+        Feedback.objects.create(user=self.student, kind="IDEA", title="Timeline", message="Show a timeline", status="IMPLEMENTED")
+        Feedback.objects.create(user=self.cr, kind="IDEA", title="Not live", message="Pending", status="NEW")
+        response = self._client().get("/api/feedback/implemented/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["user_name"], "Diya")
+        self.assertEqual(response.data[0]["title"], "Timeline")
 
 
 class FacultyDashboardTests(TestCase):

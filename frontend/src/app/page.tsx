@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { useTheme } from "next-themes";
 import {
@@ -30,13 +31,16 @@ import {
   UploadCloud,
   UserRoundCheck,
   Users,
+  Lightbulb,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { UndrawIllustration } from "@/components/undraw-illustration";
 import type { IllustrationName } from "@/components/illustrations";
 import { useAuth } from "@/lib/auth";
+import { http } from "@/lib/api";
 import { useIsMobile } from "@/lib/use-is-mobile";
+import type { ImplementedIdea } from "@/lib/types";
 import { cn, initials } from "@/lib/utils";
 
 const fadeUp = {
@@ -427,6 +431,92 @@ function InstallBanner() {
   );
 }
 
+/**
+ * "Built from your ideas" — implemented student ideas with the submitter's
+ * name as credit. Rendered on the home page (desktop section / mobile card).
+ */
+function BuiltFromYourIdeas({ compact = false }: { compact?: boolean }) {
+  const { data: ideas } = useQuery({
+    queryKey: ["feedback", "implemented"],
+    queryFn: () => http.get<ImplementedIdea[]>("/feedback/implemented/"),
+    staleTime: 60_000,
+  });
+  const list = (ideas ?? []).slice(0, compact ? 2 : 6);
+  if (list.length === 0) return null;
+
+  if (compact) {
+    return (
+      <div className="mt-8 rounded-2xl border bg-card p-4 shadow-sm">
+        <p className="flex items-center gap-2 text-sm font-bold">
+          <Lightbulb className="size-4 text-primary" /> Built from your ideas
+        </p>
+        <div className="mt-3 space-y-2.5">
+          {list.map((idea) => (
+            <div key={idea.id} className="rounded-xl border bg-background/60 p-3">
+              <p className="text-sm font-medium leading-snug">{idea.title}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                💡 by <b className="text-foreground">{idea.user_name}</b>
+              </p>
+            </div>
+          ))}
+        </div>
+        <Link
+          href="/feedback"
+          className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary"
+        >
+          Share your idea <ArrowRight className="size-3" />
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <section className="border-t bg-muted/30 py-16">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+        <div className="mx-auto max-w-2xl text-center">
+          <p className="text-sm font-semibold text-primary">Built from your ideas</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
+            Student ideas, now live on PlaceMate
+          </h2>
+          <p className="mt-3 text-muted-foreground">
+            Every feature below was suggested by a student — and shipped. Have an idea? Share it
+            in Feedback &amp; Ideas and it could be next.
+          </p>
+        </div>
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {list.map((idea, i) => (
+            <motion.div
+              key={idea.id}
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.4, delay: (i % 3) * 0.06 }}
+              className="flex flex-col rounded-2xl border bg-card p-5 shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg"
+            >
+              <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-violet-500/15 px-2.5 py-1 text-[11px] font-semibold text-violet-600 dark:text-violet-400">
+                <Lightbulb className="size-3" /> Idea · shipped
+              </span>
+              <h3 className="mt-3 font-semibold leading-snug">{idea.title}</h3>
+              <p className="mt-1.5 line-clamp-3 text-sm text-muted-foreground">{idea.message}</p>
+              <div className="mt-4 flex items-center gap-2 border-t pt-3">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/60 text-[11px] font-bold text-primary-foreground">
+                  {initials(idea.user_name)}
+                </span>
+                <span className="text-xs font-medium text-foreground">{idea.user_name}</span>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+        <div className="mt-8 text-center">
+          <Button variant="outline" render={<Link href="/feedback" />}>
+            <Lightbulb className="size-4" /> Share your idea
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** Phone-sized home: a compact hero plus instant-access tiles to each section. */
 function MobileHomePage() {
   const { user } = useAuth();
@@ -634,6 +724,9 @@ function MobileHomePage() {
             </motion.div>
           ))}
         </div>
+
+        {/* Implemented student ideas (with names) — compact on phones */}
+        <BuiltFromYourIdeas compact />
 
         {!user && (
           <p className="mt-6 text-center text-xs text-muted-foreground">
@@ -1190,6 +1283,9 @@ function DesktopHomePage() {
           </div>
         </div>
       </section>
+
+      {/* ------------------------------------------------ Built from your ideas */}
+      <BuiltFromYourIdeas />
 
       {/* ------------------------------------------------ Footer */}
       <footer className="border-t bg-muted/30">

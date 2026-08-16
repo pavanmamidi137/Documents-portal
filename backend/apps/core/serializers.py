@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import AuditLog, ContactRequest, Notification
+from .models import AuditLog, ContactRequest, Feedback, Notification
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -44,4 +44,24 @@ class ContactRequestSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id", "sender", "sender_name", "sender_roll", "sender_role",
             "status", "status_label", "created_at", "resolved_at",
+        ]
+
+
+class FeedbackSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source="user.full_name", read_only=True, default="")
+    user_roll = serializers.CharField(source="user.roll_number", read_only=True, default="")
+    user_role = serializers.CharField(source="user.role_label", read_only=True, default="")
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = Feedback
+        fields = [
+            "id", "user", "user_name", "user_roll", "user_role",
+            "kind", "kind_label", "title", "message",
+            "status", "status_label", "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "user", "user_name", "user_roll", "user_role",
+            "kind", "kind_label", "status", "status_label", "created_at", "updated_at",
         ]

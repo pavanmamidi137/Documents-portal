@@ -386,6 +386,34 @@ export interface ContactRequest {
   resolved_at: string | null;
 }
 
+export type FeedbackKind = "IDEA" | "FEEDBACK";
+export type FeedbackStatus = "NEW" | "APPROVED" | "IMPLEMENTED" | "DECLINED";
+
+export interface Feedback {
+  id: number;
+  user: number;
+  user_name: string;
+  user_roll: string;
+  user_role: string;
+  kind: FeedbackKind;
+  kind_label: string;
+  title: string;
+  message: string;
+  status: FeedbackStatus;
+  status_label: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImplementedIdea {
+  id: number;
+  title: string;
+  message: string;
+  kind: string;
+  user_name: string;
+  created_at: string;
+}
+
 export type ShareRequestStatus = "PENDING" | "ACCEPTED" | "DECLINED";
 
 export interface AiUsageUser {
