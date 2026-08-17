@@ -15,13 +15,13 @@ def _cleanup_drive_notifications(sender, instance, **kwargs):
     When a drive is removed (manually, via the lazy expiry cleanup, or the
     cleanup_expired_drives command) its bell notifications become dead links -
     students would tap a notification that opens a missing drive. The drive
-    notifications are created with a ``link`` of ``/placements/{id}``, so a
-    kind + link match removes exactly those rows and nothing else.
+    notifications are created with a ``link`` of ``/placements?drive={id}``, so
+    a kind + link match removes exactly those rows and nothing else.
     """
     try:
         Notification.objects.filter(
             kind=Notification.Kind.DRIVE,
-            link=f"/placements/{instance.pk}",
+            link=f"/placements?drive={instance.pk}",
         ).delete()
     except Exception:  # pragma: no cover - cleanup must never break deletion
         pass

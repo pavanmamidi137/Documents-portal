@@ -189,7 +189,7 @@ class DriveApiTests(APITestCase):
             {self.student.id, self.student2.id, self.cr.id},
         )
         # The notification deep-links to the drive detail page.
-        self.assertTrue(notifs.first().link.startswith("/placements/"))
+        self.assertTrue(notifs.first().link.startswith("/placements"))
         self.assertIn("TCS", notifs.first().title)
 
     def test_editing_a_drive_does_not_re_notify(self):
@@ -219,7 +219,7 @@ class DriveApiTests(APITestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual(
             Notification.objects.filter(
-                kind=Notification.Kind.DRIVE, link=f"/placements/{drive_id}"
+                kind=Notification.Kind.DRIVE, link=f"/placements?drive={drive_id}"
             ).count(),
             0,
         )
@@ -237,11 +237,11 @@ class DriveApiTests(APITestCase):
         )
         Notification.objects.create(
             user=self.student, kind=Notification.Kind.DRIVE,
-            title="TCS", message="", link=f"/placements/{drive_a.id}",
+            title="TCS", message="", link=f"/placements?drive={drive_a.id}",
         )
         Notification.objects.create(
             user=self.student, kind=Notification.Kind.DRIVE,
-            title="Infy", message="", link=f"/placements/{drive_b.id}",
+            title="Infy", message="", link=f"/placements?drive={drive_b.id}",
         )
         Notification.objects.create(
             user=self.student, kind=Notification.Kind.ANNOUNCEMENT,
@@ -250,9 +250,9 @@ class DriveApiTests(APITestCase):
         deleted = self._client(self.admin).delete(f"/api/drives/{drive_a.id}/")
         self.assertEqual(deleted.status_code, 204)
         remaining = list(Notification.objects.values_list("kind", "link"))
-        self.assertIn((Notification.Kind.DRIVE, f"/placements/{drive_b.id}"), remaining)
+        self.assertIn((Notification.Kind.DRIVE, f"/placements?drive={drive_b.id}"), remaining)
         self.assertIn((Notification.Kind.ANNOUNCEMENT, "/announcements/1"), remaining)
-        self.assertNotIn((Notification.Kind.DRIVE, f"/placements/{drive_a.id}"), remaining)
+        self.assertNotIn((Notification.Kind.DRIVE, f"/placements?drive={drive_a.id}"), remaining)
 
     def test_expiry_cleanup_removes_drive_notifications(self):
         """The 30-day expiry cleanup deletes a drive AND its notifications."""
@@ -267,12 +267,12 @@ class DriveApiTests(APITestCase):
         )
         Notification.objects.create(
             user=self.student, kind=Notification.Kind.DRIVE,
-            title="OldCo", message="", link=f"/placements/{drive.id}",
+            title="OldCo", message="", link=f"/placements?drive={drive.id}",
         )
         call_command("cleanup_expired_drives", stdout=StringIO())
         self.assertFalse(Drive.objects.filter(pk=drive.pk).exists())
         self.assertFalse(
-            Notification.objects.filter(link=f"/placements/{drive.id}").exists()
+            Notification.objects.filter(link=f"/placements?drive={drive.id}").exists()
         )
 
     # ---- Auto match refresh when a drive is posted ----

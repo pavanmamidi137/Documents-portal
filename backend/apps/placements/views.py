@@ -854,7 +854,7 @@ class DriveViewSet(ModelViewSet):
             Notification.Kind.DRIVE,
             f"New drive: {instance.company_name}",
             _drive_preview(instance),
-            f"/placements/{instance.id}",
+            f"/placements?drive={instance.id}",
         )
         # Refresh the AI match for this new drive across already-analyzed
         # resumes (background, best-effort) so students see their match score

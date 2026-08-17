@@ -1,0 +1,6 @@
+# Cloudflare Pages SPA fallback for the static-export build.
+# Every real route has pre-rendered HTML and is served directly. This catch-all
+# is a safety net so unknown paths, trailing-slash variants and future routes
+# render the app shell instead of a 404 - the client router then shows the
+# right page.
+/* /index.html 200
