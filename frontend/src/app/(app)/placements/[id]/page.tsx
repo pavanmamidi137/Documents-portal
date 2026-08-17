@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -58,11 +58,12 @@ const QUICK_PROMPTS = [
   "What is the selection process?",
 ];
 
-export default function DriveDetailPage({ id }: { id: number }) {
+export default function DriveDetailPage() {
+  const params = useParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const driveId = id;
+  const driveId = Number(params.id);
 
   const { data: drive, isLoading } = useQuery({
     queryKey: ["drives", "detail", driveId],

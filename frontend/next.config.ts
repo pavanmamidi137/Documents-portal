@@ -49,20 +49,7 @@ const withPWA = withPWAInit({
 });
 
 const nextConfig: NextConfig = {
-  /*
-   * Cloudflare Pages deployment (static export).
-   *
-   * The app is 100% client-side (JWT + axios against the Django API - no
-   * server components, no API routes, no middleware), so it needs no Node
-   * server at runtime. Setting EXPORT_STATIC=1 (Cloudflare Pages build env)
-   * makes `next build` emit plain HTML/JS/CSS into out/ which Pages serves
-   * from the edge. The Render deployment keeps working unchanged during the
-   * migration because export is opt-in, not the default.
-   */
-  output: process.env.EXPORT_STATIC === "1" ? "export" : undefined,
-  // Static export has no image-optimizer server - disable it (nothing uses
-  // next/image today, but this keeps an export build safe if one is added).
-  images: { unoptimized: true },
+  /* config options here */
 };
 
 export default withPWA(nextConfig);

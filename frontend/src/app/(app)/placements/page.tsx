@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Bot,
@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   ExternalLink,
   GraduationCap,
-  Loader2,
   MapPin,
   Pencil,
   Plus,
@@ -29,7 +28,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
-import DriveDetailPage from "@/components/placements/drive-detail";
 import { DriveAssistant } from "@/components/placements/ai-assistant";
 import { DriveAskDialog } from "@/components/placements/drive-ask-dialog";
 import { DriveFormDialog } from "@/components/placements/drive-form-dialog";
@@ -77,7 +75,7 @@ function JobTypeBadge({ jobType }: { jobType: string }) {
   );
 }
 
-function PlacementsContent() {
+export default function PlacementsPage() {
   const { user } = useAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -221,7 +219,7 @@ function PlacementsContent() {
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: Math.min(i * 0.04, 0.3) }}
-              onClick={() => router.push(`/placements?drive=${d.id}`)}
+              onClick={() => router.push(`/placements/${d.id}`)}
               className={cn(
                 "group relative flex cursor-pointer flex-col rounded-2xl border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg",
                 d.status === "OPEN" ? "hover:border-primary/30" : "opacity-80"
@@ -369,7 +367,7 @@ function PlacementsContent() {
                   className="flex items-center gap-2"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <Button size="sm" variant="outline" onClick={() => router.push(`/placements?drive=${d.id}`)}>
+                  <Button size="sm" variant="outline" onClick={() => router.push(`/placements/${d.id}`)}>
                     Details
                   </Button>
                   {d.drive_link ? (
@@ -418,30 +416,5 @@ function PlacementsContent() {
         onConfirm={confirmDelete}
       />
     </div>
-  );
-}
-
-function PlacementsPageInner() {
-  const searchParams = useSearchParams();
-  const driveId = Number(searchParams.get("drive"));
-  // Drive detail is a query-param view (static export has no dynamic routes):
-  // /placements?drive=123 renders the full drive page instead of the list.
-  if (Number.isInteger(driveId) && driveId > 0) {
-    return <DriveDetailPage key={driveId} id={driveId} />;
-  }
-  return <PlacementsContent />;
-}
-
-export default function PlacementsPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="flex h-[50vh] items-center justify-center">
-          <Loader2 className="size-7 animate-spin text-primary" />
-        </div>
-      }
-    >
-      <PlacementsPageInner />
-    </Suspense>
   );
 }
