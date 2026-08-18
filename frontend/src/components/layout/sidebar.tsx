@@ -36,6 +36,7 @@ import { fetchMyResume, http } from "@/lib/api";
 import type { Drive } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { PwaInstallButton } from "@/components/pwa-install-button";
 
 // Students: show an amber dot on Placements until they open the page.
 const PLACEMENT_SEEN_KEY = "placement_seen_at";
@@ -324,8 +325,12 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
         ))}
       </nav>
 
-      {/* Footer — sign out (moved here from the profile page) */}
+      {/* Footer — install app + sign out */}
       <div className={cn("shrink-0 border-t p-3", compact && "p-2")}>
+        {/* Install App button — always visible */}
+        <div className={cn("mb-1", compact ? "mb-1" : "mb-2")}>
+          <PwaInstallButton compact={compact} size={compact ? "default" : "sm"} variant="ghost" className="w-full text-muted-foreground" />
+        </div>
         {compact ? (
           <Tooltip>
             <TooltipTrigger
