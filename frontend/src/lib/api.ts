@@ -205,11 +205,14 @@ export const http = {
  */
 export async function openResumeInNewTab(resume: { id: number }): Promise<string | null> {
   try {
+    // Fetch the PDF as a blob so we can create an object URL with the
+    // correct MIME type.  Browsers render inline PDFs only when the blob
+    // carries ``application/pdf``; a plain blob URL without the type header
+    // triggers a download instead of a preview.
     const blob = await http.blob(`/resumes/${resume.id}/preview/`);
-    const url = URL.createObjectURL(blob);
-    window.open(url, "_blank", "noopener");
-    // Never revoked: the PDF viewer may lazy-fetch ranges while the tab is
-    // open, and files are capped at 10MB so memory cost is negligible.
+    const typed = new Blob([blob], { type: blob.type || "application/pdf" });
+    const url = URL.createObjectURL(typed);
+    window.open(url, "_blank");
     return null;
   } catch (error) {
     return getErrorMessage(error);

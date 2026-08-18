@@ -76,7 +76,7 @@ RAG_MODEL = os.environ.get("NVIDIA_RAG_MODEL", "nvidia/nim-rag")
 # we don't burn latency retrying when the quota is simply exhausted.
 _429_RETRIES = int(os.environ.get("NVIDIA_429_RETRIES", "2"))
 _429_BACKOFF_SECONDS = float(os.environ.get("NVIDIA_429_BACKOFF", "1.5"))
-_TIMEOUT_SECONDS = float(os.environ.get("NVIDIA_TIMEOUT", "60"))
+_TIMEOUT_SECONDS = float(os.environ.get("NVIDIA_TIMEOUT", "180"))
 
 # Reasoning budgets (extra_body={"reasoning_budget": N}) per endpoint. These
 # are deliberately modest - not the 16k sample default - so simple extraction
@@ -176,6 +176,8 @@ def _chat_completion_inner(
         extra: dict = {}
         if reasoning_budget > 0:
             extra["reasoning_budget"] = reasoning_budget
+        elif raw_json and not reasoning_budget:
+            extra["reasoning_budget"] = 500
         if documents:
             extra["documents"] = documents
         if extra:
@@ -218,8 +220,7 @@ def _chat_completion_inner(
                     detail = str(getattr(exc, "body", "") or exc).lower()
                     # A model may not accept a reasoning budget - retry lean,
                     # keeping any grounding documents intact.
-                    if "reasoning" in detail and reasoning_budget > 0:
-                        reasoning_budget = 0
+                    if "reasoning" in detail and extra.get("reasoning_budget"):
                         extra.pop("reasoning_budget", None)
                         if extra:
                             kwargs["extra_body"] = extra

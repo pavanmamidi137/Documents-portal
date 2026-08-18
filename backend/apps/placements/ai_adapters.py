@@ -176,8 +176,14 @@ class OpenAICompatAdapter:
             "stream": False,
         }
         extra: dict = {}
+        # Auto-cap reasoning tokens for JSON tasks so the model doesn't
+        # spend all output slots on thinking and leave the JSON truncated
+        # (the classic "unreadable report" bug with reasoning models like
+        # Nemotron).  Callers can override by passing a higher budget.
         if reasoning_budget and reasoning_budget > 0:
             extra["reasoning_budget"] = reasoning_budget
+        elif raw_json and not reasoning_budget:
+            extra["reasoning_budget"] = 500
         if documents and _is_rag_model(self.provider):
             # Actual RAG NIMs additionally get the grounding field; the prompt
             # injection above remains the portable fallback for everything else.
@@ -197,7 +203,7 @@ class OpenAICompatAdapter:
             client = OpenAI(
                 base_url=base_url,
                 api_key=key,
-                timeout=timeout or self.provider.timeout_seconds or 60,
+                timeout=timeout or self.provider.timeout_seconds or 180,
                 max_retries=0,
             )
             try:
@@ -355,7 +361,7 @@ class GeminiAdapter:
                 method="POST",
             )
             with urllib.request.urlopen(
-                req, timeout=timeout or self.provider.timeout_seconds or 60
+                req, timeout=timeout or self.provider.timeout_seconds or 180
             ) as resp:
                 return json.loads(resp.read().decode("utf-8"))
 

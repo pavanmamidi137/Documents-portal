@@ -291,7 +291,8 @@ def analyze_portfolio(portfolio: Portfolio, actor: User) -> dict:
     brief = _prepare_resume_brief(text, _BRIEF_CHARS)
     try:
         raw = ai_json(
-            _PORTFOLIO_REVIEW_PROMPT, brief, max_tokens=800,
+            _PORTFOLIO_REVIEW_PROMPT, brief, max_tokens=4096,
+            reasoning_budget=500,
             usage_callback=usage, task="RESUME_ANALYSIS",
         )
     except AiError:
@@ -606,7 +607,8 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
         )
     try:
         raw = ai_json(
-            _REBUILD_PROMPT, brief + req_note, max_tokens=1200,
+            _REBUILD_PROMPT, brief + req_note, max_tokens=4096,
+            reasoning_budget=300,
             usage_callback=usage, task="RESUME_ANALYSIS",
         )
     except AiError:
@@ -642,7 +644,8 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
                 _prepare_resume_brief(
                     portfolio.resume_source + req_note, _MAX_TEXT_CHARS
                 ),
-                max_tokens=800, usage_callback=usage, task="RESUME_ANALYSIS",
+                max_tokens=4096, reasoning_budget=500,
+                usage_callback=usage, task="RESUME_ANALYSIS",
             )
             source_review = normalize_resume_report(raw_source)
         except AiError:
@@ -681,7 +684,8 @@ def rebuild_resume(portfolio: Portfolio, actor: User) -> dict:
     try:
         raw_review = ai_json(
             _PORTFOLIO_REVIEW_PROMPT, rebuilt_text[:_BRIEF_CHARS] + req_note,
-            max_tokens=800, usage_callback=usage, task="RESUME_ANALYSIS",
+            max_tokens=4096, reasoning_budget=500,
+            usage_callback=usage, task="RESUME_ANALYSIS",
         )
         rebuilt_review = normalize_resume_report(raw_review)
     except AiError:

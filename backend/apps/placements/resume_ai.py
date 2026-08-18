@@ -349,7 +349,8 @@ def refresh_matches_for_drive(drive, actor=None, limit=None) -> int:
                     resume_brief=_prepare_resume_brief(_resume_brief(resume), 4000),
                     untrusted_guard=_UNTRUSTED_GUARD,
                 ),
-                "Score this resume against this drive.", max_tokens=400,
+                "Score this resume against this drive.", max_tokens=4096,
+                reasoning_budget=300,
                 usage_callback=usage,
                 documents=[_drive_brief(drive)],
                 task="RESUME_ANALYSIS",
@@ -464,7 +465,8 @@ def refresh_all_matches(actor=None, limit=None) -> int:
                     resume_brief=_prepare_resume_brief(_resume_brief(resume), 4000),
                     untrusted_guard=_UNTRUSTED_GUARD,
                 ),
-                "Score this resume against each drive.", max_tokens=1000,
+                "Score this resume against each drive.", max_tokens=4096,
+                reasoning_budget=300,
                 usage_callback=usage,
                 documents=[drives_brief],
                 task="RESUME_ANALYSIS",
@@ -582,13 +584,15 @@ def analyze_resume(resume, actor) -> dict:
     brief = _prepare_resume_brief(text, 6000)
 
     try:
-        # Roomy but fast budget - the report (score/summary/pros/cons/5-8
-        # improvements) fits in ~800 tokens; 1500 gives slack without making
-        # the 30B model grind for minutes on output.
+        # The reasoning model (nemotron) spends tokens on internal thinking
+        # before producing JSON.  A low max_tokens budget lets the thinking
+        # consume ALL output slots, leaving the JSON truncated (the classic
+        # "unreadable report" bug).  We set a generous output budget and
+        # cap the reasoning so the model has room for the actual report.
         quality = ai_json(
             _QUALITY_PROMPT.replace("{untrusted_guard}", _UNTRUSTED_GUARD),
-            brief, max_tokens=1500, usage_callback=usage,
-            task="RESUME_ANALYSIS",
+            brief, max_tokens=4096, reasoning_budget=500,
+            usage_callback=usage, task="RESUME_ANALYSIS",
         )
     except AiError:
         raise  # nothing collected, nothing committed - the 502 costs no credits
@@ -617,7 +621,8 @@ def analyze_resume(resume, actor) -> dict:
                         resume_brief=brief[:4000],
                         untrusted_guard=_UNTRUSTED_GUARD,
                     ),
-                    "Score this resume against each drive.", max_tokens=1200,
+                    "Score this resume against each drive.", max_tokens=4096,
+                    reasoning_budget=300,
                     usage_callback=usage,
                     documents=[drives_brief],
                     task="RESUME_ANALYSIS",
