@@ -1,0 +1,17 @@
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.sqlite3
+.db
+.env
+.env.*
+!.env.example
+staticfiles
+media
+.dockerignore
+Dockerfile
+build.sh
+Procfile
+render.yaml
