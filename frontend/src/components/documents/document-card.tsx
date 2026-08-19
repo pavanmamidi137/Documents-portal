@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarClock, Eye, FileText, RotateCcw, Share2, Trash2 } from "lucide-react";
+import { CalendarClock, Download, Eye, FileText, RotateCcw, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentTypeMeta } from "@/lib/document-types";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { http } from "@/lib/api";
+import { downloadDocument } from "@/lib/download";
 import type { DocumentItem } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 import { DocumentTextDialog } from "./document-text-dialog";
@@ -39,6 +40,10 @@ export function DocumentCard({
   const [textOpen, setTextOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const isPdf = document.file_name.toLowerCase().endsWith(".pdf");
+
+  const handleDownload = async () => {
+    await downloadDocument(document);
+  };
 
   const handleCardClick = (e: React.MouseEvent) => {
     if (!selecting) return;
@@ -171,6 +176,16 @@ export function DocumentCard({
         >
           <Eye className="size-3.5" /> Preview
         </Button>
+        <Button
+          size="sm"
+          className="w-full whitespace-nowrap sm:w-auto sm:min-w-28 sm:flex-1"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDownload();
+          }}
+        >
+          <Download className="size-3.5" /> Download
+        </Button>
         {/* Secondary actions sit side-by-side on mobile, inline on desktop. */}
         <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:contents">
           {isPdf && (
@@ -206,7 +221,7 @@ export function DocumentCard({
       </div>
 
       <PdfPreviewDialog
-        url={document.cloudinary_url}
+        directUrl={document.cloudinary_url}
         title={document.title}
         open={previewOpen}
         onOpenChange={setPreviewOpen}

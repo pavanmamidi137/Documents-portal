@@ -897,7 +897,7 @@ export default function ResumePage() {
 
       {resume && !resume.is_missing && (
         <PdfPreviewDialog
-          url={`/api/resumes/${resume.id}/preview/`}
+          apiPath={`/resumes/${resume.id}/preview/`}
           title={resume.file_name}
           open={previewOpen}
           onOpenChange={setPreviewOpen}

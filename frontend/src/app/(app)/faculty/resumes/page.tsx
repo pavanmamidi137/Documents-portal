@@ -640,7 +640,7 @@ export default function FacultyResumesPage() {
 
       {previewResume && (
         <PdfPreviewDialog
-          url={`/api/resumes/${previewResume.id}/preview/`}
+          apiPath={`/resumes/${previewResume.id}/preview/`}
           title={`${previewResume.student_name} — ${previewResume.file_name}`}
           open={!!previewResume}
           onOpenChange={(open) => { if (!open) setPreviewResume(null); }}

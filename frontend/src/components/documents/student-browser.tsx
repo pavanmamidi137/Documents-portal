@@ -6,11 +6,15 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft,
   BookOpen,
+  Download,
   Layers,
   Loader2,
   Search,
   Tag,
+  X,
 } from "lucide-react";
+import { toast } from "sonner";
+
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +28,7 @@ import {
 import { http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useMetaData } from "@/lib/use-meta";
+import { downloadDocument } from "@/lib/download";
 import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
 import { getUnitLabel } from "@/lib/document-types";
 import type { DocumentItem } from "@/lib/types";
@@ -130,6 +135,8 @@ export function StudentBrowser() {
         : "";
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [downloading, setDownloading] = useState(false);
+
   // Leaving a view clears the selection mode.
   const goTo = (next: Step) => {
     setSelectedIds(new Set());
@@ -281,16 +288,40 @@ export function StudentBrowser() {
     setSelecting(false);
   };
 
-  const selectionToolbar = (_docs: DocumentItem[]) => {
-    if (_docs.length === 0) return null;
+  const downloadSelected = async (docs: DocumentItem[]) => {
+    const targets = docs.filter((d) => selectedIds.has(d.id));
+    if (targets.length === 0) return;
+    setDownloading(true);
+    let ok = 0;
+    try {
+      for (const doc of targets) {
+        if (await downloadDocument(doc)) ok += 1;
+      }
+      if (ok > 0) toast.success(`${ok} document${ok === 1 ? "" : "s"} downloaded.`);
+    } finally {
+      setDownloading(false);
+      clearSelection();
+    }
+  };
+
+  const selectionToolbar = (docs: DocumentItem[]) => {
+    if (docs.length === 0) return null;
     return selecting ? (
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 p-2.5">
         <p className="px-1 text-sm font-medium">
           <span className="text-foreground">{selectedIds.size}</span> selected
         </p>
         <div className="ml-auto flex items-center gap-1.5">
-          <Button size="sm" variant="ghost" onClick={clearSelection}>
-            Clear
+          <Button size="sm" variant="ghost" onClick={clearSelection} disabled={downloading}>
+            <X className="size-3.5" /> Clear
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => downloadSelected(docs)}
+            disabled={downloading || selectedIds.size === 0}
+          >
+            {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+            {downloading ? "Downloading…" : "Download Selected"}
           </Button>
         </div>
       </div>
