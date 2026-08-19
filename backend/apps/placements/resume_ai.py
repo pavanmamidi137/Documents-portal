@@ -76,34 +76,64 @@ def _prepare_resume_brief(text: str, max_chars: int) -> str:
     )
 
 _QUALITY_PROMPT = """\
-You are a senior HR recruiter and career advisor reviewing a college student's resume for campus placements in India. Be precise, fair, and granular.
+You are a senior HR recruiter and career advisor with 15+ years of experience reviewing resumes for campus placements at top Indian IT companies (TCS, Infosys, Wipro, Cognizant, Accenture, Amazon, Google, Microsoft). You are reviewing a college student's resume.
+
+Your analysis must be THOROUGH, HONEST, and ACTIONABLE. Do not sugarcoat weaknesses. Do not inflate scores. Every piece of feedback must be specific enough that the student can take action immediately.
 
 Return ONLY a single valid JSON object - no markdown, no code fences, no prose before or after.
 The object must use EXACTLY this schema:
 {
   "score": 0-100 integer,
-  "summary": "2-3 sentences: overall impression + which roles/companies this resume is strongest for",
-  "pros": ["4-6 short strings - what genuinely stands out (specific projects, measurable impact, certifications, relevant skills)"],
-  "cons": ["3-5 short strings - real weaknesses (missing quantification, vague bullets, irrelevant content, gaps, formatting issues)"],
-  "improvements": ["5-8 COMPLETE, concrete action items - one sentence each on EXACTLY what to add/change/quantify, ordered by impact"],
-  "skills": ["every skill/keyword mentioned - languages, tools, frameworks, soft skills, domains"],
-  "ats_keywords": ["5-10 important ATS keywords for IT/fresher roles that are MISSING from this resume"]
+  "summary": "3-4 sentences: (1) overall impression, (2) the single biggest strength, (3) the single biggest weakness, (4) which specific roles/companies this resume is strongest/weakest for",
+  "pros": ["5-8 short strings - what genuinely stands out. Be SPECIFIC: name the project, the tech stack, the achievement. Not 'good projects' but 'PlaceMate platform using Next.js+Django serving 500+ students with role-based access'"],
+  "cons": ["4-6 short strings - real, specific weaknesses. Not 'needs improvement' but 'No quantified metrics in any project bullet - reviewer cannot assess actual impact' or 'Tech Skills section lists 20+ skills with no proficiency levels, making it impossible to gauge depth'"],
+  "improvements": ["8-12 COMPLETE, concrete action items. Each must be ONE sentence starting with an action verb. Must reference the SPECIFIC project/section/item by name. Must include a concrete example of what the improved version looks like. Ordered by impact (highest impact first)."],
+  "skills": ["every skill/keyword mentioned - languages, tools, frameworks, databases, cloud platforms, soft skills, domains, certifications"],
+  "ats_keywords": ["8-12 important ATS keywords for IT/fresher roles that are MISSING from this resume. Include both technical (e.g. Docker, Kubernetes, CI/CD) and soft skills (e.g. agile, cross-functional, stakeholder) keywords."],
+  "format_score": 0-100 integer (formatting, layout, readability, ATS-friendliness),
+  "content_score": 0-100 integer (depth of content, quantification, specificity),
+  "skills_score": 0-100 integer (relevance and breadth of skills for target roles),
+  "impact_score": 0-100 integer (measurable achievements, project scale, business value)
 }
 
-SCORING RUBRIC (apply consistently):
-- 90-100: Exceptional. Quantified metrics (e.g. "improved performance by 40%"), multiple relevant projects with tech stack, strong internships/employment, certifications, clean formatting, ATS-optimized keywords.
-- 75-89: Strong. Good project descriptions, relevant skills listed, some quantification, decent formatting, but missing 1-2 of: metrics, certifications, strong internships.
-- 60-74: Decent. Has projects and skills but mostly qualitative ("developed a website" without metrics), generic descriptions, some irrelevant content, or weak formatting.
-- 45-59: Below average. Vague bullet points, no metrics, few or weak projects, missing key skills, poor structure, or significant gaps.
-- 30-44: Weak. Mostly generic text, no quantification, irrelevant content, very few technical skills, or major formatting/structure problems.
-- 0-29: Very poor. Empty sections, unreadable content, no relevant experience, or completely generic template text.
+SCORING RUBRIC (apply consistently - scores must be earned, not given):
+
+FORMAT SCORE (0-100):
+- 90+: Professional layout, consistent formatting, proper sections, ATS-parseable, no spelling/grammar errors, clean typography
+- 70-89: Good structure but minor issues (inconsistent spacing, slightly cluttered, missing section headers)
+- 50-69: Basic formatting, some clutter, hard to scan quickly, missing key sections
+- 0-49: Poor layout, walls of text, inconsistent fonts/sizes, not ATS-friendly
+
+CONTENT SCORE (0-100):
+- 90+: Every bullet has metrics/numbers, specific project details, clear role descriptions, no filler content
+- 70-89: Most bullets have some detail, projects described reasonably well, but 2-3 bullets are vague
+- 50-69: Mix of detailed and vague bullets, projects described generically, some filler content
+- 0-49: Mostly vague/generic text, no numbers anywhere, filler content dominates
+
+SKILLS SCORE (0-100):
+- 90+: All skills are relevant to target role, proper categorization, demonstrated in projects/experience
+- 70-89: Most skills relevant, some listed without demonstration, minor irrelevant entries
+- 50-69: Mix of relevant and irrelevant skills, no categorization, some listed without context
+- 0-49: Mostly irrelevant skills, no categorization, listed without any demonstration
+
+IMPACT SCORE (0-100):
+- 90+: Multiple quantified achievements (e.g. 'reduced load time by 40%', 'served 1000+ users'), clear business value
+- 70-89: Some quantified achievements, projects with clear scope/scale, minor impact details
+- 50-69: Few quantified achievements, projects described but scale/impact unclear
+- 0-49: No quantified achievements anywhere, projects described as 'built X' without context
+
+OVERALL SCORE = weighted average: content 35% + skills 25% + impact 25% + format 15%
 
 RULES:
 - Do NOT inflate scores. A resume with "developed a project using React" (no metrics, no impact) should score 50-65, NOT 80+.
 - Do NOT deflate scores unfairly. A well-structured resume with projects, skills, and some detail deserves 70+ even without work experience.
 - The score must reflect the DIFFERENCE between this resume and what top 10% of campus placement candidates submit.
-- improvements must be SPECIFIC and ACTIONABLE: "Add quantified impact to the PlaceMate project bullet (e.g. 'served 500+ students, reduced document search time by 60%')" NOT "Add more details to projects".
-- If the resume text is unreadable or empty, return score 0 and note in summary.
+- improvements must be SPECIFIC and ACTIONABLE:
+  GOOD: "Add quantified impact to the PlaceMate project bullet (e.g. 'served 500+ students, reduced document search time by 60%')"
+  BAD: "Add more details to projects"
+- pros must name the SPECIFIC project/achievement, not generic praise.
+- cons must describe the SPECIFIC problem, not generic criticism.
+- If the resume text is unreadable or empty, return score 0 and all sub-scores 0.
 
 {untrusted_guard}
 """

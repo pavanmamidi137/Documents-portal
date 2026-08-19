@@ -211,6 +211,11 @@ export interface ResumeAiAnalysis {
   ats_keywords: string[];
   /** True when the report was read from the page images (scanned PDF via OCR). */
   ocr?: boolean;
+  /** Sub-scores for granular breakdown. */
+  format_score?: number;
+  content_score?: number;
+  skills_score?: number;
+  impact_score?: number;
 }
 
 export interface ResumeLimits {

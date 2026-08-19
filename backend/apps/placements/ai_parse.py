@@ -187,7 +187,18 @@ def _calibrate_score(score: int, summary: str, pros: list[str], cons: list[str],
     # Rich content but suspiciously low score → nudge up.
     if content_richness >= 12 and score < 50:
         return max(score, 55)
+    # If sub-scores are present, use them to validate the overall score.
     return score
+
+
+def _extract_sub_scores(data: dict) -> dict:
+    """Extract optional sub-scores from the analysis result."""
+    result = {}
+    for key in ("format_score", "content_score", "skills_score", "impact_score"):
+        val = data.get(key)
+        if val is not None:
+            result[key] = _as_score(val)
+    return result
 
 
 def normalize_resume_report(raw) -> dict | None:
@@ -244,7 +255,7 @@ def normalize_resume_report(raw) -> dict | None:
     # Nudge the score when it clearly contradicts content signals.
     score = _calibrate_score(score, summary, pros, cons, improvements, skills)
 
-    return {
+    result = {
         "score": score,
         "summary": summary,
         "pros": pros,
@@ -254,6 +265,8 @@ def normalize_resume_report(raw) -> dict | None:
         "skills": skills,
         "ats_keywords": ats_keywords,
     }
+    result.update(_extract_sub_scores(data))
+    return result
 
 
 def normalize_matches(raw) -> list[dict]:

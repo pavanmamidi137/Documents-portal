@@ -399,7 +399,7 @@ function AiReviewCard({
               {resume.ai_score ?? 0}
               <span className="text-xs font-medium text-muted-foreground">%</span>
             </span>
-            <span className="text-[10px] font-medium text-muted-foreground">ATS score</span>
+            <span className="text-[10px] font-medium text-muted-foreground">Overall</span>
           </div>
           <div className="min-w-0 flex-1">
             <StarRating score={resume.ai_score ?? 0} />
@@ -407,6 +407,33 @@ function AiReviewCard({
             <p className="mt-0.5 text-sm text-muted-foreground">{analysis.summary}</p>
           </div>
         </div>
+
+        {/* Sub-score breakdown */}
+        {(analysis.format_score != null || analysis.content_score != null ||
+          analysis.skills_score != null || analysis.impact_score != null) && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {([
+              ["Content", analysis.content_score, "Detail & specificity"],
+              ["Skills", analysis.skills_score, "Relevance & breadth"],
+              ["Impact", analysis.impact_score, "Measurable achievements"],
+              ["Format", analysis.format_score, "Layout & ATS-friendliness"],
+            ] as const).map(([label, val, sub]) => (
+              <div key={label} className="rounded-lg border bg-card/60 p-2.5 text-center">
+                <p className="text-lg font-bold tabular-nums">
+                  {val != null ? (
+                    <span className={cn(
+                      val >= 70 ? "text-emerald-600 dark:text-emerald-400" :
+                      val >= 50 ? "text-amber-600 dark:text-amber-400" :
+                      "text-rose-600 dark:text-rose-400"
+                    )}>{val}</span>
+                  ) : "—"}
+                </p>
+                <p className="text-[10px] font-medium text-muted-foreground">{label}</p>
+                <p className="text-[9px] text-muted-foreground/70">{sub}</p>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Pros / Cons */}
         {(pros.length > 0 || cons.length > 0) && (

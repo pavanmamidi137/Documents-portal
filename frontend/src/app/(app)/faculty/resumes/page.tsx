@@ -55,12 +55,20 @@ function AiReviewSummary({
   error,
   analyzedAt,
   summary,
+  formatScore,
+  contentScore,
+  skillsScore,
+  impactScore,
 }: {
   status: Resume["ai_status"] | null;
   score: number | null;
   error?: string;
   analyzedAt?: string | null;
   summary?: string;
+  formatScore?: number;
+  contentScore?: number;
+  skillsScore?: number;
+  impactScore?: number;
 }) {
   if (!status) {
     return <span className="text-xs text-muted-foreground">—</span>;
@@ -102,6 +110,15 @@ function AiReviewSummary({
             {score}
             <span className="text-xs font-normal text-muted-foreground"> /100</span>
           </span>
+        </div>
+      )}
+      {/* Sub-score mini bars */}
+      {status === "COMPLETE" && (
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+          {contentScore != null && <span>C:{contentScore}</span>}
+          {skillsScore != null && <span>S:{skillsScore}</span>}
+          {impactScore != null && <span>I:{impactScore}</span>}
+          {formatScore != null && <span>F:{formatScore}</span>}
         </div>
       )}
       {status === "COMPLETE" && summary ? (
@@ -427,6 +444,10 @@ export default function FacultyResumesPage() {
                 error={r.ai_error}
                 analyzedAt={r.ai_analyzed_at}
                 summary={r.ai_analysis?.summary}
+                formatScore={r.ai_analysis?.format_score}
+                contentScore={r.ai_analysis?.content_score}
+                skillsScore={r.ai_analysis?.skills_score}
+                impactScore={r.ai_analysis?.impact_score}
               />
             ),
           },
