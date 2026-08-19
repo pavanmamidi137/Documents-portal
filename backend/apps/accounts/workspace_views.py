@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 from apps.core.permissions import IsStudent
 from apps.core.throttles import AiRateThrottle
 from apps.core.utils import log_audit
-from apps.placements.ai import AiError, ai_json
+from apps.placements.ai import AiError, ai_json, ai_plain_text
 
 from .models import StudentWorkspace
 from .serializers import StudentWorkspaceSerializer
@@ -62,7 +62,7 @@ IMPORTANT RULES:
 7. The resume should score close to {target_score} on an ATS scoring system
 8. Use the provided template as a starting point if given, otherwise create a clean professional layout
 9. Include quantified metrics where possible (e.g., "served 500+ users", "reduced load time by 40%")
-10. Return ONLY the complete LaTeX code in a single ```latex code block
+10. Return ONLY the raw LaTeX code - no markdown, no code fences, no explanations
 
 The LaTeX MUST be complete and compilable - start with \\documentclass and end with \\end{{document}}.
 """
@@ -140,35 +140,39 @@ Keep the exact same structure/packages/formatting from the template. Only improv
             template_section=template_section,
         )
 
-        # Call AI to generate LaTeX
-        raw = ai_json(
-            system_prompt="You are a professional resume writer and LaTeX expert. Generate polished, ATS-friendly resumes in valid LaTeX.",
+        # Call AI to generate LaTeX - use plain text since we need raw LaTeX, not JSON
+        import re
+        raw_text = ai_plain_text(
+            system_prompt="You are a professional resume writer and LaTeX expert. Generate polished, ATS-friendly resumes in valid, compilable LaTeX. Return ONLY the complete LaTeX code starting with \\documentclass and ending with \\end{document}. No explanations, no markdown, no code fences.",
             user_text=prompt,
             max_tokens=4096,
             reasoning_budget=500,
             task="RESUME_ANALYSIS",
         )
 
-        # Extract LaTeX from the response
-        latex_code = raw.get("latex", "")
-        if not latex_code:
-            # Try to find it in the response
-            for key in ["code", "source", "text"]:
-                if key in raw and isinstance(raw[key], str):
-                    latex_code = raw[key]
-                    break
+        # Extract LaTeX from the plain text response
+        latex_code = raw_text.strip()
 
-        if not latex_code:
-            # Try to parse it as a code block from the full response
-            import re
-            full_text = json.dumps(raw)
-            match = re.search(r'```(?:latex)?\s*\n(.*?)```', full_text, re.DOTALL)
+        # Strip markdown code fences if present
+        if latex_code.startswith("```latex"):
+            latex_code = latex_code[8:]
+        elif latex_code.startswith("```"):
+            latex_code = latex_code[3:]
+        if latex_code.endswith("```"):
+            latex_code = latex_code[:-3]
+        latex_code = latex_code.strip()
+
+        # If still no \documentclass, try to find it in the text
+        if "\\documentclass" not in latex_code:
+            match = re.search(r'(\\documentclass.*?\\end\{document\})', latex_code, re.DOTALL)
             if match:
                 latex_code = match.group(1).strip()
 
-        if not latex_code:
+        logger.info("Workspace AI raw text length: %d", len(raw_text))
+        if not latex_code or "\\documentclass" not in latex_code:
+            logger.warning("Workspace AI response did not contain LaTeX. First 500 chars: %s", raw_text[:500])
             workspace.generated_status = StudentWorkspace.AiStatus.FAILED
-            workspace.generated_error = "AI did not return valid LaTeX code"
+            workspace.generated_error = "AI did not return valid LaTeX code. Response preview: " + raw_text[:200]
             workspace.save(update_fields=["generated_status", "generated_error", "updated_at"])
             return
 
