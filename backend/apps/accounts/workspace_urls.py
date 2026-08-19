@@ -2,6 +2,7 @@ from django.urls import path
 
 from .workspace_views import (
     AdminWorkspaceListView,
+    AdminWorkspaceStatsView,
     AdminWorkspaceToggleView,
     StudentWorkspaceCompileView,
     StudentWorkspaceGenerateView,
@@ -18,4 +19,5 @@ urlpatterns = [
     # Admin endpoints
     path("admin/", AdminWorkspaceListView.as_view(), name="workspace-admin-list"),
     path("admin/toggle/", AdminWorkspaceToggleView.as_view(), name="workspace-admin-toggle"),
+    path("admin/stats/", AdminWorkspaceStatsView.as_view(), name="workspace-admin-stats"),
 ]

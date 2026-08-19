@@ -301,6 +301,61 @@ class StudentWorkspaceView(APIView):
             raise NotFound("Resume workspace is not enabled for your account.")
         return Response(StudentWorkspaceSerializer(workspace).data)
 
+
+class AdminWorkspaceStatsView(APIView):
+    """GET aggregate workspace usage statistics (admin only)."""
+    from apps.core.permissions import IsSuperAdmin
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        from django.db.models import Sum
+        from django.utils import timezone as tz
+        from datetime import timedelta
+
+        total = StudentWorkspace.objects.count()
+        enabled = StudentWorkspace.objects.filter(is_enabled=True).count()
+        generated = StudentWorkspace.objects.filter(
+            generated_status=StudentWorkspace.AiStatus.COMPLETE
+        ).count()
+        submitted = StudentWorkspace.objects.filter(submitted=True).count()
+        totals = StudentWorkspace.objects.aggregate(
+            total_generates=Sum("generate_count"),
+            total_compiles=Sum("compile_count"),
+            total_submits=Sum("submit_count"),
+        )
+
+        week_ago = tz.now() - timedelta(days=7)
+        recent_generates = StudentWorkspace.objects.filter(
+            last_generated_at__gte=week_ago
+        ).count()
+
+        top_students = list(
+            StudentWorkspace.objects.filter(generate_count__gt=0)
+            .select_related("student")
+            .order_by("-generate_count")[:10]
+            .values(
+                roll_number="student__roll_number",
+                name="student__full_name",
+                generate_count="generate_count",
+                compile_count="compile_count",
+                submit_count="submit_count",
+                generated_score="generated_score",
+                target_ats_score="target_ats_score",
+            )
+        )
+
+        return Response({
+            "total_workspaces": total,
+            "enabled_workspaces": enabled,
+            "completed_generations": generated,
+            "total_submitted": submitted,
+            "total_generates": totals["total_generates"] or 0,
+            "total_compiles": totals["total_compiles"] or 0,
+            "total_submits": totals["total_submits"] or 0,
+            "recent_generates_7d": recent_generates,
+            "top_students": list(top_students),
+        })
+
     def patch(self, request):
         workspace = _get_workspace(request.user)
         if not workspace.is_enabled:
@@ -328,6 +383,61 @@ class StudentWorkspaceView(APIView):
             {"fields": changed}, request,
         )
         return Response(StudentWorkspaceSerializer(workspace).data)
+
+
+class AdminWorkspaceStatsView(APIView):
+    """GET aggregate workspace usage statistics (admin only)."""
+    from apps.core.permissions import IsSuperAdmin
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        from django.db.models import Sum
+        from django.utils import timezone as tz
+        from datetime import timedelta
+
+        total = StudentWorkspace.objects.count()
+        enabled = StudentWorkspace.objects.filter(is_enabled=True).count()
+        generated = StudentWorkspace.objects.filter(
+            generated_status=StudentWorkspace.AiStatus.COMPLETE
+        ).count()
+        submitted = StudentWorkspace.objects.filter(submitted=True).count()
+        totals = StudentWorkspace.objects.aggregate(
+            total_generates=Sum("generate_count"),
+            total_compiles=Sum("compile_count"),
+            total_submits=Sum("submit_count"),
+        )
+
+        week_ago = tz.now() - timedelta(days=7)
+        recent_generates = StudentWorkspace.objects.filter(
+            last_generated_at__gte=week_ago
+        ).count()
+
+        top_students = list(
+            StudentWorkspace.objects.filter(generate_count__gt=0)
+            .select_related("student")
+            .order_by("-generate_count")[:10]
+            .values(
+                roll_number="student__roll_number",
+                name="student__full_name",
+                generate_count="generate_count",
+                compile_count="compile_count",
+                submit_count="submit_count",
+                generated_score="generated_score",
+                target_ats_score="target_ats_score",
+            )
+        )
+
+        return Response({
+            "total_workspaces": total,
+            "enabled_workspaces": enabled,
+            "completed_generations": generated,
+            "total_submitted": submitted,
+            "total_generates": totals["total_generates"] or 0,
+            "total_compiles": totals["total_compiles"] or 0,
+            "total_submits": totals["total_submits"] or 0,
+            "recent_generates_7d": recent_generates,
+            "top_students": list(top_students),
+        })
 
 
 class StudentWorkspaceGenerateView(APIView):
@@ -360,12 +470,14 @@ class StudentWorkspaceGenerateView(APIView):
         workspace.compiled_pdf_url = ""
         workspace.compiled_pdf_public_id = ""
         workspace.submitted = False
+        workspace.generate_count += 1
+        workspace.last_generated_at = timezone.now()
         workspace.save(update_fields=[
             "target_ats_score", "requirements", "template_latex",
             "generated_status", "generated_latex", "generated_score",
             "generated_analysis", "generated_error",
             "compiled_pdf_url", "compiled_pdf_public_id", "submitted",
-            "updated_at",
+            "generate_count", "last_generated_at", "updated_at",
         ])
 
         # Start generation in background thread
@@ -379,6 +491,61 @@ class StudentWorkspaceGenerateView(APIView):
             pass
 
         return Response(StudentWorkspaceSerializer(workspace).data)
+
+
+class AdminWorkspaceStatsView(APIView):
+    """GET aggregate workspace usage statistics (admin only)."""
+    from apps.core.permissions import IsSuperAdmin
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        from django.db.models import Sum
+        from django.utils import timezone as tz
+        from datetime import timedelta
+
+        total = StudentWorkspace.objects.count()
+        enabled = StudentWorkspace.objects.filter(is_enabled=True).count()
+        generated = StudentWorkspace.objects.filter(
+            generated_status=StudentWorkspace.AiStatus.COMPLETE
+        ).count()
+        submitted = StudentWorkspace.objects.filter(submitted=True).count()
+        totals = StudentWorkspace.objects.aggregate(
+            total_generates=Sum("generate_count"),
+            total_compiles=Sum("compile_count"),
+            total_submits=Sum("submit_count"),
+        )
+
+        week_ago = tz.now() - timedelta(days=7)
+        recent_generates = StudentWorkspace.objects.filter(
+            last_generated_at__gte=week_ago
+        ).count()
+
+        top_students = list(
+            StudentWorkspace.objects.filter(generate_count__gt=0)
+            .select_related("student")
+            .order_by("-generate_count")[:10]
+            .values(
+                roll_number="student__roll_number",
+                name="student__full_name",
+                generate_count="generate_count",
+                compile_count="compile_count",
+                submit_count="submit_count",
+                generated_score="generated_score",
+                target_ats_score="target_ats_score",
+            )
+        )
+
+        return Response({
+            "total_workspaces": total,
+            "enabled_workspaces": enabled,
+            "completed_generations": generated,
+            "total_submitted": submitted,
+            "total_generates": totals["total_generates"] or 0,
+            "total_compiles": totals["total_compiles"] or 0,
+            "total_submits": totals["total_submits"] or 0,
+            "recent_generates_7d": recent_generates,
+            "top_students": list(top_students),
+        })
 
 
 class StudentWorkspaceCompileView(APIView):
@@ -431,8 +598,10 @@ class StudentWorkspaceCompileView(APIView):
             workspace.compiled_pdf_url = result.get("url", "")
             workspace.compiled_pdf_public_id = result.get("public_id", "")
             workspace.compiled_at = timezone.now()
+            workspace.compile_count += 1
             workspace.save(update_fields=[
-                "compiled_pdf_url", "compiled_pdf_public_id", "compiled_at", "updated_at"
+                "compiled_pdf_url", "compiled_pdf_public_id", "compiled_at",
+                "compile_count", "updated_at",
             ])
         except Exception as e:
             logger.warning("Failed to upload compiled PDF: %s", e)
@@ -441,6 +610,61 @@ class StudentWorkspaceCompileView(APIView):
             })
 
         return Response(StudentWorkspaceSerializer(workspace).data)
+
+
+class AdminWorkspaceStatsView(APIView):
+    """GET aggregate workspace usage statistics (admin only)."""
+    from apps.core.permissions import IsSuperAdmin
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        from django.db.models import Sum
+        from django.utils import timezone as tz
+        from datetime import timedelta
+
+        total = StudentWorkspace.objects.count()
+        enabled = StudentWorkspace.objects.filter(is_enabled=True).count()
+        generated = StudentWorkspace.objects.filter(
+            generated_status=StudentWorkspace.AiStatus.COMPLETE
+        ).count()
+        submitted = StudentWorkspace.objects.filter(submitted=True).count()
+        totals = StudentWorkspace.objects.aggregate(
+            total_generates=Sum("generate_count"),
+            total_compiles=Sum("compile_count"),
+            total_submits=Sum("submit_count"),
+        )
+
+        week_ago = tz.now() - timedelta(days=7)
+        recent_generates = StudentWorkspace.objects.filter(
+            last_generated_at__gte=week_ago
+        ).count()
+
+        top_students = list(
+            StudentWorkspace.objects.filter(generate_count__gt=0)
+            .select_related("student")
+            .order_by("-generate_count")[:10]
+            .values(
+                roll_number="student__roll_number",
+                name="student__full_name",
+                generate_count="generate_count",
+                compile_count="compile_count",
+                submit_count="submit_count",
+                generated_score="generated_score",
+                target_ats_score="target_ats_score",
+            )
+        )
+
+        return Response({
+            "total_workspaces": total,
+            "enabled_workspaces": enabled,
+            "completed_generations": generated,
+            "total_submitted": submitted,
+            "total_generates": totals["total_generates"] or 0,
+            "total_compiles": totals["total_compiles"] or 0,
+            "total_submits": totals["total_submits"] or 0,
+            "recent_generates_7d": recent_generates,
+            "top_students": list(top_students),
+        })
 
 
 class StudentWorkspaceSubmitView(APIView):
@@ -460,8 +684,10 @@ class StudentWorkspaceSubmitView(APIView):
         workspace.submitted = True
         workspace.submitted_at = timezone.now()
         workspace.submitted_url = workspace.compiled_pdf_url
+        workspace.submit_count += 1
         workspace.save(update_fields=[
-            "submitted", "submitted_at", "submitted_url", "updated_at"
+            "submitted", "submitted_at", "submitted_url",
+            "submit_count", "updated_at",
         ])
 
         log_audit(
@@ -470,6 +696,61 @@ class StudentWorkspaceSubmitView(APIView):
         )
 
         return Response(StudentWorkspaceSerializer(workspace).data)
+
+
+class AdminWorkspaceStatsView(APIView):
+    """GET aggregate workspace usage statistics (admin only)."""
+    from apps.core.permissions import IsSuperAdmin
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        from django.db.models import Sum
+        from django.utils import timezone as tz
+        from datetime import timedelta
+
+        total = StudentWorkspace.objects.count()
+        enabled = StudentWorkspace.objects.filter(is_enabled=True).count()
+        generated = StudentWorkspace.objects.filter(
+            generated_status=StudentWorkspace.AiStatus.COMPLETE
+        ).count()
+        submitted = StudentWorkspace.objects.filter(submitted=True).count()
+        totals = StudentWorkspace.objects.aggregate(
+            total_generates=Sum("generate_count"),
+            total_compiles=Sum("compile_count"),
+            total_submits=Sum("submit_count"),
+        )
+
+        week_ago = tz.now() - timedelta(days=7)
+        recent_generates = StudentWorkspace.objects.filter(
+            last_generated_at__gte=week_ago
+        ).count()
+
+        top_students = list(
+            StudentWorkspace.objects.filter(generate_count__gt=0)
+            .select_related("student")
+            .order_by("-generate_count")[:10]
+            .values(
+                roll_number="student__roll_number",
+                name="student__full_name",
+                generate_count="generate_count",
+                compile_count="compile_count",
+                submit_count="submit_count",
+                generated_score="generated_score",
+                target_ats_score="target_ats_score",
+            )
+        )
+
+        return Response({
+            "total_workspaces": total,
+            "enabled_workspaces": enabled,
+            "completed_generations": generated,
+            "total_submitted": submitted,
+            "total_generates": totals["total_generates"] or 0,
+            "total_compiles": totals["total_compiles"] or 0,
+            "total_submits": totals["total_submits"] or 0,
+            "recent_generates_7d": recent_generates,
+            "top_students": list(top_students),
+        })
 
 
 # ----- Admin Views -----
@@ -499,6 +780,10 @@ class AdminWorkspaceListView(APIView):
                 "generated_score": ws.generated_score,
                 "submitted": ws.submitted,
                 "target_ats_score": ws.target_ats_score,
+                "generate_count": ws.generate_count,
+                "compile_count": ws.compile_count,
+                "submit_count": ws.submit_count,
+                "last_generated_at": ws.last_generated_at,
                 "updated_at": ws.updated_at,
             })
 
@@ -535,3 +820,58 @@ class AdminWorkspaceToggleView(APIView):
         )
 
         return Response(StudentWorkspaceSerializer(workspace).data)
+
+
+class AdminWorkspaceStatsView(APIView):
+    """GET aggregate workspace usage statistics (admin only)."""
+    from apps.core.permissions import IsSuperAdmin
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        from django.db.models import Sum
+        from django.utils import timezone as tz
+        from datetime import timedelta
+
+        total = StudentWorkspace.objects.count()
+        enabled = StudentWorkspace.objects.filter(is_enabled=True).count()
+        generated = StudentWorkspace.objects.filter(
+            generated_status=StudentWorkspace.AiStatus.COMPLETE
+        ).count()
+        submitted = StudentWorkspace.objects.filter(submitted=True).count()
+        totals = StudentWorkspace.objects.aggregate(
+            total_generates=Sum("generate_count"),
+            total_compiles=Sum("compile_count"),
+            total_submits=Sum("submit_count"),
+        )
+
+        week_ago = tz.now() - timedelta(days=7)
+        recent_generates = StudentWorkspace.objects.filter(
+            last_generated_at__gte=week_ago
+        ).count()
+
+        top_students = list(
+            StudentWorkspace.objects.filter(generate_count__gt=0)
+            .select_related("student")
+            .order_by("-generate_count")[:10]
+            .values(
+                roll_number="student__roll_number",
+                name="student__full_name",
+                generate_count="generate_count",
+                compile_count="compile_count",
+                submit_count="submit_count",
+                generated_score="generated_score",
+                target_ats_score="target_ats_score",
+            )
+        )
+
+        return Response({
+            "total_workspaces": total,
+            "enabled_workspaces": enabled,
+            "completed_generations": generated,
+            "total_submitted": submitted,
+            "total_generates": totals["total_generates"] or 0,
+            "total_compiles": totals["total_compiles"] or 0,
+            "total_submits": totals["total_submits"] or 0,
+            "recent_generates_7d": recent_generates,
+            "top_students": list(top_students),
+        })

@@ -325,6 +325,12 @@ class StudentWorkspace(models.Model):
     submitted_at = models.DateTimeField(null=True, blank=True)
     submitted_url = models.URLField(max_length=500, blank=True, default="")
 
+    # Usage tracking
+    generate_count = models.PositiveIntegerField(default=0)
+    compile_count = models.PositiveIntegerField(default=0)
+    submit_count = models.PositiveIntegerField(default=0)
+    last_generated_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
