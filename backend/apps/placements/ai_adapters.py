@@ -203,7 +203,7 @@ class OpenAICompatAdapter:
             client = OpenAI(
                 base_url=base_url,
                 api_key=key,
-                timeout=timeout or self.provider.timeout_seconds or 180,
+                timeout=timeout or self.provider.timeout_seconds or 60,
                 max_retries=0,
             )
             try:
@@ -361,7 +361,7 @@ class GeminiAdapter:
                 method="POST",
             )
             with urllib.request.urlopen(
-                req, timeout=timeout or self.provider.timeout_seconds or 180
+                req, timeout=timeout or self.provider.timeout_seconds or 60
             ) as resp:
                 return json.loads(resp.read().decode("utf-8"))
 

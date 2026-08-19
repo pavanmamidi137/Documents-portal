@@ -9,12 +9,16 @@ students can see which drives give them the best chance.
 
 import html
 import io
+import logging
 import os
 import re
+import time
 import zipfile
 import threading
 
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 from apps.core.ocr import ocr_pdf_content as _ocr_pdf_content
 
@@ -548,6 +552,7 @@ def analyze_resume(resume, actor) -> dict:
     from apps.core.models import Notification
     from apps.core.utils import notify
 
+    _total_t0 = time.monotonic()
     text, read_error = _extract_resume_text(resume)
 
     # Defer credit recording until the analysis actually completes below - the
@@ -606,8 +611,14 @@ def analyze_resume(resume, actor) -> dict:
     # cap the reasoning so the model has room for the actual report.
     # Retry with progressively higher budgets when the first attempt
     # produces an unreadable report (reasoning consumed too many tokens).
+    #
+    # NOTE: the last budget is 999999 (not 0) because the adapter
+    # auto-sets reasoning_budget=500 for raw_json calls when the budget
+    # is falsy.  999999 tells the model "think as much as you need".
     analysis = None
-    for retry_budget in (500, 1000, 2000, 0):
+    retry_budgets = (500, 1000, 2000, 999999) if len(brief) > 1000 else (2000,)
+    for retry_budget in retry_budgets:
+        _t0 = time.monotonic()
         try:
             quality = ai_json(
                 _QUALITY_PROMPT.replace("{untrusted_guard}", _UNTRUSTED_GUARD),
@@ -616,16 +627,21 @@ def analyze_resume(resume, actor) -> dict:
                 usage_callback=usage, task="RESUME_ANALYSIS",
             )
         except AiError:
-            if retry_budget == 0:
+            elapsed = time.monotonic() - _t0
+            if retry_budget == retry_budgets[-1]:
+                logger.error("AI quality analysis failed after %.1fs (budget=%d): %s", elapsed, retry_budget, exc_info=True)
                 raise  # last attempt failed - propagate the error
+            logger.warning("AI quality attempt failed (budget=%d, %.1fs) - retrying", retry_budget, elapsed)
             continue  # try next budget level
+        elapsed = time.monotonic() - _t0
         # Normalize the report - key aliases, fenced/prose-wrapped JSON and a
         # wrapper key ({"report": {...}}) are all handled; None when unusable.
         analysis = normalize_resume_report(quality)
         if analysis:
+            logger.info("AI quality OK (budget=%d, %.1fs, score=%d)", retry_budget, elapsed, analysis.get('score', 0))
             break  # got a valid report
-        # Unreadable - try again with a higher budget (or no budget at all)
-    # If all retries failed, analysis is still None → handled below
+        # Unreadable - try again with a higher budget
+        logger.warning("AI quality unreadable (budget=%d, %.1fs) - retrying higher", retry_budget, elapsed)
 
     match_map: dict[str, dict] = {}
     if text:
@@ -642,18 +658,21 @@ def analyze_resume(resume, actor) -> dict:
                 for d in open_drives
             )
             try:
+                _mt0 = time.monotonic()
                 match = ai_json(
                     _MATCH_PROMPT.format(
                         resume_brief=brief[:4000],
                         untrusted_guard=_UNTRUSTED_GUARD,
                     ),
                     "Score this resume against each drive.", max_tokens=4096,
-                    reasoning_budget=300,
+                    reasoning_budget=500,
                     usage_callback=usage,
                     documents=[drives_brief],
                     task="RESUME_ANALYSIS",
                 )
+                logger.info("AI match OK (%.1fs)", time.monotonic() - _mt0)
             except AiError:
+                logger.warning("AI match failed (%.1fs)", time.monotonic() - _mt0)
                 raise  # nothing committed - a failed match run costs no credits
             by_id = {d.id: d for d in open_drives}
             for entry in normalize_matches(match):
@@ -716,6 +735,12 @@ def analyze_resume(resume, actor) -> dict:
             "See your resume quality score and which open drives match you best.",
             "/resume",
         )
+    logger.info(
+        "Resume analysis complete in %.1fs — status=%s score=%s",
+        time.monotonic() - _total_t0,
+        resume.ai_status,
+        resume.ai_score,
+    )
     return {
         "ai_status": resume.ai_status,
         "ai_score": resume.ai_score,

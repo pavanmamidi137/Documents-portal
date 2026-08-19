@@ -76,7 +76,7 @@ RAG_MODEL = os.environ.get("NVIDIA_RAG_MODEL", "nvidia/nim-rag")
 # we don't burn latency retrying when the quota is simply exhausted.
 _429_RETRIES = int(os.environ.get("NVIDIA_429_RETRIES", "2"))
 _429_BACKOFF_SECONDS = float(os.environ.get("NVIDIA_429_BACKOFF", "1.5"))
-_TIMEOUT_SECONDS = float(os.environ.get("NVIDIA_TIMEOUT", "180"))
+_TIMEOUT_SECONDS = float(os.environ.get("NVIDIA_TIMEOUT", "60"))
 
 # Reasoning budgets (extra_body={"reasoning_budget": N}) per endpoint. These
 # are deliberately modest - not the 16k sample default - so simple extraction
