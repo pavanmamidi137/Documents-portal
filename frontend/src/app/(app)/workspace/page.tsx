@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -9,9 +9,7 @@ import {
   Code,
   Eye,
   FileText,
-  Gauge,
   Lightbulb,
-  ListChecks,
   Loader2,
   Lock,
   RefreshCw,
@@ -22,6 +20,7 @@ import {
   ThumbsUp,
   TriangleAlert,
   Wrench,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -83,7 +82,6 @@ async function fetchWorkspace(): Promise<Workspace> {
   return http.get<Workspace>("/student-workspace/");
 }
 
-/** 0-100 AI score -> color ring */
 function scoreRing(score: number) {
   if (score >= 70) return "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
   if (score >= 45) return "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400";
@@ -113,9 +111,106 @@ function ScoreBar({ label, score }: { label: string; score: number }) {
   );
 }
 
+/** Typewriter effect: displays text character by character */
+function TypewriterCode({ text, speed = 8 }: { text: string; speed?: number }) {
+  const [displayed, setDisplayed] = useState("");
+  const [done, setDone] = useState(false);
+  const containerRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (!text) return;
+    setDisplayed("");
+    setDone(false);
+    let i = 0;
+    const interval = setInterval(() => {
+      i++;
+      setDisplayed(text.slice(0, i));
+      // Auto-scroll to bottom
+      if (containerRef.current) {
+        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      }
+      if (i >= text.length) {
+        clearInterval(interval);
+        setDone(true);
+      }
+    }, speed);
+    return () => clearInterval(interval);
+  }, [text, speed]);
+
+  return (
+    <div className="relative">
+      <pre
+        ref={containerRef}
+        className="max-h-[500px] overflow-auto rounded-xl border bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed text-green-400"
+      >
+        {displayed}
+        {!done && <span className="inline-block h-4 w-1.5 animate-pulse bg-green-400 ml-0.5" />}
+      </pre>
+      <div className="absolute top-2 right-2 flex gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-zinc-400 hover:text-white hover:bg-zinc-800"
+          onClick={() => {
+            navigator.clipboard.writeText(text);
+            toast.success("LaTeX copied!");
+          }}
+        >
+          Copy
+        </Button>
+        {done && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-zinc-400 hover:text-white hover:bg-zinc-800"
+            onClick={() => {
+              const blob = new Blob([text], { type: "text/plain" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "resume.tex";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          >
+            Download .tex
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** PDF Preview Dialog */
+function PdfPreviewDialog({ url, open, onClose }: { url: string; open: boolean; onClose: () => void }) {
+  if (!open || !url) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="relative w-full max-w-3xl rounded-2xl border bg-card shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <p className="text-sm font-medium flex items-center gap-2">
+            <FileText className="size-4 text-primary" /> Resume Preview
+          </p>
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            <X className="size-4" />
+          </Button>
+        </div>
+        <div className="h-[80vh]">
+          <iframe src={url} className="h-full w-full rounded-b-2xl" title="PDF Preview" />
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 export default function WorkspacePage() {
   const queryClient = useQueryClient();
-  const latexRef = useRef<HTMLTextAreaElement>(null);
   const [targetScore, setTargetScore] = useState(80);
   const [requirements, setRequirements] = useState("");
   const [templateLatex, setTemplateLatex] = useState("");
@@ -123,6 +218,7 @@ export default function WorkspacePage() {
   const [compiling, setCompiling] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [compileAvailable, setCompileAvailable] = useState<boolean | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const { data: workspace, isLoading, error } = useQuery({
     queryKey: ["workspace", "mine"],
@@ -130,7 +226,6 @@ export default function WorkspacePage() {
     retry: false,
   });
 
-  // Sync workspace data to local state
   useEffect(() => {
     if (workspace) {
       setTargetScore(workspace.target_ats_score);
@@ -139,7 +234,6 @@ export default function WorkspacePage() {
     }
   }, [workspace]);
 
-  // Poll while generating
   useEffect(() => {
     if (!workspace || workspace.generated_status !== "RUNNING") return;
     const interval = setInterval(() => {
@@ -148,9 +242,8 @@ export default function WorkspacePage() {
     return () => clearInterval(interval);
   }, [workspace?.generated_status, queryClient]);
 
-  // Check if LaTeX compilation is available on the server
   useEffect(() => {
-    http.get<{ available: boolean }>('/student-workspace/compile/')
+    http.get<{ available: boolean }>("/student-workspace/compile/")
       .then((res) => setCompileAvailable(res.available))
       .catch(() => setCompileAvailable(false));
   }, []);
@@ -176,8 +269,10 @@ export default function WorkspacePage() {
     setCompiling(true);
     try {
       await http.post<Workspace>("/student-workspace/compile/", {});
-      toast.success("Resume compiled to PDF successfully!");
-      queryClient.invalidateQueries({ queryKey: ["workspace", "mine"] });
+      toast.success("Resume compiled to PDF!");
+      await queryClient.invalidateQueries({ queryKey: ["workspace", "mine"] });
+      // Auto-open preview
+      setPreviewOpen(true);
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -189,7 +284,7 @@ export default function WorkspacePage() {
     setSubmitting(true);
     try {
       await http.post<Workspace>("/student-workspace/submit/", {});
-      toast.success("Resume submitted to faculty for review!");
+      toast.success("Resume submitted to faculty!");
       queryClient.invalidateQueries({ queryKey: ["workspace", "mine"] });
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -202,10 +297,7 @@ export default function WorkspacePage() {
   if (!isLoading && (error || (workspace && !workspace.is_enabled))) {
     return (
       <div>
-        <PageHeader
-          title="AI Resume Workspace"
-          description="Generate a polished, ATS-friendly resume with AI assistance."
-        />
+        <PageHeader title="AI Resume Workspace" description="Generate a polished, ATS-friendly resume with AI." />
         <Card>
           <CardContent className="py-12">
             <EmptyState
@@ -220,18 +312,22 @@ export default function WorkspacePage() {
     );
   }
 
+  const hasCode = workspace?.generated_status === "COMPLETE" && workspace.generated_latex;
+  const isRunning = workspace?.generated_status === "RUNNING" || generating;
+  const isFailed = workspace?.generated_status === "FAILED";
+
   return (
     <div>
       <PageHeader
         title="AI Resume Workspace"
-        description="Generate a polished, ATS-friendly resume with AI assistance. Set your target score, provide a template, and let the AI do the rest."
+        description="Generate a polished, ATS-friendly resume with AI. Set your target score, provide requirements, and let the AI build it."
       />
 
       <motion.div
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="mx-auto max-w-5xl space-y-6"
+        className="mx-auto max-w-7xl"
       >
         {isLoading ? (
           <Card>
@@ -240,390 +336,330 @@ export default function WorkspacePage() {
             </CardContent>
           </Card>
         ) : workspace ? (
-          <>
-            {/* Current Resume Analysis */}
-            {workspace.resume_ai_status === "COMPLETE" && workspace.resume_ai_analysis && (
-              <Card className="border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-transparent">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <BrainCircuit className="size-5 text-violet-500" /> Your Current Resume Analysis
-                  </CardTitle>
-                  <CardDescription>
-                    Based on your uploaded resume — use this to set your target score and requirements.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-4">
-                    <div className={cn("flex size-16 shrink-0 flex-col items-center justify-center rounded-2xl border", scoreRing(workspace.resume_ai_score ?? 0))}>
-                      <span className="text-xl font-bold tabular-nums">
-                        {workspace.resume_ai_score ?? 0}
-                        <span className="text-xs font-medium text-muted-foreground">%</span>
-                      </span>
-                      <span className="text-[10px] font-medium text-muted-foreground">Current</span>
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Target: {targetScore}% → Gap: {Math.max(0, targetScore - (workspace.resume_ai_score ?? 0))} points</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        Set your target score below to close this gap.
-                      </p>
-                    </div>
-                  </div>
-
-                  {workspace.resume_ai_analysis.pros && workspace.resume_ai_analysis.pros.length > 0 && (
+          <div className="grid gap-6 lg:grid-cols-5">
+            {/* LEFT: Code / Config */}
+            <div className="space-y-4 lg:col-span-3">
+              {/* Running animation */}
+              {isRunning && (
+                <Card className="border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-transparent">
+                  <CardContent className="flex items-center gap-4 py-6">
+                    <Loader2 className="size-8 animate-spin text-violet-500" />
                     <div>
-                      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                        <ThumbsUp className="size-3" /> Strengths
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {workspace.resume_ai_analysis.pros.slice(0, 5).map((p, i) => (
-                          <Badge key={i} variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 text-[11px] dark:text-emerald-400">
-                            {p}
-                          </Badge>
-                        ))}
+                      <p className="text-sm font-medium">AI is writing your resume...</p>
+                      <p className="text-xs text-muted-foreground">Generating LaTeX code character by character. This takes 1-2 minutes.</p>
+                      <div className="mt-2 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full w-1/3 animate-pulse rounded-full bg-violet-500" />
                       </div>
                     </div>
-                  )}
+                  </CardContent>
+                </Card>
+              )}
 
-                  {workspace.resume_ai_analysis.cons && workspace.resume_ai_analysis.cons.length > 0 && (
-                    <div>
-                      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
-                        <ThumbsDown className="size-3" /> Weaknesses
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {workspace.resume_ai_analysis.cons.slice(0, 5).map((c, i) => (
-                          <Badge key={i} variant="outline" className="border-rose-500/30 bg-rose-500/10 text-rose-700 text-[11px] dark:text-rose-400">
-                            {c}
-                          </Badge>
-                        ))}
-                      </div>
+              {/* Failed */}
+              {isFailed && (
+                <Card className="border-destructive/30">
+                  <CardContent className="space-y-3 py-4">
+                    <div className="flex items-center gap-2">
+                      <TriangleAlert className="size-4 text-destructive" />
+                      <p className="text-sm font-medium text-destructive">Generation Failed</p>
                     </div>
-                  )}
-
-                  {workspace.resume_ai_analysis.improvements && workspace.resume_ai_analysis.improvements.length > 0 && (
-                    <div>
-                      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-                        <Lightbulb className="size-3" /> Key Improvements
-                      </p>
-                      <ul className="space-y-1">
-                        {workspace.resume_ai_analysis.improvements.slice(0, 5).map((imp, i) => (
-                          <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                            <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-                              {i + 1}
-                            </span>
-                            {imp}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Configuration */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Target className="size-5 text-primary" /> Configuration
-                </CardTitle>
-                <CardDescription>
-                  Set your target ATS score, job requirements, and optional LaTeX template.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Target ATS Score</label>
-                    <div className="flex items-center gap-3">
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={targetScore}
-                        onChange={(e) => setTargetScore(Math.max(0, Math.min(100, Number(e.target.value))))}
-                        className="w-24"
-                      />
-                      <div className="flex-1">
-                        <ScoreBar label="Target" score={targetScore} />
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      Higher scores require stronger content, quantified metrics, and ATS-optimized formatting.
+                    <p className="text-xs text-muted-foreground">
+                      {workspace.generated_error || "The AI service did not respond."}
                     </p>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Resume Source (LaTeX) — Optional</label>
-                    <p className="text-[11px] text-muted-foreground">
-                      Have a LaTeX template you like? Paste it here — the AI keeps your exact layout and only improves the content.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Requirements / Job Description</label>
-                  <Textarea
-                    placeholder="e.g., AWS + Java developer, 2027 batch, 8+ LPA package. Include specific skills, technologies, and experience the resume should highlight..."
-                    value={requirements}
-                    onChange={(e) => setRequirements(e.target.value)}
-                    rows={3}
-                    className="resize-none"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium flex items-center gap-1.5">
-                    <Code className="size-4" /> LaTeX Template (Optional)
-                  </label>
-                  <Textarea
-                    ref={latexRef}
-                    placeholder={`\\documentclass[a4paper,10pt]{article}\n\\usepackage[utf8]{inputenc}\n\\usepackage[T1]{fontenc}\n% ... paste your LaTeX template here`}
-                    value={templateLatex}
-                    onChange={(e) => setTemplateLatex(e.target.value)}
-                    rows={8}
-                    className="font-mono text-xs resize-y"
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Paste your existing LaTeX resume template. The AI will keep the exact structure and only improve the content to reach your target score.
-                  </p>
-                </div>
-
-                <Button
-                  onClick={handleGenerate}
-                  disabled={generating || workspace.generated_status === "RUNNING"}
-                  className="w-full"
-                >
-                  {generating || workspace.generated_status === "RUNNING" ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" /> Generating Resume...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="size-4" /> Rebuild Resume with AI
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Generation Status */}
-            {workspace.generated_status === "RUNNING" && (
-              <Card className="border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-transparent">
-                <CardContent className="flex items-center justify-center gap-3 py-8">
-                  <Loader2 className="size-6 animate-spin text-violet-500" />
-                  <div>
-                    <p className="text-sm font-medium">AI is generating your resume...</p>
-                    <p className="text-xs text-muted-foreground">This takes 1-2 minutes. The page will update automatically.</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Generation Failed */}
-            {workspace.generated_status === "FAILED" && (
-              <Card className="border-destructive/30">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <TriangleAlert className="size-5 text-destructive" /> Generation Failed
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">
-                    {workspace.generated_error || "The AI service did not respond. Please try again."}
-                  </p>
-                  <Button onClick={handleGenerate} className="mt-4" disabled={generating}>
-                    <RefreshCw className="size-4" /> Try Again
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Generated Resume */}
-            {workspace.generated_status === "COMPLETE" && workspace.generated_latex && (
-              <Card className="border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-transparent">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Wrench className="size-5 text-emerald-500" /> AI-Rebuilt Resume
-                  </CardTitle>
-                  <CardDescription>
-                    The AI rewrote your resume into a polished, ATS-friendly version targeting {targetScore}%.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Score + Analysis */}
-                  {workspace.generated_analysis && (
-                    <div className="rounded-xl border bg-card/60 p-4 space-y-3">
-                      <div className="flex items-center gap-4">
-                        <div className={cn("flex size-14 shrink-0 flex-col items-center justify-center rounded-xl border", scoreRing(workspace.generated_score ?? 0))}>
-                          <span className="text-lg font-bold tabular-nums">
-                            {workspace.generated_score ?? 0}
-                            <span className="text-xs font-medium text-muted-foreground">%</span>
-                          </span>
-                          <span className="text-[10px] font-medium text-muted-foreground">Score</span>
-                        </div>
-                        <div className="flex-1 space-y-1">
-                          {workspace.generated_analysis.summary && (
-                            <p className="text-xs text-muted-foreground">{workspace.generated_analysis.summary}</p>
-                          )}
-                          <div className="grid grid-cols-3 gap-2">
-                            {workspace.generated_analysis.ats_compliance != null && (
-                              <ScoreBar label="ATS" score={workspace.generated_analysis.ats_compliance} />
-                            )}
-                            {workspace.generated_analysis.content_quality != null && (
-                              <ScoreBar label="Content" score={workspace.generated_analysis.content_quality} />
-                            )}
-                            {workspace.generated_analysis.skills_match != null && (
-                              <ScoreBar label="Skills" score={workspace.generated_analysis.skills_match} />
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {workspace.generated_analysis.pros && workspace.generated_analysis.pros.length > 0 && (
-                        <div>
-                          <p className="mb-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                            <ThumbsUp className="size-3" /> What's Good
-                          </p>
-                          <div className="flex flex-wrap gap-1">
-                            {workspace.generated_analysis.pros.map((p, i) => (
-                              <Badge key={i} variant="outline" className="text-[10px]">{p}</Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {workspace.generated_analysis.cons && workspace.generated_analysis.cons.length > 0 && (
-                        <div>
-                          <p className="mb-1 text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                            <ThumbsDown className="size-3" /> Gaps
-                          </p>
-                          <div className="flex flex-wrap gap-1">
-                            {workspace.generated_analysis.cons.map((c, i) => (
-                              <Badge key={i} variant="outline" className="border-rose-500/30 bg-rose-500/10 text-[10px]">{c}</Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {workspace.generated_analysis.missing_keywords && workspace.generated_analysis.missing_keywords.length > 0 && (
-                        <div>
-                          <p className="mb-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                            <Sparkles className="size-3" /> Missing Keywords
-                          </p>
-                          <div className="flex flex-wrap gap-1">
-                            {workspace.generated_analysis.missing_keywords.map((k, i) => (
-                              <Badge key={i} variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 text-[10px] dark:text-amber-400">+ {k}</Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* LaTeX Code */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium flex items-center gap-1.5">
-                      <Code className="size-4" /> Generated LaTeX Code
-                    </label>
-                    <div className="relative">
-                      <pre className="max-h-96 overflow-auto rounded-xl border bg-muted/30 p-4 font-mono text-xs leading-relaxed">
-                        {workspace.generated_latex}
-                      </pre>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="absolute top-2 right-2"
-                        onClick={() => {
-                          navigator.clipboard.writeText(workspace.generated_latex);
-                          toast.success("LaTeX copied to clipboard!");
-                        }}
-                      >
-                        Copy
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex flex-wrap gap-3 border-t pt-4">
-                    <Button onClick={handleCompile} disabled={compiling || compileAvailable === false}>
-                      {compiling ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
-                      Compile to PDF
+                    <Button onClick={handleGenerate} size="sm" disabled={generating}>
+                      <RefreshCw className="size-3.5" /> Try Again
                     </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Generated code with typewriter */}
+              {hasCode && (
+                <Card className="border-emerald-500/30 overflow-hidden">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Wrench className="size-4 text-emerald-500" /> Generated LaTeX Code
+                      </CardTitle>
+                      <div className="flex gap-2">
+                        <Button onClick={handleCompile} size="sm" disabled={compiling || compileAvailable === false}>
+                          {compiling ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
+                          Compile & Preview
+                        </Button>
+                        {workspace.compiled_pdf_url && (
+                          <Button variant="outline" size="sm" onClick={() => setPreviewOpen(true)}>
+                            <FileText className="size-3.5" /> View PDF
+                          </Button>
+                        )}
+                        {!workspace.submitted && workspace.compiled_pdf_url && (
+                          <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+                            {submitting ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                            Submit
+                          </Button>
+                        )}
+                        {workspace.submitted && (
+                          <Badge variant="outline" className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 text-xs dark:text-emerald-400">
+                            <CheckCircle2 className="size-3" /> Submitted
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <CardDescription>
+                      Target: {targetScore}% · {workspace.generated_latex.length} characters
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <TypewriterCode text={workspace.generated_latex} speed={5} />
                     {compileAvailable === false && (
-                      <p className="text-xs text-muted-foreground self-center">
-                        Server PDF compiler unavailable — copy the LaTeX code and compile on{' '}
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        Server compiler unavailable — copy the code and compile on{" "}
                         <a href="https://www.overleaf.com" target="_blank" rel="noopener noreferrer" className="underline text-primary">Overleaf</a>
                       </p>
                     )}
-                    {workspace.compiled_pdf_url && (
-                    <a href={workspace.compiled_pdf_url} target="_blank" rel="noopener noreferrer">
-                      <Button variant="outline">
-                        <FileText className="size-4" /> View PDF
-                      </Button>
-                    </a>
-                    )}
-                    {!workspace.submitted && workspace.compiled_pdf_url && (
-                      <Button onClick={handleSubmit} disabled={submitting}>
-                        {submitting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                        Submit to Faculty
-                      </Button>
-                    )}
-                    {workspace.submitted && (
-                      <Badge variant="outline" className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                        <CheckCircle2 className="size-3.5" /> Submitted
-                      </Badge>
-                    )}
-                  </div>
+                  </CardContent>
+                </Card>
+              )}
 
-                  {workspace.generated_at && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Generated {formatDate(workspace.generated_at)}
-                      {workspace.compiled_at ? ` · Compiled ${formatDate(workspace.compiled_at)}` : ""}
-                      {workspace.submitted_at ? ` · Submitted ${formatDate(workspace.submitted_at)}` : ""}
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            )}
+              {/* Config (only show when no code yet) */}
+              {!hasCode && !isRunning && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Target className="size-4 text-primary" /> Configure Your Resume
+                    </CardTitle>
+                    <CardDescription>Set your target, requirements, and optional template.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Target ATS Score</label>
+                        <div className="flex items-center gap-3">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={targetScore}
+                            onChange={(e) => setTargetScore(Math.max(0, Math.min(100, Number(e.target.value))))}
+                            className="w-24"
+                          />
+                          <div className="flex-1">
+                            <ScoreBar label="Target" score={targetScore} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
-            {/* Quick tips */}
-            <Card className="border-muted">
-              <CardContent className="py-4">
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <div className="flex items-start gap-2">
-                    <Target className="mt-0.5 size-4 shrink-0 text-primary" />
-                    <div>
-                      <p className="text-xs font-medium">Target Score</p>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Requirements / Job Description</label>
+                      <Textarea
+                        placeholder="e.g., AWS + Java developer, 2027 batch, 8+ LPA. Include skills, technologies, and experience the resume should highlight..."
+                        value={requirements}
+                        onChange={(e) => setRequirements(e.target.value)}
+                        rows={3}
+                        className="resize-none"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium flex items-center gap-1.5">
+                        <Code className="size-4" /> LaTeX Template (Optional)
+                      </label>
+                      <Textarea
+                        placeholder={"\\documentclass[a4paper,10pt]{article}\n\\usepackage[utf8]{inputenc}\n% ... paste your LaTeX template here"}
+                        value={templateLatex}
+                        onChange={(e) => setTemplateLatex(e.target.value)}
+                        rows={6}
+                        className="font-mono text-xs resize-y"
+                      />
                       <p className="text-[11px] text-muted-foreground">
-                        80+ = strong ATS compliance. Add quantified metrics and keywords.
+                        Paste your existing template. The AI keeps the layout and only improves content.
                       </p>
                     </div>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Code className="mt-0.5 size-4 shrink-0 text-primary" />
-                    <div>
-                      <p className="text-xs font-medium">LaTeX Template</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Provide your existing template to keep the layout. AI improves only the content.
-                      </p>
+
+                    <Button onClick={handleGenerate} disabled={generating} className="w-full">
+                      {generating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                      {generating ? "Generating..." : "Rebuild Resume with AI"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            {/* RIGHT: Analysis / Errors / Tips */}
+            <div className="space-y-4 lg:col-span-2">
+              {/* Current resume analysis */}
+              {workspace.resume_ai_status === "COMPLETE" && workspace.resume_ai_analysis && (
+                <Card className="border-violet-500/20">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <BrainCircuit className="size-4 text-violet-500" /> Current Resume
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className={cn("flex size-12 shrink-0 flex-col items-center justify-center rounded-xl border text-sm font-bold", scoreRing(workspace.resume_ai_score ?? 0))}>
+                        {workspace.resume_ai_score ?? 0}%
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Target: {targetScore}% · Gap: {Math.max(0, targetScore - (workspace.resume_ai_score ?? 0))} points
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Send className="mt-0.5 size-4 shrink-0 text-primary" />
-                    <div>
-                      <p className="text-xs font-medium">Submit</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        After compiling, submit to faculty for review. You can regenerate anytime.
-                      </p>
+                    {workspace.resume_ai_analysis.pros && workspace.resume_ai_analysis.pros.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                          <ThumbsUp className="size-3" /> Strengths
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {workspace.resume_ai_analysis.pros.slice(0, 4).map((p, i) => (
+                            <Badge key={i} variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 text-[10px] dark:text-emerald-400">{p}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {workspace.resume_ai_analysis.cons && workspace.resume_ai_analysis.cons.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                          <ThumbsDown className="size-3" /> Weaknesses
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {workspace.resume_ai_analysis.cons.slice(0, 4).map((c, i) => (
+                            <Badge key={i} variant="outline" className="border-rose-500/30 bg-rose-500/10 text-rose-700 text-[10px] dark:text-rose-400">{c}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {workspace.resume_ai_analysis.improvements && workspace.resume_ai_analysis.improvements.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                          <Lightbulb className="size-3" /> Improvements
+                        </p>
+                        <ul className="space-y-1">
+                          {workspace.resume_ai_analysis.improvements.slice(0, 4).map((imp, i) => (
+                            <li key={i} className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+                              <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[9px] font-semibold text-amber-600 dark:text-amber-400">{i + 1}</span>
+                              {imp}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Generated score analysis */}
+              {hasCode && workspace.generated_analysis && (
+                <Card className="border-emerald-500/20">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <Sparkles className="size-4 text-emerald-500" /> AI Review
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className={cn("flex size-12 shrink-0 flex-col items-center justify-center rounded-xl border text-sm font-bold", scoreRing(workspace.generated_score ?? 0))}>
+                        {workspace.generated_score ?? 0}%
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        {workspace.generated_analysis.summary && (
+                          <p className="text-[11px] text-muted-foreground">{workspace.generated_analysis.summary}</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </>
+                    <div className="space-y-2">
+                      {workspace.generated_analysis.ats_compliance != null && <ScoreBar label="ATS Compliance" score={workspace.generated_analysis.ats_compliance} />}
+                      {workspace.generated_analysis.content_quality != null && <ScoreBar label="Content Quality" score={workspace.generated_analysis.content_quality} />}
+                      {workspace.generated_analysis.skills_match != null && <ScoreBar label="Skills Match" score={workspace.generated_analysis.skills_match} />}
+                    </div>
+                    {workspace.generated_analysis.pros && workspace.generated_analysis.pros.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1"><ThumbsUp className="size-3" /> What's Good</p>
+                        <div className="flex flex-wrap gap-1">
+                          {workspace.generated_analysis.pros.map((p, i) => (
+                            <Badge key={i} variant="outline" className="text-[10px]">{p}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {workspace.generated_analysis.cons && workspace.generated_analysis.cons.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1"><ThumbsDown className="size-3" /> Gaps</p>
+                        <div className="flex flex-wrap gap-1">
+                          {workspace.generated_analysis.cons.map((c, i) => (
+                            <Badge key={i} variant="outline" className="border-rose-500/30 bg-rose-500/10 text-[10px]">{c}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {workspace.generated_analysis.missing_keywords && workspace.generated_analysis.missing_keywords.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1"><Sparkles className="size-3" /> Missing Keywords</p>
+                        <div className="flex flex-wrap gap-1">
+                          {workspace.generated_analysis.missing_keywords.map((k, i) => (
+                            <Badge key={i} variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 text-[10px] dark:text-amber-400">+ {k}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {workspace.generated_analysis.improvements && workspace.generated_analysis.improvements.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1"><Lightbulb className="size-3" /> Improvements</p>
+                        <ul className="space-y-1">
+                          {workspace.generated_analysis.improvements.map((imp, i) => (
+                            <li key={i} className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+                              <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[9px] font-semibold text-amber-600 dark:text-amber-400">{i + 1}</span>
+                              {imp}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Tips */}
+              {!hasCode && !isRunning && (
+                <Card className="border-muted">
+                  <CardContent className="py-4 space-y-3">
+                    <p className="text-xs font-medium flex items-center gap-1.5"><Target className="size-3.5 text-primary" /> Quick Tips</p>
+                    <div className="space-y-2">
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-primary" />
+                        <p className="text-[11px] text-muted-foreground">80+ target = strong ATS compliance. Add quantified metrics.</p>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-primary" />
+                        <p className="text-[11px] text-muted-foreground">Paste a LaTeX template to keep your layout. AI improves only content.</p>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-primary" />
+                        <p className="text-[11px] text-muted-foreground">After compile, preview the PDF and submit to faculty.</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Timestamps */}
+              {workspace.generated_at && (
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Generated {formatDate(workspace.generated_at)}
+                  {workspace.compiled_at ? ` · Compiled ${formatDate(workspace.compiled_at)}` : ""}
+                  {workspace.submitted_at ? ` · Submitted ${formatDate(workspace.submitted_at)}` : ""}
+                </p>
+              )}
+            </div>
+          </div>
         ) : null}
       </motion.div>
+
+      {/* PDF Preview Dialog */}
+      <PdfPreviewDialog
+        url={workspace?.compiled_pdf_url || ""}
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+      />
     </div>
   );
 }
-
-
