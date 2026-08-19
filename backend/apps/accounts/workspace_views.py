@@ -386,6 +386,12 @@ class StudentWorkspaceCompileView(APIView):
 
     permission_classes = [IsStudent]
 
+    def get(self, request):
+        """Check if LaTeX compilation is available on this server."""
+        import shutil
+        available = shutil.which("pdflatex") is not None
+        return Response({"available": available})
+
     def post(self, request):
         workspace = _get_workspace(request.user)
         if not workspace.is_enabled:
@@ -393,6 +399,17 @@ class StudentWorkspaceCompileView(APIView):
 
         if not workspace.generated_latex:
             raise ValidationError({"detail": "No generated resume to compile."})
+
+        # Check if pdflatex is available
+        import shutil
+        if not shutil.which("pdflatex"):
+            raise ValidationError({
+                "detail": (
+                    "LaTeX compiler (pdflatex) is not installed on this server. "
+                    "You can copy the LaTeX code below and compile it locally "
+                    "using Overleaf (overleaf.com) or a local LaTeX editor."
+                )
+            })
 
         # Try to compile
         pdf_bytes = _compile_latex_to_pdf(workspace.generated_latex)

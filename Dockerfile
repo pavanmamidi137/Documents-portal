@@ -19,7 +19,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Node 22 LTS + npm for the Next.js build (Django stays pure-python).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl gnupg \
+        curl gnupg texlive-latex-base texlive-fonts-recommended texlive-latex-extra \
+        texlive-fonts-extra texlive-latex-recommended \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get purge -y --auto-remove curl gnupg \

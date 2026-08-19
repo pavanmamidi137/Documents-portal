@@ -122,6 +122,7 @@ export default function WorkspacePage() {
   const [generating, setGenerating] = useState(false);
   const [compiling, setCompiling] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [compileAvailable, setCompileAvailable] = useState<boolean | null>(null);
 
   const { data: workspace, isLoading, error } = useQuery({
     queryKey: ["workspace", "mine"],
@@ -146,6 +147,13 @@ export default function WorkspacePage() {
     }, 5000);
     return () => clearInterval(interval);
   }, [workspace?.generated_status, queryClient]);
+
+  // Check if LaTeX compilation is available on the server
+  useEffect(() => {
+    http.get<{ available: boolean }>('/student-workspace/compile/')
+      .then((res) => setCompileAvailable(res.available))
+      .catch(() => setCompileAvailable(false));
+  }, []);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -536,10 +544,16 @@ export default function WorkspacePage() {
 
                   {/* Actions */}
                   <div className="flex flex-wrap gap-3 border-t pt-4">
-                    <Button onClick={handleCompile} disabled={compiling}>
+                    <Button onClick={handleCompile} disabled={compiling || compileAvailable === false}>
                       {compiling ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
                       Compile to PDF
                     </Button>
+                    {compileAvailable === false && (
+                      <p className="text-xs text-muted-foreground self-center">
+                        Server PDF compiler unavailable — copy the LaTeX code and compile on{' '}
+                        <a href="https://www.overleaf.com" target="_blank" rel="noopener noreferrer" className="underline text-primary">Overleaf</a>
+                      </p>
+                    )}
                     {workspace.compiled_pdf_url && (
                     <a href={workspace.compiled_pdf_url} target="_blank" rel="noopener noreferrer">
                       <Button variant="outline">
