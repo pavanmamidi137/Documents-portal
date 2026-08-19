@@ -74,6 +74,7 @@ const canPlacementPortal = (u: { is_super_admin?: boolean; is_faculty?: boolean;
 
 const STUDENT_ONLY: NavItem[] = [
   { href: "/resume", label: "My Resume", icon: FileUser },
+  { href: "/workspace", label: "AI Workspace", icon: BrainCircuit },
   { href: "/feedback", label: "Feedback & Ideas", icon: Lightbulb },
 ];
 

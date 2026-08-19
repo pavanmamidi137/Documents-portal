@@ -995,6 +995,8 @@ function AiAccessDialog({
   const [atsInterval, setAtsInterval] = useState("");
   const [dailyUploads, setDailyUploads] = useState("");
   const [unlimited, setUnlimited] = useState(false);
+  const [workspaceEnabled, setWorkspaceEnabled] = useState(false);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
 
   // Load the student's current limits when the dialog opens. State updates
   // happen only after the await, so the fetch never blocks rendering.
@@ -1010,6 +1012,14 @@ function AiAccessDialog({
         setAtsInterval(res.ats_view_interval_days == null ? "" : String(res.ats_view_interval_days));
         setDailyUploads(res.daily_resume_uploads == null ? "" : String(res.daily_resume_uploads));
         setUnlimited(res.unlimited_ai);
+        // Also load workspace status
+        try {
+          const ws = await http.get<{ is_enabled: boolean }>(`/student-workspace/admin/?roll=${student.roll_number}`);
+          const wsData = Array.isArray(ws) ? ws[0] : ws;
+          setWorkspaceEnabled(wsData?.is_enabled ?? false);
+        } catch {
+          // Workspace not created yet
+        }
       } catch (error) {
         if (!cancelled) toast.error(getErrorMessage(error));
       } finally {
@@ -1073,6 +1083,34 @@ function AiAccessDialog({
                 </p>
               </div>
               <Switch checked={unlimited} onCheckedChange={setUnlimited} />
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2.5">
+              <div>
+                <p className="text-sm font-medium">AI Resume Workspace</p>
+                <p className="text-xs text-muted-foreground">
+                  Allow this student to use the AI Resume Workspace to generate ATS-optimized resumes.
+                </p>
+              </div>
+              <Switch
+                checked={workspaceEnabled}
+                onCheckedChange={async (checked) => {
+                  setWorkspaceLoading(true);
+                  try {
+                    await http.post("/student-workspace/admin/toggle/", {
+                      student_id: student?.id,
+                      enabled: checked,
+                    });
+                    setWorkspaceEnabled(checked);
+                    toast.success(checked ? "Workspace enabled" : "Workspace disabled");
+                  } catch (error) {
+                    toast.error(getErrorMessage(error));
+                  } finally {
+                    setWorkspaceLoading(false);
+                  }
+                }}
+                disabled={workspaceLoading}
+              />
             </div>
 
             <div className="space-y-2">

@@ -263,6 +263,78 @@ class Resume(models.Model):
         return f"Resume: {self.student.roll_number}"
 
 
+class StudentWorkspace(models.Model):
+    """A student's AI Resume Workspace.
+
+    Admins can grant workspace access to students. Students can:
+    - See their AI analysis (pros/cons/improvements) from uploaded resume
+    - Specify a target ATS score they want
+    - Provide a sample LaTeX template
+    - Have the AI generate a LaTeX resume matching their requirements
+    - Compile and preview the LaTeX code in-app
+    - Upload the built resume to faculty
+    """
+
+    student = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="workspace"
+    )
+    # Admin grants access
+    is_enabled = models.BooleanField(default=False)
+    enabled_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="enabled_workspaces",
+    )
+    enabled_at = models.DateTimeField(null=True, blank=True)
+
+    # Student inputs
+    target_ats_score = models.PositiveSmallIntegerField(
+        default=80, help_text="Target ATS score (0-100)"
+    )
+    requirements = models.TextField(
+        blank=True, default="",
+        help_text="Job description or requirements the resume should target"
+    )
+    template_latex = models.TextField(
+        blank=True, default="",
+        help_text="Sample LaTeX template the AI should follow"
+    )
+
+    # AI-generated output
+    class AiStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        RUNNING = "RUNNING", "Running"
+        COMPLETE = "COMPLETE", "Complete"
+        FAILED = "FAILED", "Failed"
+
+    generated_status = models.CharField(
+        max_length=10, choices=AiStatus.choices, default=AiStatus.PENDING
+    )
+    generated_latex = models.TextField(blank=True, default="")
+    generated_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    generated_analysis = models.JSONField(null=True, blank=True)
+    generated_error = models.CharField(max_length=500, blank=True, default="")
+    generated_at = models.DateTimeField(null=True, blank=True)
+
+    # Compiled PDF (uploaded to Cloudinary)
+    compiled_pdf_url = models.URLField(max_length=500, blank=True, default="")
+    compiled_pdf_public_id = models.CharField(max_length=255, blank=True, default="")
+    compiled_at = models.DateTimeField(null=True, blank=True)
+
+    # Submission to faculty
+    submitted = models.BooleanField(default=False)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    submitted_url = models.URLField(max_length=500, blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["student__roll_number"]
+
+    def __str__(self) -> str:
+        return f"Workspace({self.student.roll_number})"
+
+
 class AiAccessConfig(models.Model):
     """Per-student overrides for the AI usage limits.
 

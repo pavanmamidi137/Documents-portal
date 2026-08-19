@@ -20,4 +20,5 @@ urlpatterns = [
     path("api/", include("apps.announcements.urls")),
     path("api/", include("apps.placements.urls")),
     path("api/resume-workspace/", include("apps.accounts.portfolio_urls")),
+    path("api/student-workspace/", include("apps.accounts.workspace_urls")),
 ]

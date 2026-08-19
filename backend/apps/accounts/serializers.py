@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from . import services
-from .models import AiAccessConfig, Portfolio, Resume, User, derive_passout_year
+from .models import AiAccessConfig, Portfolio, Resume, StudentWorkspace, User, derive_passout_year
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -481,4 +481,65 @@ class PortfolioSerializer(serializers.ModelSerializer):
             "source_ai_status", "source_ai_score", "source_ai_analysis",
             "source_ai_error", "source_ai_analyzed_at",
             "owner_name", "created_at", "updated_at",
+        ]
+
+
+class StudentWorkspaceSerializer(serializers.ModelSerializer):
+    """Student's AI Resume Workspace - includes AI analysis and generated output."""
+
+    student_roll = serializers.CharField(source="student.roll_number", read_only=True)
+    student_name = serializers.CharField(source="student.full_name", read_only=True)
+    # Resume AI analysis from the student's uploaded resume
+    resume_ai_score = serializers.SerializerMethodField()
+    resume_ai_analysis = serializers.SerializerMethodField()
+    resume_ai_status = serializers.SerializerMethodField()
+    # Compiled PDF URL
+    compiled_pdf_url = serializers.SerializerMethodField()
+
+    def get_resume_ai_score(self, obj) -> int | None:
+        try:
+            return obj.student.resume.ai_score
+        except Exception:
+            return None
+
+    def get_resume_ai_analysis(self, obj) -> dict | None:
+        try:
+            return obj.student.resume.ai_analysis
+        except Exception:
+            return None
+
+    def get_resume_ai_status(self, obj) -> str | None:
+        try:
+            return obj.student.resume.ai_status
+        except Exception:
+            return None
+
+    def get_compiled_pdf_url(self, obj) -> str:
+        if not obj.compiled_pdf_public_id:
+            return ""
+        from apps.documents.services import signed_raw_url
+        return signed_raw_url(obj.compiled_pdf_public_id, expires_seconds=7200)
+
+    class Meta:
+        model = StudentWorkspace
+        fields = [
+            "id", "student", "student_roll", "student_name",
+            "is_enabled", "enabled_at",
+            "target_ats_score", "requirements", "template_latex",
+            "generated_status", "generated_latex", "generated_score",
+            "generated_analysis", "generated_error", "generated_at",
+            "compiled_pdf_url", "compiled_at",
+            "submitted", "submitted_at", "submitted_url",
+            "resume_ai_score", "resume_ai_analysis", "resume_ai_status",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "student", "student_roll", "student_name",
+            "is_enabled", "enabled_at",
+            "generated_status", "generated_latex", "generated_score",
+            "generated_analysis", "generated_error", "generated_at",
+            "compiled_pdf_url", "compiled_at",
+            "submitted", "submitted_at", "submitted_url",
+            "resume_ai_score", "resume_ai_analysis", "resume_ai_status",
+            "created_at", "updated_at",
         ]
