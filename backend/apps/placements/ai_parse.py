@@ -163,6 +163,33 @@ RESUME_REPORT_KEYS = (
 )
 
 
+def _calibrate_score(score: int, summary: str, pros: list[str], cons: list[str],
+                      improvements: list[str], skills: list[str]) -> int:
+    """Light post-processing to keep scores honest.
+
+    The LLM prompt includes a scoring rubric, but models still drift.  This
+    function nudges the score when it clearly contradicts content signals:
+    - A high score with very few pros/skills is suspicious.
+    - A low score with rich content, many skills, and strong pros is too harsh.
+    - "No content" summaries get clamped to 0.
+    """
+    if score == 0:
+        return 0
+    # Signal: how "rich" is the resume content?
+    content_richness = len(pros) + len(skills) + max(0, 5 - len(cons))
+    summary_lower = (summary or "").lower()
+    # Empty / unreadable content → clamp low.
+    if any(kw in summary_lower for kw in ("could not be extracted", "unreadable", "empty", "no readable")):
+        return 0
+    # Very thin content but high score → pull down.
+    if content_richness <= 3 and score > 70:
+        return min(score, 60)
+    # Rich content but suspiciously low score → nudge up.
+    if content_richness >= 12 and score < 50:
+        return max(score, 55)
+    return score
+
+
 def normalize_resume_report(raw) -> dict | None:
     """Validate + normalize the quality-report object a model returned.
 
@@ -213,6 +240,9 @@ def normalize_resume_report(raw) -> dict | None:
     if not summary and not pros and not cons and not improvements \
             and not skills and not ats_keywords and score == 0:
         return None
+
+    # Nudge the score when it clearly contradicts content signals.
+    score = _calibrate_score(score, summary, pros, cons, improvements, skills)
 
     return {
         "score": score,

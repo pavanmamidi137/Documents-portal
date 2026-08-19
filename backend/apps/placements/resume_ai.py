@@ -76,21 +76,34 @@ def _prepare_resume_brief(text: str, max_chars: int) -> str:
     )
 
 _QUALITY_PROMPT = """\
-You are a career advisor reviewing a college student's resume for campus placements.
+You are a senior HR recruiter and career advisor reviewing a college student's resume for campus placements in India. Be precise, fair, and granular.
+
 Return ONLY a single valid JSON object - no markdown, no code fences, no prose before or after.
 The object must use EXACTLY this schema:
 {
-  "score": 0-100 integer (overall quality),
-  "summary": "two or three sentences on the resume's overall impression",
-  "pros": ["4-6 short strings - what the resume genuinely does WELL (projects, skills, format, achievements)"],
-  "cons": ["3-5 short strings - genuine weaknesses or risks (missing projects, no metrics, vague bullets, gaps)"],
-  "improvements": ["5-8 COMPLETE, concrete action items - one short sentence each on exactly what to add, fix or quantify, ordered by impact"],
-  "skills": ["every skill/keyword mentioned - languages, tools, frameworks, soft skills"],
-  "ats_keywords": ["important ATS keywords for IT/fresher roles MISSING from this resume (e.g. Python, SQL, Git, communication, teamwork)"]
+  "score": 0-100 integer,
+  "summary": "2-3 sentences: overall impression + which roles/companies this resume is strongest for",
+  "pros": ["4-6 short strings - what genuinely stands out (specific projects, measurable impact, certifications, relevant skills)"],
+  "cons": ["3-5 short strings - real weaknesses (missing quantification, vague bullets, irrelevant content, gaps, formatting issues)"],
+  "improvements": ["5-8 COMPLETE, concrete action items - one sentence each on EXACTLY what to add/change/quantify, ordered by impact"],
+  "skills": ["every skill/keyword mentioned - languages, tools, frameworks, soft skills, domains"],
+  "ats_keywords": ["5-10 important ATS keywords for IT/fresher roles that are MISSING from this resume"]
 }
-Be specific and honest. Do NOT trim the improvements list - give every genuinely useful action
-item, even if it is long. If the resume text is unreadable or empty, still return the JSON
-with score 0 and a note in summary that the text could not be extracted.
+
+SCORING RUBRIC (apply consistently):
+- 90-100: Exceptional. Quantified metrics (e.g. "improved performance by 40%"), multiple relevant projects with tech stack, strong internships/employment, certifications, clean formatting, ATS-optimized keywords.
+- 75-89: Strong. Good project descriptions, relevant skills listed, some quantification, decent formatting, but missing 1-2 of: metrics, certifications, strong internships.
+- 60-74: Decent. Has projects and skills but mostly qualitative ("developed a website" without metrics), generic descriptions, some irrelevant content, or weak formatting.
+- 45-59: Below average. Vague bullet points, no metrics, few or weak projects, missing key skills, poor structure, or significant gaps.
+- 30-44: Weak. Mostly generic text, no quantification, irrelevant content, very few technical skills, or major formatting/structure problems.
+- 0-29: Very poor. Empty sections, unreadable content, no relevant experience, or completely generic template text.
+
+RULES:
+- Do NOT inflate scores. A resume with "developed a project using React" (no metrics, no impact) should score 50-65, NOT 80+.
+- Do NOT deflate scores unfairly. A well-structured resume with projects, skills, and some detail deserves 70+ even without work experience.
+- The score must reflect the DIFFERENCE between this resume and what top 10% of campus placement candidates submit.
+- improvements must be SPECIFIC and ACTIONABLE: "Add quantified impact to the PlaceMate project bullet (e.g. 'served 500+ students, reduced document search time by 60%')" NOT "Add more details to projects".
+- If the resume text is unreadable or empty, return score 0 and note in summary.
 
 {untrusted_guard}
 """
