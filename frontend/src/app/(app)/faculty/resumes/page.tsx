@@ -225,7 +225,7 @@ export default function FacultyResumesPage() {
     setRetryingId(resume.id);
     try {
       await http.post(`/resumes/${resume.id}/analyze/`);
-      toast.success(`AI analysis started for ${resume.student_name}.`);
+      toast.success(`AI review complete for ${resume.student_name} — they can now see the result.`);
       void queryClient.invalidateQueries({ queryKey: ["resumes", "list"] });
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -430,16 +430,21 @@ export default function FacultyResumesPage() {
           >
             <Eye className="size-4" />
           </Button>
-          {isAdmin && r.ai_status === "FAILED" && (
+          {isAdmin && (
             <Button
               size="icon"
               variant="ghost"
               className="size-8"
-              title="Retry AI analysis"
-              aria-label={`Retry AI analysis for ${r.student_name}`}
+              title={r.ai_status === "COMPLETE" ? "Re-run AI analysis" : "Run AI analysis"}
+              aria-label={`AI review for ${r.student_name}`}
               onClick={() => handleRetryAI(r)}
+              disabled={retryingId === r.id}
             >
-              <RefreshCw className="size-4" />
+              {retryingId === r.id ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
             </Button>
           )}
         </div>
