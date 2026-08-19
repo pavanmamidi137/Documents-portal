@@ -142,11 +142,11 @@ Keep the exact same structure/packages/formatting from the template. Only improv
 
         # Call AI to generate LaTeX
         raw = ai_json(
-            prompt,
-            task_key="resume_workspace",
-            timeout_seconds=120,
+            system_prompt="You are a professional resume writer and LaTeX expert. Generate polished, ATS-friendly resumes in valid LaTeX.",
+            user_text=prompt,
             max_tokens=4096,
             reasoning_budget=500,
+            task="RESUME_ANALYSIS",
         )
 
         # Extract LaTeX from the response
@@ -222,11 +222,11 @@ def _review_generated_resume(workspace, target_score: int, requirements: str):
         prompt += f"\n\nLaTeX code:\n```latex\n{workspace.generated_latex[:6000]}\n```"
 
         raw = ai_json(
-            prompt,
-            task_key="resume_workspace",
-            timeout_seconds=60,
+            system_prompt="You are reviewing a LaTeX resume for ATS compliance and quality.",
+            user_text=prompt,
             max_tokens=2000,
             reasoning_budget=300,
+            task="RESUME_ANALYSIS",
         )
 
         workspace.generated_score = raw.get("score", 0)

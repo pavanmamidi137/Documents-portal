@@ -74,9 +74,9 @@ const canPlacementPortal = (u: { is_super_admin?: boolean; is_faculty?: boolean;
 
 const STUDENT_ONLY: NavItem[] = [
   { href: "/resume", label: "My Resume", icon: FileUser },
-  { href: "/workspace", label: "AI Workspace", icon: BrainCircuit },
   { href: "/feedback", label: "Feedback & Ideas", icon: Lightbulb },
 ];
+const WORKSPACE_LINK: NavItem = { href: "/workspace", label: "AI Workspace", icon: BrainCircuit };
 
 const FACULTY_ONLY: NavItem[] = [{ href: "/faculty/resumes", label: "Resumes", icon: FileUser }];
 
@@ -154,6 +154,16 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
     return latest > seen;
   })();
 
+  // Students: check if AI Resume Workspace is enabled for this student.
+  const { data: wsData } = useQuery({
+    queryKey: ["workspace", "check"],
+    queryFn: () => http.get<{ is_enabled: boolean }>("/student-workspace/"),
+    enabled: isStudent,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const hasWorkspace = Boolean(wsData?.is_enabled);
+
   // Navigation is grouped so long lists (admin) read as sections instead of a
   // wall of links. The first group carries no label - it is the app's main
   // navigation, the labelled groups are role-specific tools.
@@ -167,9 +177,10 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
       { label: "Faculty", items: FACULTY_ONLY },
     ];
   } else if (user?.is_cr) {
+    const studentCareer = hasWorkspace ? [...STUDENT_ONLY, WORKSPACE_LINK] : [...STUDENT_ONLY];
     groups = [
       { items: [COMMON[0], ...CR_ONLY, COMMON[1], COMMON[2], COMMON[3]] },
-      { label: "Career", items: STUDENT_ONLY },
+      { label: "Career", items: studentCareer },
     ];
   } else if (user?.is_faculty) {
     const facultyTools: NavItem[] = [];
@@ -181,7 +192,8 @@ export function Sidebar({ mode, onModeChange, open, onClose, onOpen }: SidebarPr
       ...(facultyTools.length > 0 ? [{ label: "Faculty", items: facultyTools }] : []),
     ];
   } else {
-    groups = [{ items: [...COMMON] }, { label: "Career", items: STUDENT_ONLY }];
+    const studentCareer = hasWorkspace ? [...STUDENT_ONLY, WORKSPACE_LINK] : [...STUDENT_ONLY];
+    groups = [{ items: [...COMMON] }, { label: "Career", items: studentCareer }];
   }
 
   const collapsed = mode === "collapsed";
