@@ -8,14 +8,13 @@ import {
 } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  Archive,
   Clock,
-  Download,
   Eye,
   FileText,
   FileUp,
   Loader2,
   RotateCcw,
+  RefreshCw,
   Sparkles,
   UserRoundCheck,
 } from "lucide-react";
@@ -41,11 +40,11 @@ import { useMetaData } from "@/lib/use-meta";
 import { useAuth } from "@/lib/auth";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useCloudinaryCheck } from "@/lib/use-cloudinary-check";
-import { http, openResumeInNewTab } from "@/lib/api";
+import { http } from "@/lib/api";
 import type { Paginated, Resume, StudentStatusRow } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 import { scoreTone, StarRating } from "@/lib/resume-score";
-import { useResumeDownloadSetting } from "@/lib/use-resume-download-setting";
+import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 
 /** Admin-only: the resume's AI review state - status badge, star rating, ATS
  * score and (when failed) the error. Faculty keep the plain table. */
@@ -118,10 +117,7 @@ export default function FacultyResumesPage() {
   const { data: meta } = useMetaData();
   const queryClient = useQueryClient();
   const isAdmin = user?.is_super_admin ?? false;
-  // The Super Admin decides whether faculty can download resumes. When off,
-  // download buttons are hidden (preview stays available); admins keep access.
-  const { enabled: downloadsEnabled } = useResumeDownloadSetting();
-  const downloadsAllowed = isAdmin || downloadsEnabled;
+
 
   const [tab, setTab] = useState<"uploaded" | "students">("uploaded");
   const [page, setPage] = useState(1);
@@ -131,7 +127,8 @@ export default function FacultyResumesPage() {
   const [branch, setBranch] = useState("");
   const [section, setSection] = useState("");
   const [crOnly, setCrOnly] = useState("");
-  const [zipping, setZipping] = useState(false);
+  const [previewResume, setPreviewResume] = useState<Resume | null>(null);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
 
   const branches = meta?.branches ?? [];
   // Faculty are locked to their own branch; admins pick from all branches.
@@ -212,48 +209,7 @@ export default function FacultyResumesPage() {
     });
   };
 
-  const handleDownload = async (resume: Resume) => {
-    try {
-      // Stream through the portal (auth + signed Cloudinary fetch), forcing a
-      // browser download - direct Cloudinary URLs 401 on restricted accounts.
-      // Name the file with the student's roll number + name so it's obvious
-      // whose resume it is.
-      const base = `${resume.student_roll} ${resume.student_name}`.trim() || "resume";
-      const ext = resume.file_name.includes(".")
-        ? "." + resume.file_name.split(".").pop()
-        : ".pdf";
-      await http.download(
-        `/resumes/${resume.id}/preview/?download=1`,
-        undefined,
-        `${base.replace(/[\\/:*?"<>|]+/g, "")}${ext}`
-      );
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    }
-  };
 
-  const handleZip = async () => {
-    if (zipping) return;
-    setZipping(true);
-    try {
-      await http.download(
-        "/resumes/download_zip/",
-        {
-          search: q || undefined,
-          branch: branch || undefined,
-          section: section || undefined,
-          cr: crOnly || undefined,
-        },
-        "resumes.zip"
-      );
-      if ((data?.count ?? 0) > 100)
-        toast.info("ZIP includes the first 100 resumes in the current view.");
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    } finally {
-      setZipping(false);
-    }
-  };
 
   const hasFilters = q !== "" || branch !== "" || section !== "" || crOnly !== "";
   const clearFilters = () => {
@@ -262,6 +218,20 @@ export default function FacultyResumesPage() {
     setSection("");
     setCrOnly("");
     setPage(1);
+  };
+
+  const handleRetryAI = async (resume: Resume) => {
+    if (retryingId) return;
+    setRetryingId(resume.id);
+    try {
+      await http.post(`/resumes/${resume.id}/analyze/`);
+      toast.success(`AI analysis started for ${resume.student_name}.`);
+      void queryClient.invalidateQueries({ queryKey: ["resumes", "list"] });
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setRetryingId(null);
+    }
   };
 
   // Every student of the branch with their resume upload status - the
@@ -456,31 +426,21 @@ export default function FacultyResumesPage() {
             className="size-8"
             title="Preview resume"
             aria-label={`Preview ${r.student_name}'s resume`}
-            onClick={async () => {
-              const err = await openResumeInNewTab(r);
-              if (err) toast.error(err);
-            }}
+            onClick={() => setPreviewResume(r)}
           >
             <Eye className="size-4" />
           </Button>
-          {downloadsAllowed ? (
+          {isAdmin && r.ai_status === "FAILED" && (
             <Button
               size="icon"
               variant="ghost"
               className="size-8"
-              title="Download resume"
-              aria-label={`Download ${r.student_name}'s resume`}
-              onClick={() => handleDownload(r)}
+              title="Retry AI analysis"
+              aria-label={`Retry AI analysis for ${r.student_name}`}
+              onClick={() => handleRetryAI(r)}
             >
-              <Download className="size-4" />
+              <RefreshCw className="size-4" />
             </Button>
-          ) : (
-            <span
-              title="Resume downloads are disabled by the admin"
-              className="inline-flex size-8 items-center justify-center text-muted-foreground/50"
-            >
-              <Download className="size-4" />
-            </span>
           )}
         </div>
       ),
@@ -622,31 +582,7 @@ export default function FacultyResumesPage() {
           )}
         </TabsContent>
         <TabsContent value="uploaded" className="mt-4">
-          {!downloadsAllowed && (
-            <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-700 dark:text-amber-400">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-              <p className="text-sm">
-                Resume downloads are currently disabled by the admin. You can still preview resumes.
-              </p>
-            </div>
-          )}
-          {filtersBar(
-            downloadsAllowed ? (
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={handleZip}
-                disabled={zipping}
-                title={
-                  (data?.count ?? 0) > 100
-                    ? "ZIP includes the first 100 resumes in the current view"
-                    : "Download every resume in the current view as a ZIP"
-                }
-              >
-                <Archive className="size-4" /> {zipping ? "Preparing ZIP…" : "Download ZIP"}
-              </Button>
-            ) : undefined
-          )}
+          {filtersBar()}
 
           <DataTable
             columns={columns}
@@ -668,6 +604,14 @@ export default function FacultyResumesPage() {
         </TabsContent>
       </Tabs>
 
+      {previewResume && (
+        <PdfPreviewDialog
+          url={`/api/resumes/${previewResume.id}/preview/`}
+          title={`${previewResume.student_name} — ${previewResume.file_name}`}
+          open={!!previewResume}
+          onOpenChange={(open) => { if (!open) setPreviewResume(null); }}
+        />
+      )}
     </RoleGuard>
   );
 }

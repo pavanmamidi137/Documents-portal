@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarClock, Download, Eye, FileText, RotateCcw, Share2, Trash2 } from "lucide-react";
+import { CalendarClock, Eye, FileText, RotateCcw, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDocumentTypeMeta } from "@/lib/document-types";
@@ -11,10 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { http } from "@/lib/api";
-import { downloadDocument } from "@/lib/download";
 import type { DocumentItem } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
 import { DocumentTextDialog } from "./document-text-dialog";
+import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 
 interface Props {
   document: DocumentItem;
@@ -37,6 +37,7 @@ export function DocumentCard({
   onToggleSelect,
 }: Props) {
   const [textOpen, setTextOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const isPdf = document.file_name.toLowerCase().endsWith(".pdf");
 
   const handleCardClick = (e: React.MouseEvent) => {
@@ -48,11 +49,6 @@ export function DocumentCard({
 
   const typeMeta = getDocumentTypeMeta(document.file_name);
   const FileIcon = typeMeta.Icon;
-
-  const handleDownload = async () => {
-    // Streams through the browser with a live % + MB progress toast.
-    await downloadDocument(document);
-  };
 
   const handleDelete = async () => {
     try {
@@ -170,20 +166,10 @@ export function DocumentCard({
           className="w-full whitespace-nowrap sm:w-auto sm:min-w-28 sm:flex-1"
           onClick={(e) => {
             e.stopPropagation();
-            window.open(document.cloudinary_url, "_blank", "noopener");
+            setPreviewOpen(true);
           }}
         >
           <Eye className="size-3.5" /> Preview
-        </Button>
-        <Button
-          size="sm"
-          className="w-full whitespace-nowrap sm:w-auto sm:min-w-28 sm:flex-1"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDownload();
-          }}
-        >
-          <Download className="size-3.5" /> Download
         </Button>
         {/* Secondary actions sit side-by-side on mobile, inline on desktop. */}
         <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:contents">
@@ -219,6 +205,12 @@ export function DocumentCard({
         </div>
       </div>
 
+      <PdfPreviewDialog
+        url={document.cloudinary_url}
+        title={document.title}
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+      />
       <DocumentTextDialog document={document} open={textOpen} onOpenChange={setTextOpen} />
     </motion.div>
   );

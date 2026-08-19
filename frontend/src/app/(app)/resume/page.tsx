@@ -34,9 +34,10 @@ import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { fetchMyResume, http, openResumeInNewTab } from "@/lib/api";
+import { fetchMyResume, http } from "@/lib/api";
 import type { Resume, ResumeAiAnalysis } from "@/lib/types";
 import { cn, formatBytes, formatDate, getErrorMessage } from "@/lib/utils";
+import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 
 const ACCEPTED = ".pdf,.doc,.docx";
 
@@ -549,6 +550,7 @@ export default function ResumePage() {
     total: number;
   } | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const autoRanRef = useRef(false);
@@ -761,10 +763,7 @@ export default function ResumePage() {
                   variant="outline"
                   disabled={resume.is_missing}
                   title={resume.is_missing ? "File deleted from storage - re-upload first" : undefined}
-                  onClick={async () => {
-                    const err = await openResumeInNewTab(resume);
-                    if (err) toast.error(err);
-                  }}
+                  onClick={() => setPreviewOpen(true)}
                 >
                   <Eye className="size-4" /> Preview
                 </Button>
@@ -895,6 +894,15 @@ export default function ResumePage() {
         loading={deleting}
         onConfirm={confirmDelete}
       />
+
+      {resume && !resume.is_missing && (
+        <PdfPreviewDialog
+          url={`/api/resumes/${resume.id}/preview/`}
+          title={resume.file_name}
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+        />
+      )}
     </div>
   );
 }
