@@ -583,23 +583,33 @@ def analyze_resume(resume, actor) -> dict:
     # before it ever reaches the model (prompt-injection hardening).
     brief = _prepare_resume_brief(text, 6000)
 
-    try:
-        # The reasoning model (nemotron) spends tokens on internal thinking
-        # before producing JSON.  A low max_tokens budget lets the thinking
-        # consume ALL output slots, leaving the JSON truncated (the classic
-        # "unreadable report" bug).  We set a generous output budget and
-        # cap the reasoning so the model has room for the actual report.
-        quality = ai_json(
-            _QUALITY_PROMPT.replace("{untrusted_guard}", _UNTRUSTED_GUARD),
-            brief, max_tokens=4096, reasoning_budget=500,
-            usage_callback=usage, task="RESUME_ANALYSIS",
-        )
-    except AiError:
-        raise  # nothing collected, nothing committed - the 502 costs no credits
-
-    # Normalize the report - key aliases, fenced/prose-wrapped JSON and a
-    # wrapper key ({"report": {...}}) are all handled; None when unusable.
-    analysis = normalize_resume_report(quality)
+    # The reasoning model (nemotron) spends tokens on internal thinking
+    # before producing JSON.  A low max_tokens budget lets the thinking
+    # consume ALL output slots, leaving the JSON truncated (the classic
+    # "unreadable report" bug).  We set a generous output budget and
+    # cap the reasoning so the model has room for the actual report.
+    # Retry with progressively higher budgets when the first attempt
+    # produces an unreadable report (reasoning consumed too many tokens).
+    analysis = None
+    for retry_budget in (500, 1000, 2000, 0):
+        try:
+            quality = ai_json(
+                _QUALITY_PROMPT.replace("{untrusted_guard}", _UNTRUSTED_GUARD),
+                brief, max_tokens=4096,
+                reasoning_budget=retry_budget,
+                usage_callback=usage, task="RESUME_ANALYSIS",
+            )
+        except AiError:
+            if retry_budget == 0:
+                raise  # last attempt failed - propagate the error
+            continue  # try next budget level
+        # Normalize the report - key aliases, fenced/prose-wrapped JSON and a
+        # wrapper key ({"report": {...}}) are all handled; None when unusable.
+        analysis = normalize_resume_report(quality)
+        if analysis:
+            break  # got a valid report
+        # Unreadable - try again with a higher budget (or no budget at all)
+    # If all retries failed, analysis is still None → handled below
 
     match_map: dict[str, dict] = {}
     if text:
