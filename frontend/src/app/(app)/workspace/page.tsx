@@ -111,21 +111,80 @@ function ScoreBar({ label, score }: { label: string; score: number }) {
   );
 }
 
-/** Typewriter effect: displays text character by character */
+/** Simple LaTeX syntax highlighting */
+function highlightLatex(code: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  // Split by lines, then highlight each line
+  const lines = code.split("\n");
+  lines.forEach((line, lineIdx) => {
+    if (lineIdx > 0) parts.push("\n");
+
+    // Comment lines
+    if (line.trimStart().startsWith("%")) {
+      parts.push(<span key={`c${lineIdx}`} className="text-zinc-500 italic">{line}</span>);
+      return;
+    }
+
+    // Process line character by character for inline highlighting
+    let i = 0;
+    const chars = line;
+    while (i < chars.length) {
+      // LaTeX commands: \command
+      if (chars[i] === "\\" && i + 1 < chars.length && /[a-zA-Z]/.test(chars[i + 1])) {
+        let cmd = "\\";
+        i++;
+        while (i < chars.length && /[a-zA-Z]/.test(chars[i])) {
+          cmd += chars[i];
+          i++;
+        }
+        // Section/subsection commands get special color
+        if (cmd === "\\section" || cmd === "\\subsection") {
+          parts.push(<span key={`cmd${lineIdx}-${i}`} className="text-purple-400 font-bold">{cmd}</span>);
+        } else if (cmd === "\\begin" || cmd === "\\end") {
+          parts.push(<span key={`cmd${lineIdx}-${i}`} className="text-amber-400 font-semibold">{cmd}</span>);
+        } else if (cmd === "\\documentclass" || cmd === "\\usepackage") {
+          parts.push(<span key={`cmd${lineIdx}-${i}`} className="text-blue-400 font-bold">{cmd}</span>);
+        } else if (cmd === "\\item") {
+          parts.push(<span key={`cmd${lineIdx}-${i}`} className="text-orange-400">{cmd}</span>);
+        } else {
+          parts.push(<span key={`cmd${lineIdx}-${i}`} className="text-cyan-400">{cmd}</span>);
+        }
+        continue;
+      }
+      // Braces
+      if (chars[i] === "{" || chars[i] === "}") {
+        parts.push(<span key={`b${lineIdx}-${i}`} className="text-yellow-300 font-bold">{chars[i]}</span>);
+        i++;
+        continue;
+      }
+      // Brackets
+      if (chars[i] === "[" || chars[i] === "]") {
+        parts.push(<span key={`br${lineIdx}-${i}`} className="text-yellow-400/70">{chars[i]}</span>);
+        i++;
+        continue;
+      }
+      // Everything else (plain text)
+      parts.push(<span key={`t${lineIdx}-${i}`} className="text-emerald-300">{chars[i]}</span>);
+      i++;
+    }
+  });
+  return parts;
+}
+
+/** Typewriter effect with syntax highlighting */
 function TypewriterCode({ text, speed = 8 }: { text: string; speed?: number }) {
-  const [displayed, setDisplayed] = useState("");
+  const [displayedLen, setDisplayedLen] = useState(0);
   const [done, setDone] = useState(false);
   const containerRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     if (!text) return;
-    setDisplayed("");
+    setDisplayedLen(0);
     setDone(false);
     let i = 0;
     const interval = setInterval(() => {
       i++;
-      setDisplayed(text.slice(0, i));
-      // Auto-scroll to bottom
+      setDisplayedLen(i);
       if (containerRef.current) {
         containerRef.current.scrollTop = containerRef.current.scrollHeight;
       }
@@ -137,14 +196,16 @@ function TypewriterCode({ text, speed = 8 }: { text: string; speed?: number }) {
     return () => clearInterval(interval);
   }, [text, speed]);
 
+  const visibleCode = text.slice(0, displayedLen);
+
   return (
     <div className="relative">
       <pre
         ref={containerRef}
-        className="max-h-[500px] overflow-auto rounded-xl border bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed text-green-400"
+        className="max-h-[500px] overflow-auto rounded-xl border bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed"
       >
-        {displayed}
-        {!done && <span className="inline-block h-4 w-1.5 animate-pulse bg-green-400 ml-0.5" />}
+        {highlightLatex(visibleCode)}
+        {!done && <span className="inline-block h-4 w-1.5 animate-pulse bg-emerald-400 ml-0.5" />}
       </pre>
       <div className="absolute top-2 right-2 flex gap-1">
         <Button

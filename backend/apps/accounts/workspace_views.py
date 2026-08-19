@@ -42,29 +42,9 @@ def _get_workspace(student) -> StudentWorkspace:
 # ----- AI Resume Generation Prompt -----
 
 _RESUME_GENERATE_PROMPT = """\
-You are a professional resume writer and LaTeX expert. Generate a polished, ATS-friendly resume in LaTeX.
+Generate a complete, compilable LaTeX resume. Output ONLY the LaTeX code starting from \\documentclass. No explanations, no markdown, no code fences, no analysis, no thinking.
 
-The student's current resume analysis is provided below:
-{analysis}
-
-The student's target ATS score: {target_score}/100
-The student's requirements: {requirements}
-
-{template_section}
-
-IMPORTANT RULES:
-1. Keep every fact (names, dates, roles, projects, skills) EXACTLY as stated in the analysis
-2. Improve wording, structure and impact - never invent new facts
-3. The resume MUST be valid, compilable LaTeX
-4. Use standard LaTeX packages (geometry, enumitem, titlesec, hyperref, xcolor, tabularx)
-5. Optimize for ATS: use standard section names (Education, Experience, Skills, Projects)
-6. Structure: Contact Info → Summary → Skills → Experience → Projects → Education → Certifications
-7. The resume should score close to {target_score} on an ATS scoring system
-8. Use the provided template as a starting point if given, otherwise create a clean professional layout
-9. Include quantified metrics where possible (e.g., "served 500+ users", "reduced load time by 40%")
-10. Return ONLY the raw LaTeX code - no markdown, no code fences, no explanations
-
-The LaTeX MUST be complete and compilable - start with \\documentclass and end with \\end{{document}}.
+Student profile:\n{analysis}\n\nTarget ATS score: {target_score}/100\nRequirements: {requirements}\n\n{template_section}\n\nRULES:\n- Keep every fact EXACTLY as given. Improve wording only, never invent facts.\n- Use standard packages: geometry, enumitem, titlesec, hyperref, xcolor\n- Sections: Summary, Skills, Experience, Projects, Education, Certifications\n- Start with \\documentclass and end with \\end{{document}}\n- Output ONLY the LaTeX code. Nothing else before or after.
 """
 
 _SOURCE_CODE_REVIEW_PROMPT = """\
@@ -143,17 +123,17 @@ Keep the exact same structure/packages/formatting from the template. Only improv
         # Call AI to generate LaTeX - use plain text since we need raw LaTeX, not JSON
         import re
         raw_text = ai_plain_text(
-            system_prompt="You are a professional resume writer and LaTeX expert. Generate polished, ATS-friendly resumes in valid, compilable LaTeX. Return ONLY the complete LaTeX code starting with \\documentclass and ending with \\end{document}. No explanations, no markdown, no code fences.",
+            system_prompt="Output ONLY raw LaTeX code. Start with \\documentclass. End with \\end{document}. No text before or after. No explanations.",
             user_text=prompt,
             max_tokens=4096,
-            reasoning_budget=500,
+            reasoning_budget=2000,
             task="RESUME_ANALYSIS",
         )
 
-        # Extract LaTeX from the plain text response
+        # Extract ONLY the LaTeX code, stripping any thinking/analysis text
         latex_code = raw_text.strip()
 
-        # Strip markdown code fences if present
+        # Strip markdown code fences
         if latex_code.startswith("```latex"):
             latex_code = latex_code[8:]
         elif latex_code.startswith("```"):
@@ -162,13 +142,18 @@ Keep the exact same structure/packages/formatting from the template. Only improv
             latex_code = latex_code[:-3]
         latex_code = latex_code.strip()
 
-        # If still no \documentclass, try to find it in the text
+        # If still no \documentclass, find the LaTeX block in the text
         if "\\documentclass" not in latex_code:
             match = re.search(r'(\\documentclass.*?\\end\{document\})', latex_code, re.DOTALL)
             if match:
                 latex_code = match.group(1).strip()
 
-        logger.info("Workspace AI raw text length: %d", len(raw_text))
+        # Strip any thinking/analysis text before \documentclass
+        if latex_code and "\\documentclass" in latex_code:
+            idx = latex_code.index("\\documentclass")
+            latex_code = latex_code[idx:]
+
+        logger.info("Workspace AI raw text length: %d, LaTeX length: %d", len(raw_text), len(latex_code))
         if not latex_code or "\\documentclass" not in latex_code:
             logger.warning("Workspace AI response did not contain LaTeX. First 500 chars: %s", raw_text[:500])
             workspace.generated_status = StudentWorkspace.AiStatus.FAILED
