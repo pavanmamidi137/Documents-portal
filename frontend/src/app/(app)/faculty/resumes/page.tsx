@@ -9,6 +9,7 @@ import {
 import {
   AlertTriangle,
   Clock,
+  Download,
   Eye,
   FileText,
   FileUp,
@@ -210,6 +211,22 @@ export default function FacultyResumesPage() {
   };
 
 
+
+  const handleDownload = async (resume: Resume) => {
+    try {
+      const base = `${resume.student_roll} ${resume.student_name}`.trim() || "resume";
+      const ext = resume.file_name.includes(".")
+        ? "." + resume.file_name.split(".").pop()
+        : ".pdf";
+      await http.download(
+        `/resumes/${resume.id}/preview/?download=1`,
+        undefined,
+        `${base.replace(/[\\/:*?"<>|]+/g, "")}${ext}`
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
 
   const hasFilters = q !== "" || branch !== "" || section !== "" || crOnly !== "";
   const clearFilters = () => {
@@ -430,6 +447,18 @@ export default function FacultyResumesPage() {
           >
             <Eye className="size-4" />
           </Button>
+          {isAdmin && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8"
+              title="Download resume"
+              aria-label={`Download ${r.student_name}'s resume`}
+              onClick={() => handleDownload(r)}
+            >
+              <Download className="size-4" />
+            </Button>
+          )}
           {isAdmin && (
             <Button
               size="icon"
